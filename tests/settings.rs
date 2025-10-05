@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use postgres_setup_unpriv::{make_dir_accessible, nobody_uid, with_temp_euid, PgEnvCfg};
-use postgresql_embedded::VersionReq;
 use nix::unistd::geteuid;
+use pg_embedded_setup_unpriv::{PgEnvCfg, make_dir_accessible, nobody_uid, with_temp_euid};
+use postgresql_embedded::VersionReq;
 use rstest::rstest;
 
 /// Tests that a `PgEnvCfg` with specific settings is correctly converted to a `settings` object,
@@ -34,8 +34,14 @@ fn to_settings_roundtrip() -> color_eyre::Result<()> {
     assert_eq!(settings.password, "secret");
     assert_eq!(settings.data_dir, PathBuf::from("/tmp/data"));
     assert_eq!(settings.installation_dir, PathBuf::from("/tmp/runtime"));
-    assert_eq!(settings.configuration.get("locale"), Some(&"en_US".to_string()));
-    assert_eq!(settings.configuration.get("encoding"), Some(&"UTF8".to_string()));
+    assert_eq!(
+        settings.configuration.get("locale"),
+        Some(&"en_US".to_string())
+    );
+    assert_eq!(
+        settings.configuration.get("encoding"),
+        Some(&"UTF8".to_string())
+    );
     Ok(())
 }
 
@@ -65,7 +71,6 @@ fn with_temp_euid_changes_uid() -> color_eyre::Result<()> {
     assert_eq!(geteuid(), original);
     Ok(())
 }
-
 
 #[cfg(unix)]
 mod dir_accessible_tests {
@@ -98,7 +103,7 @@ fn run_requires_root() -> color_eyre::Result<()> {
         return Ok(());
     }
 
-    let err = with_temp_euid(nobody_uid(), || postgres_setup_unpriv::run())
+    let err = with_temp_euid(nobody_uid(), pg_embedded_setup_unpriv::run)
         .expect_err("run should fail for non-root user");
     assert!(err.to_string().contains("must be run as root"));
     Ok(())

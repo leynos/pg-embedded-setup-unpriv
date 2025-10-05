@@ -1,8 +1,8 @@
-// Library for postgres_setup_unpriv
+// Library for pg_embedded_setup_unpriv
 #![allow(non_snake_case)]
 
-use color_eyre::eyre::{bail, Context, Result};
-use nix::unistd::{chown, getresuid, geteuid, setresuid, Uid};
+use color_eyre::eyre::{Context, Result, bail};
+use nix::unistd::{Uid, chown, geteuid, getresuid, setresuid};
 use ortho_config::OrthoConfig;
 use postgresql_embedded::{PostgreSQL, Settings, VersionReq};
 use serde::{Deserialize, Serialize};
@@ -83,10 +83,11 @@ impl PgEnvCfg {
             settings.configuration.insert("locale".into(), loc.clone());
         }
         if let Some(ref enc) = self.encoding {
-            settings.configuration.insert("encoding".into(), enc.clone());
+            settings
+                .configuration
+                .insert("encoding".into(), enc.clone());
         }
     }
-
 }
 
 /// Temporary privilege drop helper (process‑wide!)
@@ -126,10 +127,8 @@ where
 #[cfg(unix)]
 pub fn make_dir_accessible<P: AsRef<Path>>(dir: P, uid: Uid) -> Result<()> {
     let dir = dir.as_ref();
-    fs::create_dir_all(dir)
-        .with_context(|| format!("create {}", dir.display()))?;
-    chown(dir, Some(uid), None)
-        .with_context(|| format!("chown {}", dir.display()))?;
+    fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    chown(dir, Some(uid), None).with_context(|| format!("chown {}", dir.display()))?;
     fs::set_permissions(dir, fs::Permissions::from_mode(0o755))
         .with_context(|| format!("chmod {}", dir.display()))?;
     Ok(())
@@ -188,4 +187,3 @@ pub fn run() -> Result<()> {
 
     Ok(())
 }
-
