@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
-use nix::unistd::geteuid;
-use pg_embedded_setup_unpriv::{PgEnvCfg, make_dir_accessible, nobody_uid, with_temp_euid};
+use color_eyre::eyre::Context;
+use nix::unistd::{User, geteuid, getgid, getuid};
+use pg_embedded_setup_unpriv::{
+    PgEnvCfg, make_data_dir_private, make_dir_accessible, nobody_uid, with_temp_euid,
+};
 use postgresql_embedded::VersionReq;
 use rstest::rstest;
 
@@ -61,14 +64,21 @@ fn with_temp_euid_changes_uid() -> color_eyre::Result<()> {
         return Ok(());
     }
 
-    let original = geteuid();
+    let original_euid = geteuid();
+    let original_uid = getuid();
 
     with_temp_euid(nobody_uid(), || {
         assert_eq!(geteuid(), nobody_uid());
+        assert_eq!(getuid(), nobody_uid());
+        let nobody = User::from_uid(nobody_uid())
+            .context("User::from_uid failed")?
+            .expect("nobody user should exist");
+        assert_eq!(getgid(), nobody.gid);
         Ok(())
     })?;
 
-    assert_eq!(geteuid(), original);
+    assert_eq!(geteuid(), original_euid);
+    assert_eq!(getuid(), original_uid);
     Ok(())
 }
 
@@ -91,6 +101,22 @@ mod dir_accessible_tests {
         let meta = std::fs::metadata(&dir)?;
         assert_eq!(meta.uid(), nobody_uid().as_raw());
         assert_eq!(meta.permissions().mode() & 0o777, 0o755);
+        Ok(())
+    }
+
+    #[rstest]
+    fn make_data_dir_private_sets_strict_mode() -> color_eyre::Result<()> {
+        if !geteuid().is_root() {
+            eprintln!("skipping root-dependent test");
+            return Ok(());
+        }
+
+        let tmp = tempdir()?;
+        let dir = tmp.path().join("bar");
+        super::make_data_dir_private(&dir, nobody_uid())?;
+        let meta = std::fs::metadata(&dir)?;
+        assert_eq!(meta.uid(), nobody_uid().as_raw());
+        assert_eq!(meta.permissions().mode() & 0o777, 0o700);
         Ok(())
     }
 }

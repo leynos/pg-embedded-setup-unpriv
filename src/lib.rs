@@ -1,14 +1,134 @@
-// Library for pg_embedded_setup_unpriv
+//! Facilitates preparing an embedded PostgreSQL instance while dropping root
+//! privileges.
+//!
+//! The library owns the lifecycle for configuring paths, permissions, and
+//! process identity so the bundled PostgreSQL binaries can initialise safely
+//! under an unprivileged account.
 #![allow(non_snake_case)]
 
 use color_eyre::eyre::{Context, Result, bail};
-use nix::unistd::{Uid, chown, geteuid, getresuid, setresuid};
+use nix::unistd::{
+    Gid, Uid, User, chown, geteuid, getgroups, getresgid, getresuid, setgroups, setresgid,
+    setresuid,
+};
 use ortho_config::OrthoConfig;
 use postgresql_embedded::{PostgreSQL, Settings, VersionReq};
 use serde::{Deserialize, Serialize};
+use std::env;
+use std::ffi::OsStr;
 use std::fs;
+use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Captures the process identity before dropping privileges so we can safely restore it.
+struct PrivilegeDropGuard {
+    ruid: Uid,
+    euid: Uid,
+    suid: Uid,
+    rgid: Gid,
+    egid: Gid,
+    sgid: Gid,
+    supplementary: Vec<Gid>,
+}
+
+impl Drop for PrivilegeDropGuard {
+    fn drop(&mut self) {
+        self.restore_best_effort();
+    }
+}
+
+impl PrivilegeDropGuard {
+    fn restore_best_effort(&self) {
+        // Best-effort restoration; errors during drop should not panic.
+        let _ = setgroups(&self.supplementary);
+        let _ = setresgid(self.rgid, self.egid, self.sgid);
+        let _ = setresuid(self.ruid, self.euid, self.suid);
+    }
+}
+
+fn drop_process_privileges(user: &User) -> Result<PrivilegeDropGuard> {
+    if !geteuid().is_root() {
+        bail!("must start as root to drop privileges temporarily");
+    }
+
+    let uid_set = getresuid().context("getresuid failed")?;
+    let gid_set = getresgid().context("getresgid failed")?;
+    let ruid = uid_set.real;
+    let euid = uid_set.effective;
+    let suid = uid_set.saved;
+    let rgid = gid_set.real;
+    let egid = gid_set.effective;
+    let sgid = gid_set.saved;
+    let supplementary = getgroups().context("getgroups failed")?;
+
+    let guard = PrivilegeDropGuard {
+        ruid,
+        euid,
+        suid,
+        rgid,
+        egid,
+        sgid,
+        supplementary,
+    };
+
+    // Reduce supplementary groups first so subsequent permission checks do not
+    // inherit ambient capabilities from the original uid.
+    setgroups(&[user.gid]).context("setgroups failed")?;
+    if let Err(err) = setresgid(user.gid, user.gid, guard.sgid) {
+        guard.restore_best_effort();
+        return Err(err).context("setresgid failed");
+    }
+    if let Err(err) = setresuid(user.uid, user.uid, guard.suid) {
+        guard.restore_best_effort();
+        return Err(err).context("setresuid failed");
+    }
+
+    Ok(guard)
+}
+
+fn default_paths_for(uid: Uid) -> (PathBuf, PathBuf) {
+    let base = PathBuf::from(format!("/var/tmp/pg-embed-{}", uid.as_raw()));
+    (base.join("install"), base.join("data"))
+}
+
+struct SettingsPaths {
+    install_dir: PathBuf,
+    data_dir: PathBuf,
+    install_default: bool,
+    data_default: bool,
+}
+
+fn ensure_settings_paths(settings: &mut Settings, cfg: &PgEnvCfg, uid: Uid) -> SettingsPaths {
+    let (default_install_dir, default_data_dir) = default_paths_for(uid);
+    let mut install_default = false;
+    let mut data_default = false;
+    if cfg.runtime_dir.is_none() {
+        settings.installation_dir = default_install_dir.clone();
+        install_default = true;
+    }
+    if cfg.data_dir.is_none() {
+        settings.data_dir = default_data_dir.clone();
+        data_default = true;
+    }
+    SettingsPaths {
+        install_dir: settings.installation_dir.clone(),
+        data_dir: settings.data_dir.clone(),
+        install_default,
+        data_default,
+    }
+}
+
+fn set_env_var<K, V>(key: K, value: V)
+where
+    K: AsRef<OsStr>,
+    V: AsRef<OsStr>,
+{
+    // SAFETY: `std::env::set_var` mutates global process state. We pass only
+    // trusted UTF-8 keys and values derived from configuration so platform
+    // invariants hold.
+    unsafe { env::set_var(key, value) }
+}
 
 #[allow(non_snake_case)]
 #[derive(Debug, Clone, Serialize, Deserialize, OrthoConfig, Default)]
@@ -95,28 +215,13 @@ pub fn with_temp_euid<F, R>(target: Uid, body: F) -> Result<R>
 where
     F: FnOnce() -> Result<R>,
 {
-    if !geteuid().is_root() {
-        bail!("must start as root to drop privileges temporarily");
-    }
-    let ids = getresuid().context("getresuid failed")?;
-    setresuid(ids.real, target, ids.saved).context("failed to set euid")?;
-
-    struct Guard {
-        real: Uid,
-        saved: Uid,
-    }
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            let _ = setresuid(self.real, Uid::from_raw(0), self.saved);
-        }
-    }
-
-    let _guard = Guard {
-        real: ids.real,
-        saved: ids.saved,
-    };
-
-    body()
+    let user = User::from_uid(target)
+        .context("User::from_uid failed")?
+        .ok_or_else(|| color_eyre::eyre::eyre!("no passwd entry for uid {}", target))?;
+    let guard = drop_process_privileges(&user)?;
+    let result = body();
+    drop(guard);
+    result
 }
 
 /// Prepare `dir` so `uid` can access it.
@@ -125,12 +230,50 @@ where
 /// applies permissions (0755) so the unprivileged user can read and execute its
 /// contents.
 #[cfg(unix)]
-pub fn make_dir_accessible<P: AsRef<Path>>(dir: P, uid: Uid) -> Result<()> {
+fn ensure_dir_for_user<P: AsRef<Path>>(dir: P, uid: Uid, mode: u32) -> Result<()> {
     let dir = dir.as_ref();
     fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
     chown(dir, Some(uid), None).with_context(|| format!("chown {}", dir.display()))?;
-    fs::set_permissions(dir, fs::Permissions::from_mode(0o755))
+    fs::set_permissions(dir, fs::Permissions::from_mode(mode))
         .with_context(|| format!("chmod {}", dir.display()))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+pub fn make_dir_accessible<P: AsRef<Path>>(dir: P, uid: Uid) -> Result<()> {
+    ensure_dir_for_user(dir, uid, 0o755)
+}
+
+#[cfg(unix)]
+/// Ensures `dir` exists, is owned by `uid`, and has PostgreSQL-compatible 0700 permissions.
+///
+/// PostgreSQL refuses to use a data directory that is accessible to other
+/// users. This helper creates the directory (if needed), chowns it to `uid`,
+/// and clamps permissions to `0700` to satisfy that requirement.
+pub fn make_data_dir_private<P: AsRef<Path>>(dir: P, uid: Uid) -> Result<()> {
+    ensure_dir_for_user(dir, uid, 0o700)
+}
+
+#[cfg(unix)]
+fn ensure_tree_owned_by_user<P: AsRef<Path>>(root: P, user: &User) -> Result<()> {
+    let mut stack = vec![root.as_ref().to_path_buf()];
+    while let Some(path) = stack.pop() {
+        let entries = match fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == ErrorKind::NotFound => continue,
+            Err(err) => return Err(err).with_context(|| format!("read_dir {}", path.display())),
+        };
+
+        for entry in entries {
+            let entry = entry.with_context(|| format!("iterate {}", path.display()))?;
+            let entry_path = entry.path();
+            chown(&entry_path, Some(user.uid), Some(user.gid))
+                .with_context(|| format!("chown {}", entry_path.display()))?;
+            if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                stack.push(entry_path);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -152,7 +295,7 @@ pub fn run() -> Result<()> {
         bail!("must be run as root");
     }
     let cfg = PgEnvCfg::load().context("failed to load configuration via OrthoConfig")?;
-    let settings = cfg.to_settings()?;
+    let mut settings = cfg.to_settings()?;
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -161,18 +304,55 @@ pub fn run() -> Result<()> {
 
     #[cfg(unix)]
     {
-        let nobody = nobody_uid();
-        make_dir_accessible(&settings.installation_dir, nobody)?;
-        make_dir_accessible(&settings.data_dir, nobody)?;
-        with_temp_euid(nobody, || {
-            rt.block_on(async {
-                let mut pg = PostgreSQL::new(settings);
-                pg.setup()
-                    .await
-                    .wrap_err("postgresql_embedded::setup() failed")?;
-                Ok::<(), color_eyre::Report>(())
-            })
+        let nobody_user = User::from_name("nobody")
+            .context("failed to resolve user 'nobody'")?
+            .ok_or_else(|| color_eyre::eyre::eyre!("user 'nobody' not found"))?;
+
+        let paths = ensure_settings_paths(&mut settings, &cfg, nobody_user.uid);
+        let install_dir = paths.install_dir.clone();
+        let data_dir = paths.data_dir.clone();
+
+        if paths.install_default
+            && let Some(base_dir) = install_dir.parent()
+        {
+            ensure_dir_for_user(base_dir, nobody_user.uid, 0o755)?;
+        }
+        if paths.data_default
+            && let Some(base_dir) = data_dir.parent()
+        {
+            ensure_dir_for_user(base_dir, nobody_user.uid, 0o755)?;
+        }
+
+        ensure_dir_for_user(&install_dir, nobody_user.uid, 0o755)?;
+        if paths.install_default {
+            ensure_tree_owned_by_user(&install_dir, &nobody_user)?;
+        }
+
+        make_data_dir_private(&data_dir, nobody_user.uid)?;
+        if paths.data_default {
+            ensure_tree_owned_by_user(&data_dir, &nobody_user)?;
+        }
+
+        let cache_dir = install_dir.join("cache");
+        let runtime_dir = install_dir.join("run");
+
+        let guard = drop_process_privileges(&nobody_user)?;
+        set_env_var("HOME", &install_dir);
+        set_env_var("XDG_CACHE_HOME", &cache_dir);
+        set_env_var("XDG_RUNTIME_DIR", &runtime_dir);
+        fs::create_dir_all(&cache_dir)
+            .with_context(|| format!("create {}", cache_dir.display()))?;
+        fs::create_dir_all(&runtime_dir)
+            .with_context(|| format!("create {}", runtime_dir.display()))?;
+
+        rt.block_on(async {
+            let mut pg = PostgreSQL::new(settings);
+            pg.setup()
+                .await
+                .wrap_err("postgresql_embedded::setup() failed")?;
+            Ok::<(), color_eyre::Report>(())
         })?;
+        drop(guard);
     }
     #[cfg(not(unix))]
     {
@@ -186,4 +366,43 @@ pub fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn ensure_settings_paths_applies_defaults() {
+        let cfg = PgEnvCfg::default();
+        let mut settings = cfg.to_settings().expect("default config should convert");
+        let uid = Uid::from_raw(9999);
+
+        let paths = ensure_settings_paths(&mut settings, &cfg, uid);
+        let (expected_install, expected_data) = default_paths_for(uid);
+
+        assert_eq!(paths.install_dir, expected_install);
+        assert_eq!(paths.data_dir, expected_data);
+        assert!(paths.install_default);
+        assert!(paths.data_default);
+    }
+
+    #[test]
+    fn ensure_settings_paths_respects_user_provided_dirs() {
+        let cfg = PgEnvCfg {
+            runtime_dir: Some(PathBuf::from("/custom/install")),
+            data_dir: Some(PathBuf::from("/custom/data")),
+            ..PgEnvCfg::default()
+        };
+        let mut settings = cfg.to_settings().expect("custom config should convert");
+        let uid = Uid::from_raw(4242);
+
+        let paths = ensure_settings_paths(&mut settings, &cfg, uid);
+
+        assert_eq!(paths.install_dir, PathBuf::from("/custom/install"));
+        assert_eq!(paths.data_dir, PathBuf::from("/custom/data"));
+        assert!(!paths.install_default);
+        assert!(!paths.data_default);
+    }
 }
