@@ -1,0 +1,32 @@
+[package]
+name = "pg-embed-setup-unpriv"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "postgres_setup_unpriv"
+path = "src/main.rs"
+
+[dependencies]
+postgresql_embedded = { version = "0.18", features = ["tokio"] }
+nix = { version = "0.28", default-features = false, features = ["user", "fs"] }
+color-eyre = "0.6"
+tokio = { version = "1", features = ["rt", "macros"] }
+serde = { version = "1", features = ["derive"] }
+ortho_config = { git = "https://github.com/leynos/ortho-config", tag = "v0.3.0", features = ["json5", "yaml", "toml"] }
+clap = { version = "4", features = ["derive"] }
+figment = { version = "0.10", features = ["env"] }
+xdg = "3"
+uncased = "0.9"
+figment-json5 = "0.1.1"
+
+[features]
+toml = []
+json5 = []
+yaml = []
+
+[dev-dependencies]
+rstest = "0.18"
+temp-env = "0.3"
+tempfile = "3"
+color-eyre = "0.6"
