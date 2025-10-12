@@ -1,37 +1,17 @@
-# Next Steps For Unprivileged PostgreSQL Setup
+# Next Steps for Root-Oriented Postgres Testing
 
-## What Has Been Achieved
+## Ergonomic Improvements
 
-- Dropped the process real and effective user and group IDs to `nobody`,
-  including supplementary groups, so `getuid()` and friends observe the
-  unprivileged identity.
-- Forced embedded PostgreSQL paths away from `/root` and into
-  `/var/tmp/pg-embed-<uid>` (or caller-supplied directories) before the
-  privilege drop.
-- Normalised ownership and permissions of the installation and data trees so
-  PostgreSQL sees `0700` on its data directory and `nobody:nogroup` on cached
-  artefacts.
-- Rebased the PostgreSQL password file into the runtime tree and exported
-  `PGPASSFILE` so the file is created by `nobody` rather than inside a
-  root-owned temporary directory.
-- Added regression tests to cover privilege dropping, directory modes, and the
-  default-path selection logic.
-- Verified `make fmt`, `make lint`, and `make test` all pass with the new
-  behaviour.
+- Provide a high-level `bootstrap_for_tests()` helper that wraps `PgEnvCfg::load()`, runs `pg_embedded_setup_unpriv::run()`, and returns the derived `PgSettings` plus useful paths. Encapsulate timezone (`TZDIR`, `TZ`) and password-file scaffolding so agent tests do not repeat boilerplate.
+- Expose a `TestCluster` RAII struct that drops to `nobody`, starts `postgresql_embedded`, and stops the cluster via `Drop`. Include convenience methods for creating Diesel connections and applying SQL fixtures.
+- Offer a `ensure_pg_binaries_cached()` function that pre-populates the Theseus archive, avoiding repeated downloads and GitHub rate-limit failures in busy CI environments. Allow it to read `GITHUB_TOKEN` automatically.
+- Provide helper APIs to install missing prerequisites (e.g. detect missing `tzdata` and emit actionable errors pointing to the package manager command).
+- Publish rstest fixtures (e.g. `#[fixture] pub fn test_cluster()`) that leverage these helpers, making root-based integration tests concise and consistent across crates.
+- Add logging instrumentation (using `tracing`) to surface directory ownership changes, timezone configuration, and any environment overrides applied by the helpers.
 
-## What Still Fails
+## Recommended Workflow Enhancements
 
-- No failing behaviour is currently known after relocating the password file,
-  but we still need to confirm the fix by observing a clean PostgreSQL setup
-  while running as `nobody`.
-
-## Recommended Next Actions
-
-1. Re-run the privileged integration check (for example run
-   `sudo strace -f -yy -s 256 ./target/debug/pg_embedded_setup_unpriv` or use
-   `strace -f -yy -e trace=file -s 256 ./target/debug/pg_embedded_setup_unpriv 2>&1`
-    followed by piping to `less -R`) to validate that PostgreSQL completes
-   successfully without permission errors.
-2. If any `EACCES` remains, capture the failing path from strace so we can
-   inspect its ownership and mode before introducing additional corrective
-   `chown` calls.
+1. Add `docs/testing-playbook-root.md` containing copy-pastable recipes for starting a cluster, seeding data, and cleaning up in root-required workflows.
+2. Update CI images to install `tzdata` (and optionally cache the PostgreSQL archive) to prevent the `TimeZone` regression from resurfacing.
+3. Provide a `Makefile` target (e.g. `make e2e-root`) that runs the privileged Diesel e2e with the right environment variables, enabling quick validation for contributors.
+4. Add smoke tests and clippy lints covering the proposed helper functions to guarantee their behaviour under both root and unprivileged invocations.
