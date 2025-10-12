@@ -95,6 +95,7 @@ fn default_paths_for(uid: Uid) -> (PathBuf, PathBuf) {
 struct SettingsPaths {
     install_dir: PathBuf,
     data_dir: PathBuf,
+    password_file: PathBuf,
     install_default: bool,
     data_default: bool,
 }
@@ -107,6 +108,11 @@ fn ensure_settings_paths(settings: &mut Settings, cfg: &PgEnvCfg, uid: Uid) -> S
         settings.installation_dir = default_install_dir.clone();
         install_default = true;
     }
+    // Rebase the password file into the installation directory regardless of how Settings populated
+    // it. The default uses a root-owned temporary directory which becomes inaccessible once we drop
+    // privileges, so force it into a predictable, user-owned path instead.
+    let password_file = settings.installation_dir.join(".pgpass");
+    settings.password_file = password_file.clone();
     if cfg.data_dir.is_none() {
         settings.data_dir = default_data_dir.clone();
         data_default = true;
@@ -114,6 +120,7 @@ fn ensure_settings_paths(settings: &mut Settings, cfg: &PgEnvCfg, uid: Uid) -> S
     SettingsPaths {
         install_dir: settings.installation_dir.clone(),
         data_dir: settings.data_dir.clone(),
+        password_file,
         install_default,
         data_default,
     }
@@ -311,6 +318,7 @@ pub fn run() -> Result<()> {
         let paths = ensure_settings_paths(&mut settings, &cfg, nobody_user.uid);
         let install_dir = paths.install_dir.clone();
         let data_dir = paths.data_dir.clone();
+        let password_file = paths.password_file.clone();
 
         if paths.install_default
             && let Some(base_dir) = install_dir.parent()
@@ -332,6 +340,14 @@ pub fn run() -> Result<()> {
         if paths.data_default {
             ensure_tree_owned_by_user(&data_dir, &nobody_user)?;
         }
+
+        if password_file.exists() {
+            chown(&password_file, Some(nobody_user.uid), Some(nobody_user.gid))
+                .with_context(|| format!("chown {}", password_file.display()))?;
+            fs::set_permissions(&password_file, fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("chmod {}", password_file.display()))?;
+        }
+        set_env_var("PGPASSFILE", &password_file);
 
         let cache_dir = install_dir.join("cache");
         let runtime_dir = install_dir.join("run");
@@ -384,6 +400,7 @@ mod tests {
 
         assert_eq!(paths.install_dir, expected_install);
         assert_eq!(paths.data_dir, expected_data);
+        assert_eq!(paths.password_file, expected_install.join(".pgpass"));
         assert!(paths.install_default);
         assert!(paths.data_default);
     }
@@ -402,6 +419,10 @@ mod tests {
 
         assert_eq!(paths.install_dir, PathBuf::from("/custom/install"));
         assert_eq!(paths.data_dir, PathBuf::from("/custom/data"));
+        assert_eq!(
+            paths.password_file,
+            PathBuf::from("/custom/install").join(".pgpass")
+        );
         assert!(!paths.install_default);
         assert!(!paths.data_default);
     }
