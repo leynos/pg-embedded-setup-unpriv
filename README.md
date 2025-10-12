@@ -67,6 +67,9 @@ inside your own launcher.
   transferred to `nobody`.
 - **PostgreSQL download issues** – Ensure outbound network access is available
   to fetch the PostgreSQL distribution used by `postgresql_embedded`.
+- **Invalid `TimeZone` parameter** – The embedded cluster requires access to
+  the system timezone database. Install your distribution's `tzdata` (or
+  equivalent) package inside the container or VM running the tool.
 
 ## Next steps
 
