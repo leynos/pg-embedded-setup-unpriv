@@ -29,9 +29,8 @@ integrate it into automated test flows.
    ```
 
 3. Run the helper as `root` (for example, `sudo -E cargo run --release --bin
-   pg_embedded_setup_unpriv`). The command downloads the specified PostgreSQL
-   release, ensures the directories exist, and initialises the cluster with the
-   provided credentials.
+   pg_embedded_setup_unpriv
+   `).ThecommanddownloadsthespecifiedPostgreSQLrelease,ensuresthedirectoriesexist,andinitialisestheclusterwiththeprovidedcredentials.
 
 4. Pass the resulting paths and credentials to your tests. If you use
    `postgresql_embedded` directly after the setup step, it can reuse the staged
