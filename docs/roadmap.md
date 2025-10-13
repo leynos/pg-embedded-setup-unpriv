@@ -1,6 +1,6 @@
 # Zero-config RAII Postgres test fixture roadmap
 
-## Phase 1: Stabilise zero-configuration bootstrap
+## Phase 1: Stabilize zero-configuration bootstrap
 
 ### [ ] Step: Detect and adapt to execution privileges
 
