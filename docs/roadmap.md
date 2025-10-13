@@ -8,7 +8,7 @@
   unprivileged flows, verified by integration tests covering both contexts.
 - [ ] **Task:** Introduce mandatory privilege-dropping logic for root executions
   that provisions directories under the `nobody` user and proves idempotence
-  across two consecutive cluster initialisations.
+  across two consecutive cluster initializations.
 
 ### [ ] Step: Harden bootstrap orchestration
 
@@ -45,7 +45,7 @@
   mutations, environment variable injection, and PostgreSQL lifecycle events,
   verified by log assertions in integration tests.
 - [ ] **Task:** Surface the chosen settings (ports, directories, version) via
-  debug logging with sanitised output, ensuring sensitive values are redacted.
+  debug logging with sanitized output, ensuring sensitive values are redacted.
 
 ### [ ] Step: Validate cross-platform behaviour
 
