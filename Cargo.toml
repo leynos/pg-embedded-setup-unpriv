@@ -34,3 +34,4 @@ rstest = "0.18"
 temp-env = "0.3"
 tempfile = "3"
 color-eyre = "0.6"
+diesel = { version = "2", default-features = false, features = ["postgres"] }
