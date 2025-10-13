@@ -199,7 +199,7 @@ that([3](https://github.com/theseus-rs/postgresql-embedded/blob/b907b245e3f6aa22
 
 - **rstest fixtures:** We plan to publish built-in *fixtures* for the rstest
   framework([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace459329747e62fa4cd479318aa1bfb07628/docs/next-steps.md#L8-L10)).
-   For example, the library can expose:
+  For example, the library can expose:
 
 ```rust
 rustCopy code`#[fixture]
@@ -231,7 +231,7 @@ add a couple of helper functions:
 
 - **Binary Cache Preloading:** Provide an `ensure_pg_binaries_cached()`
   function([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace459329747e62fa4cd479318aa1bfb07628/docs/next-steps.md#L7-L8))
-   that pre-fetches the PostgreSQL binaries archive (using the configured
+  that pre-fetches the PostgreSQL binaries archive (using the configured
   version). This would essentially invoke the download logic of
   `postgresql_embedded` ahead of time. In a busy CI environment, this avoids
   each test run (or each parallel test) hitting the GitHub releases API and
@@ -363,13 +363,13 @@ in-memory database, but with full PostgreSQL fidelity.
 
 - pg_embedded_setup_unpriv – *Next Steps for Root-Oriented Postgres
   Testing*([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace459329747e62fa4cd479318aa1bfb07628/docs/next-steps.md#L5-L10))
-   (design goals for fixtures, RAII cluster, caching, etc.)
+  (design goals for fixtures, RAII cluster, caching, etc.)
 
 - pg_embedded_setup_unpriv – *README (Usage and
   prerequisites)*([4](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace459329747e62fa4cd479318aa1bfb07628/README.md#L62-L71))([4](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace459329747e62fa4cd479318aa1bfb07628/README.md#L70-L73))
-   (need for root and tzdata for embedded Postgres)
+  (need for root and tzdata for embedded Postgres)
 
 - theseus-rs/postgresql_embedded – *README (features and
   examples)*([3](https://github.com/theseus-rs/postgresql-embedded/blob/b907b245e3f6aa22d6f1009ffd6af1a3a2e56635/postgresql_embedded/README.md#L20-L28))([3](https://github.com/theseus-rs/postgresql-embedded/blob/b907b245e3f6aa22d6f1009ffd6af1a3a2e56635/postgresql_embedded/README.md#L40-L49))
-   (capabilities of the underlying embedded Postgres crate, async vs blocking
+  (capabilities of the underlying embedded Postgres crate, async vs blocking
   API, ephemeral ports support)
