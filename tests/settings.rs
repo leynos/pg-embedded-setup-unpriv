@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use color_eyre::eyre::Context;
 use nix::unistd::{User, geteuid, getgid, getuid};
 use pg_embedded_setup_unpriv::{
-    PgEnvCfg, make_data_dir_private, make_dir_accessible, nobody_uid, with_temp_euid,
+    ExecutionPrivileges, PgEnvCfg, detect_execution_privileges, make_data_dir_private,
+    make_dir_accessible, nobody_uid, with_temp_euid,
 };
 use postgresql_embedded::VersionReq;
 use rstest::rstest;
@@ -123,14 +124,21 @@ mod dir_accessible_tests {
 
 #[cfg(unix)]
 #[rstest]
-fn run_requires_root() -> color_eyre::Result<()> {
+fn detect_execution_privileges_tracks_effective_uid() -> color_eyre::Result<()> {
     if !geteuid().is_root() {
-        eprintln!("skipping root-dependent test");
+        assert_eq!(
+            detect_execution_privileges(),
+            ExecutionPrivileges::Unprivileged
+        );
         return Ok(());
     }
 
-    let err = with_temp_euid(nobody_uid(), pg_embedded_setup_unpriv::run)
-        .expect_err("run should fail for non-root user");
-    assert!(err.to_string().contains("must be run as root"));
-    Ok(())
+    assert_eq!(detect_execution_privileges(), ExecutionPrivileges::Root);
+    with_temp_euid(nobody_uid(), || {
+        assert_eq!(
+            detect_execution_privileges(),
+            ExecutionPrivileges::Unprivileged
+        );
+        Ok(())
+    })
 }

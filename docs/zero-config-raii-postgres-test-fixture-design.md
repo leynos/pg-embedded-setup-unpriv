@@ -15,6 +15,28 @@ accordingly, so the developer “shouldn’t have to do anything”
 extra([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace459329747e62fa4cd479318aa1bfb07628/docs/next-steps.md#L5-L6)).
  This can be done at runtime by checking the effective user ID:
 
+### Implementation update (2024-05-09)
+
+- Runtime detection now materialises as an `ExecutionPrivileges` enum. The
+  enum communicates whether the bootstrapper must drop privileges or can
+  proceed in-place, allowing call sites and behavioural tests to assert the
+  chosen path without reimplementing the detection logic.
+- Root execution uses `bootstrap_with_root`, a helper that prepares the
+  installation and data directories for the `nobody` account, drops process
+  identity via `with_temp_euid`, and runs `postgresql_embedded::setup()`
+  entirely as `nobody`. The helper deliberately re-applies ownership and
+  permissions on every invocation so two consecutive bootstraps remain
+  idempotent.
+- Unprivileged execution now exercises `bootstrap_unprivileged`, which sets up
+  directories with the caller’s UID, clamps permissions to PostgreSQL-friendly
+  defaults (0755 runtime, 0700 data), and reuses the same environment
+  normalisation as the root flow. This guarantees identical layout regardless
+  of privileges.
+- Behavioural tests implemented with `rstest-bdd` cover both flows. The
+  scenarios share a reusable sandbox that records the detected privileges, runs
+  bootstrap as either root or `nobody`, and asserts ownership plus double-run
+  idempotence for the privileged path.
+
 - **If running as root on Linux:** the helper will perform the necessary
   privilege drop to a safe user (such as `"nobody"`) before initializing
   PostgreSQL. This uses the existing logic to temporarily drop `EUID` and

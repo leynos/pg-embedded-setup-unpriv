@@ -4,9 +4,9 @@
 
 ### Step: Detect and adapt to execution privileges
 
-- [ ] **Task:** Ship runtime privilege detection that branches between root and
+- [x] **Task:** Ship runtime privilege detection that branches between root and
   unprivileged flows, verified by integration tests covering both contexts.
-- [ ] **Task:** Introduce mandatory privilege-dropping logic for root executions
+- [x] **Task:** Introduce mandatory privilege-dropping logic for root executions
   that provisions directories under the `nobody` user and proves idempotence
   across two consecutive cluster initializations.
 
