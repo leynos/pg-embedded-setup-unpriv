@@ -14,45 +14,44 @@ use pg_embedded_setup_unpriv::{
 };
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
-use tempfile::TempDir;
 
 #[path = "support/mod.rs"]
 mod support;
 
 use support::{
-    cap_fs::{metadata, remove_tree, set_permissions},
+    cap_fs::{CapabilityTempDir, metadata, remove_tree, set_permissions},
     env::with_scoped_env,
 };
 
 #[derive(Debug)]
 struct BootstrapSandbox {
-    _base: TempDir,
+    _tempdir_guard: CapabilityTempDir,
     base_path: Utf8PathBuf,
     install_dir: Utf8PathBuf,
     data_dir: Utf8PathBuf,
     detected: Option<ExecutionPrivileges>,
     expected_owner: Option<Uid>,
-    skip_checks: bool,
+    skip_reason: Option<String>,
 }
 
 impl BootstrapSandbox {
     fn new() -> Result<Self> {
-        let base = TempDir::new().context("create sandbox tempdir")?;
-        let base_path = Utf8PathBuf::from_path_buf(base.path().to_path_buf())
-            .map_err(|_| eyre!("sandbox path is not valid UTF-8"))?;
-        set_permissions(&base_path, 0o777)?;
+        let tempdir_guard =
+            CapabilityTempDir::new("bootstrap-sandbox").context("create sandbox tempdir")?;
+        let base_path = tempdir_guard.path().to_owned();
+        set_permissions(tempdir_guard.path(), 0o777)?;
 
         let install_dir = base_path.join("install");
         let data_dir = base_path.join("data");
 
         Ok(Self {
-            _base: base,
+            _tempdir_guard: tempdir_guard,
             base_path,
             install_dir,
             data_dir,
             detected: None,
             expected_owner: None,
-            skip_checks: false,
+            skip_reason: None,
         })
     }
 
@@ -83,12 +82,12 @@ impl BootstrapSandbox {
         )
     }
 
-    fn run_bootstrap(&self) -> Result<()> {
+    fn run_bootstrap(&self) -> pg_embedded_setup_unpriv::Result<()> {
         self.with_env(pg_embedded_setup_unpriv::run)
     }
 
     fn reset(&mut self) -> Result<()> {
-        self.skip_checks = false;
+        self.skip_reason = None;
         self.remove_if_present(&self.install_dir)?;
         self.remove_if_present(&self.data_dir)?;
         set_permissions(&self.base_path, 0o777)?;
@@ -107,16 +106,18 @@ impl BootstrapSandbox {
         self.expected_owner = Some(uid);
     }
 
-    fn mark_skipped(&mut self) {
-        self.skip_checks = true;
+    fn mark_skipped(&mut self, reason: impl Into<String>) {
+        let reason = reason.into();
+        eprintln!("{reason}");
+        self.skip_reason = Some(reason);
     }
 
     fn is_skipped(&self) -> bool {
-        self.skip_checks
+        self.skip_reason.is_some()
     }
 
     fn assert_detected(&self, expected: ExecutionPrivileges) -> Result<()> {
-        if self.skip_checks {
+        if self.is_skipped() {
             return Ok(());
         }
         let detected = self
@@ -131,23 +132,37 @@ impl BootstrapSandbox {
         Ok(())
     }
 
-    fn assert_owned_by_expected_user(&self) -> Result<()> {
-        if self.skip_checks {
+    fn assert_owned_by_expected_user(&mut self) -> Result<()> {
+        if self.is_skipped() {
             return Ok(());
         }
         let expected = self
             .expected_owner
             .ok_or_else(|| eyre!("expected owner not recorded for sandbox"))?;
-        self.assert_path_owner(&self.install_dir, expected)?;
-        self.assert_path_owner(&self.data_dir, expected)?;
+        let install_dir = self.install_dir.clone();
+        let data_dir = self.data_dir.clone();
+        self.assert_path_owner(install_dir.as_ref(), expected)?;
+        self.assert_path_owner(data_dir.as_ref(), expected)?;
         Ok(())
     }
 
-    fn assert_path_owner(&self, path: &Utf8Path, expected: Uid) -> Result<()> {
+    fn assert_path_owner(&mut self, path: &Utf8Path, expected: Uid) -> Result<()> {
         let metadata = match metadata(path) {
             Ok(metadata) => metadata,
-            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
-            Err(err) if err.kind() == ErrorKind::PermissionDenied => return Ok(()),
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                self.mark_skipped(format!(
+                    "SKIP-BOOTSTRAP: ownership check skipped for {} (missing): {}",
+                    path, err
+                ));
+                return Ok(());
+            }
+            Err(err) if err.kind() == ErrorKind::PermissionDenied => {
+                self.mark_skipped(format!(
+                    "SKIP-BOOTSTRAP: ownership check skipped for {} (permission denied): {}",
+                    path, err
+                ));
+                return Ok(());
+            }
             Err(err) => {
                 return Err(err).with_context(|| format!("inspect ownership of {}", path.as_str()));
             }
@@ -162,25 +177,33 @@ impl BootstrapSandbox {
         Ok(())
     }
 
-    fn handle_outcome(&mut self, outcome: Result<()>) -> Result<()> {
+    fn handle_outcome(&mut self, outcome: pg_embedded_setup_unpriv::Result<()>) -> Result<()> {
         match outcome {
             Ok(()) => Ok(()),
             Err(err) => {
                 let message = err.to_string();
-                let should_skip = [
-                    "rate limit exceeded",
-                    "setgroups failed",
-                    "postgresql_embedded::setup() failed",
-                    "must start as root to drop privileges temporarily",
-                ]
-                .iter()
-                .any(|needle| message.contains(needle));
-                if should_skip {
-                    eprintln!("skipping bootstrap scenario: {}", message);
-                    self.mark_skipped();
+                const SKIP_CONDITIONS: &[(&str, &str)] = &[
+                    (
+                        "rate limit exceeded",
+                        "SKIP-BOOTSTRAP: rate limit exceeded whilst downloading PostgreSQL",
+                    ),
+                    (
+                        "setgroups failed",
+                        "SKIP-BOOTSTRAP: kernel refused to adjust supplementary groups",
+                    ),
+                    (
+                        "must start as root to drop privileges temporarily",
+                        "SKIP-BOOTSTRAP: root privileges unavailable for privileged bootstrap path",
+                    ),
+                ];
+                if let Some((_, reason)) = SKIP_CONDITIONS
+                    .iter()
+                    .find(|(needle, _)| message.contains(needle))
+                {
+                    self.mark_skipped(format!("{reason}: {message}"));
                     Ok(())
                 } else {
-                    Err(err)
+                    Err(eyre!(err))
                 }
             }
         }
@@ -201,11 +224,13 @@ fn given_fresh_sandbox(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
 fn when_bootstrap_runs_unprivileged(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
     if geteuid().is_root() {
         sandbox.borrow_mut().set_expected_owner(nobody_uid());
-        let privileges = with_temp_euid(nobody_uid(), || Ok(detect_execution_privileges()))?;
+        let privileges = with_temp_euid(nobody_uid(), || Ok(detect_execution_privileges()))
+            .map_err(|err| eyre!(err))?;
         sandbox.borrow_mut().record_privileges(privileges);
         let outcome = with_temp_euid(nobody_uid(), || {
             let sandbox_ref = sandbox.borrow();
-            sandbox_ref.run_bootstrap()
+            sandbox_ref.run_bootstrap().map_err(|err| eyre!(err))?;
+            Ok(())
         });
         sandbox.borrow_mut().handle_outcome(outcome)
     } else {
@@ -226,8 +251,9 @@ fn when_bootstrap_runs_unprivileged(sandbox: &RefCell<BootstrapSandbox>) -> Resu
 #[when("the bootstrap runs twice as root")]
 fn when_bootstrap_runs_twice_as_root(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
     if !geteuid().is_root() {
-        eprintln!("skipping root-dependent bootstrap scenario");
-        sandbox.borrow_mut().mark_skipped();
+        sandbox
+            .borrow_mut()
+            .mark_skipped("SKIP-BOOTSTRAP: privileged scenario requires root access");
         return Ok(());
     }
 
@@ -262,7 +288,7 @@ fn when_bootstrap_runs_twice_as_root(sandbox: &RefCell<BootstrapSandbox>) -> Res
 
 #[then("the sandbox directories are owned by the target uid")]
 fn then_directories_owned(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
-    sandbox.borrow().assert_owned_by_expected_user()
+    sandbox.borrow_mut().assert_owned_by_expected_user()
 }
 
 #[then("the detected privileges were unprivileged")]

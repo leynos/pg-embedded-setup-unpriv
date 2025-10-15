@@ -1,10 +1,9 @@
 //! Privilege management helpers for dropping root access safely.
+use crate::error::{PrivilegeError, PrivilegeResult};
+use crate::fs::{ensure_dir_exists, set_permissions};
 use camino::{Utf8Path, Utf8PathBuf};
-use cap_std::{
-    ambient_authority,
-    fs::{Dir, PermissionsExt},
-};
-use color_eyre::eyre::{Context, Result, bail};
+use cap_std::{ambient_authority, fs::Dir};
+use color_eyre::eyre::{Context, eyre};
 use nix::unistd::{
     Gid, Uid, User, chown, geteuid, getgroups, getresgid, getresuid, setgroups, setresgid,
     setresuid,
@@ -37,9 +36,11 @@ impl PrivilegeDropGuard {
     }
 }
 
-pub(crate) fn drop_process_privileges(user: &User) -> Result<PrivilegeDropGuard> {
+pub(crate) fn drop_process_privileges(user: &User) -> PrivilegeResult<PrivilegeDropGuard> {
     if !geteuid().is_root() {
-        bail!("must start as root to drop privileges temporarily");
+        return Err(PrivilegeError::from(eyre!(
+            "must start as root to drop privileges temporarily"
+        )));
     }
 
     let uid_set = getresuid().context("getresuid failed")?;
@@ -67,58 +68,81 @@ pub(crate) fn drop_process_privileges(user: &User) -> Result<PrivilegeDropGuard>
     setgroups(&[user.gid]).context("setgroups failed")?;
     if let Err(err) = setresgid(user.gid, user.gid, guard.sgid) {
         guard.restore_best_effort();
-        return Err(err).context("setresgid failed");
+        let report = eyre!(err).wrap_err("setresgid failed");
+        return Err(PrivilegeError::from(report));
     }
     if let Err(err) = setresuid(user.uid, user.uid, guard.suid) {
         guard.restore_best_effort();
-        return Err(err).context("setresuid failed");
+        let report = eyre!(err).wrap_err("setresuid failed");
+        return Err(PrivilegeError::from(report));
     }
 
     Ok(guard)
 }
 
-pub fn with_temp_euid<F, R>(target: Uid, body: F) -> Result<R>
-where
-    F: FnOnce() -> Result<R>,
-{
-    let user = User::from_uid(target)
-        .context("User::from_uid failed")?
-        .ok_or_else(|| color_eyre::eyre::eyre!("no passwd entry for uid {}", target))?;
-    let guard = drop_process_privileges(&user)?;
-    let result = body();
-    drop(guard);
-    result
-}
-
-pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(dir: P, uid: Uid, mode: u32) -> Result<()> {
+pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
+    dir: P,
+    user: &User,
+    mode: u32,
+) -> PrivilegeResult<()> {
     let dir = dir.as_ref();
     ensure_dir_exists(dir)?;
-    chown(dir.as_std_path(), Some(uid), None).with_context(|| format!("chown {}", dir.as_str()))?;
+    chown(dir.as_std_path(), Some(user.uid), Some(user.gid))
+        .with_context(|| format!("chown {}", dir.as_str()))?;
     set_permissions(dir, mode)?;
     Ok(())
 }
 
-pub fn make_dir_accessible<P: AsRef<Utf8Path>>(dir: P, uid: Uid) -> Result<()> {
-    ensure_dir_for_user(dir, uid, 0o755)
+/// Ensures `dir` exists, is owned by `user`, and grants world-readable access.
+///
+/// # Examples
+/// ```no_run
+/// use nix::unistd::User;
+/// use pg_embedded_setup_unpriv::make_dir_accessible;
+///
+/// # fn demo(user: &User) -> pg_embedded_setup_unpriv::Result<()> {
+/// let dir = camino::Utf8Path::new("/var/tmp/my-install");
+/// make_dir_accessible(dir, user)?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn make_dir_accessible<P: AsRef<Utf8Path>>(dir: P, user: &User) -> PrivilegeResult<()> {
+    ensure_dir_for_user(dir, user, 0o755)
 }
 
-/// Ensures `dir` exists, is owned by `uid`, and has PostgreSQL-compatible 0700 permissions.
+/// Ensures `dir` exists, is owned by `user`, and has PostgreSQL-compatible 0700 permissions.
 ///
 /// PostgreSQL refuses to use a data directory that is accessible to other
-/// users. This helper creates the directory (if needed), chowns it to `uid`,
+/// users. This helper creates the directory (if needed), chowns it to `user`,
 /// and clamps permissions to `0700` to satisfy that requirement.
-pub fn make_data_dir_private<P: AsRef<Utf8Path>>(dir: P, uid: Uid) -> Result<()> {
-    ensure_dir_for_user(dir, uid, 0o700)
+///
+/// # Examples
+/// ```no_run
+/// use nix::unistd::User;
+/// use pg_embedded_setup_unpriv::make_data_dir_private;
+///
+/// # fn demo(user: &User) -> pg_embedded_setup_unpriv::Result<()> {
+/// let dir = camino::Utf8Path::new("/var/tmp/my-data");
+/// make_data_dir_private(dir, user)?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn make_data_dir_private<P: AsRef<Utf8Path>>(dir: P, user: &User) -> PrivilegeResult<()> {
+    ensure_dir_for_user(dir, user, 0o700)
 }
 
-pub(crate) fn ensure_tree_owned_by_user<P: AsRef<Utf8Path>>(root: P, user: &User) -> Result<()> {
+pub(crate) fn ensure_tree_owned_by_user<P: AsRef<Utf8Path>>(
+    root: P,
+    user: &User,
+) -> PrivilegeResult<()> {
     let mut stack = vec![root.as_ref().to_path_buf()];
     while let Some(path) = stack.pop() {
         let dir = match Dir::open_ambient_dir(path.as_std_path(), ambient_authority()) {
             Ok(dir) => dir,
             Err(err) if err.kind() == ErrorKind::NotFound => continue,
             Err(err) => {
-                return Err(err).with_context(|| format!("open directory {}", path.as_str()));
+                let report = eyre!(err).wrap_err(format!("open directory {}", path.as_str()));
+                return Err(PrivilegeError::from(report));
             }
         };
 
@@ -140,6 +164,13 @@ pub(crate) fn ensure_tree_owned_by_user<P: AsRef<Utf8Path>>(root: P, user: &User
     Ok(())
 }
 
+/// Retrieves the UID of the `nobody` account, defaulting to 65534 when absent.
+///
+/// # Examples
+/// ```
+/// let uid = pg_embedded_setup_unpriv::nobody_uid();
+/// assert!(uid.as_raw() > 0);
+/// ```
 pub fn nobody_uid() -> Uid {
     use nix::unistd::User;
     User::from_name("nobody")
@@ -149,51 +180,51 @@ pub fn nobody_uid() -> Uid {
         .unwrap_or_else(|| Uid::from_raw(65534))
 }
 
+/// Computes default installation and data directories for a given uid.
+///
+/// # Examples
+/// ```
+/// use nix::unistd::Uid;
+///
+/// let uid = Uid::from_raw(1000);
+/// let (install, data) = pg_embedded_setup_unpriv::default_paths_for(uid);
+/// assert!(install.as_str().contains("pg-embed-"));
+/// assert!(data.as_str().contains("pg-embed-"));
+/// ```
 pub fn default_paths_for(uid: Uid) -> (Utf8PathBuf, Utf8PathBuf) {
     let base = Utf8PathBuf::from(format!("/var/tmp/pg-embed-{}", uid.as_raw()));
     (base.join("install"), base.join("data"))
 }
 
-fn ensure_dir_exists(path: &Utf8Path) -> Result<()> {
-    let (dir, relative) = ambient_dir_and_path(path)?;
-    if relative.as_str().is_empty() {
-        return Ok(());
-    }
-    dir.create_dir_all(relative.as_std_path())
-        .or_else(|err| {
-            if err.kind() == ErrorKind::AlreadyExists {
-                Ok(())
-            } else {
-                Err(err)
-            }
-        })
-        .with_context(|| format!("create {}", path.as_str()))
-}
-
-fn set_permissions(path: &Utf8Path, mode: u32) -> Result<()> {
-    let (dir, relative) = ambient_dir_and_path(path)?;
-    if relative.as_str().is_empty() {
-        return Ok(());
-    }
-    dir.set_permissions(
-        relative.as_std_path(),
-        cap_std::fs::Permissions::from_mode(mode),
-    )
-    .with_context(|| format!("chmod {}", path.as_str()))
-}
-
-fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
-    if path.has_root() {
-        let stripped = path
-            .strip_prefix("/")
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|_| path.to_path_buf());
-        let dir = Dir::open_ambient_dir("/", ambient_authority())
-            .context("open ambient root directory")?;
-        Ok((dir, stripped))
-    } else {
-        let dir = Dir::open_ambient_dir(".", ambient_authority())
-            .context("open ambient working directory")?;
-        Ok((dir, path.to_path_buf()))
-    }
+#[cfg(feature = "privileged-tests")]
+/// Temporarily switches the process effective user ID for test scenarios.
+///
+/// # Safety
+/// This function mutates the entire process identity. Callers must ensure no
+/// other threads perform privileged operations while the guard is active.
+/// Prefer invoking this helper in single-threaded test binaries only.
+///
+/// # Examples
+/// ```
+/// # use nix::unistd::Uid;
+/// use pg_embedded_setup_unpriv::with_temp_euid;
+///
+/// # fn demo(uid: Uid) -> pg_embedded_setup_unpriv::Result<()> {
+/// with_temp_euid(uid, || Ok(()))?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn with_temp_euid<F, R>(target: Uid, body: F) -> crate::Result<R>
+where
+    F: FnOnce() -> color_eyre::eyre::Result<R>,
+{
+    let user = User::from_uid(target)
+        .context("User::from_uid failed")
+        .map_err(PrivilegeError::from)?
+        .ok_or_else(|| color_eyre::eyre::eyre!("no passwd entry for uid {}", target))
+        .map_err(PrivilegeError::from)?;
+    let guard = drop_process_privileges(&user)?;
+    let result = body().map_err(PrivilegeError::from)?;
+    drop(guard);
+    Ok(result)
 }

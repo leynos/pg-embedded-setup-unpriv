@@ -62,6 +62,9 @@ still running as `root`, follow these steps:
 - Invoke `pg_embedded_setup_unpriv` before dropping privileges. This prepares
   file ownership, caches the binaries, and records the superuser password in a
   location accessible to `nobody`.
+- Enable the `privileged-tests` Cargo feature when depending on the library so
+  the `with_temp_euid` helper is available to orchestrate privilege changes in
+  end-to-end suites.
 - Inside the test, temporarily adopt the `nobody` UID (for example,
   `pg_embedded_setup_unpriv::with_temp_euid`) prior to starting the database.
 - Ensure the `PGPASSFILE` environment variable points to the file created in

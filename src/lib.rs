@@ -7,17 +7,22 @@
 #![allow(non_snake_case)]
 
 mod bootstrap;
+mod error;
+mod fs;
 mod privileges;
 
 pub use bootstrap::{ExecutionPrivileges, detect_execution_privileges, run};
-pub use privileges::{
-    default_paths_for, make_data_dir_private, make_dir_accessible, nobody_uid, with_temp_euid,
-};
+pub use error::{Error, Result};
+#[cfg(feature = "privileged-tests")]
+pub use privileges::with_temp_euid;
+pub use privileges::{default_paths_for, make_data_dir_private, make_dir_accessible, nobody_uid};
 
-use color_eyre::eyre::{Context, Result};
+use color_eyre::eyre::Context;
 use ortho_config::OrthoConfig;
 use postgresql_embedded::{Settings, VersionReq};
 use serde::{Deserialize, Serialize};
+
+use crate::error::ConfigResult;
 
 #[allow(non_snake_case)]
 #[derive(Debug, Clone, Serialize, Deserialize, OrthoConfig, Default)]
@@ -53,7 +58,7 @@ impl PgEnvCfg {
         Ok(s)
     }
 
-    fn apply_version(&self, settings: &mut Settings) -> Result<()> {
+    fn apply_version(&self, settings: &mut Settings) -> ConfigResult<()> {
         if let Some(ref vr) = self.version_req {
             settings.version =
                 VersionReq::parse(vr).context("PG_VERSION_REQ invalid semver spec")?;

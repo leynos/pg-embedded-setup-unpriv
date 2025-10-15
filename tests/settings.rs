@@ -84,14 +84,15 @@ fn with_temp_euid_changes_uid() -> color_eyre::Result<()> {
 }
 
 #[cfg(unix)]
+#[path = "support/mod.rs"]
+mod support;
+
+#[cfg(unix)]
 mod dir_accessible_tests {
     use super::*;
-    use camino::Utf8PathBuf;
-    use cap_std::{
-        ambient_authority,
-        fs::{Dir, MetadataExt, PermissionsExt},
-    };
-    use tempfile::tempdir;
+    use cap_std::fs::{MetadataExt, PermissionsExt};
+
+    use crate::support::cap_fs::{CapabilityTempDir, metadata};
 
     #[rstest]
     fn make_dir_accessible_allows_nobody() -> color_eyre::Result<()> {
@@ -100,11 +101,13 @@ mod dir_accessible_tests {
             return Ok(());
         }
 
-        let tmp = tempdir()?;
-        let dir = Utf8PathBuf::from_path_buf(tmp.path().join("foo"))
-            .map_err(|_| color_eyre::eyre::eyre!("temp path is not valid UTF-8"))?;
-        super::make_dir_accessible(&dir, nobody_uid())?;
-        let meta = metadata_io(&dir)?;
+        let tmp = CapabilityTempDir::new("make-dir-accessible")?;
+        let dir = tmp.path().join("foo");
+        let nobody = User::from_uid(nobody_uid())
+            .context("User::from_uid failed")?
+            .expect("nobody user should exist");
+        super::make_dir_accessible(&dir, &nobody)?;
+        let meta = metadata(&dir).map_err(|err| color_eyre::eyre::eyre!(err))?;
         assert_eq!(meta.uid(), nobody_uid().as_raw());
         assert_eq!(meta.permissions().mode() & 0o777, 0o755);
         Ok(())
@@ -117,27 +120,16 @@ mod dir_accessible_tests {
             return Ok(());
         }
 
-        let tmp = tempdir()?;
-        let dir = Utf8PathBuf::from_path_buf(tmp.path().join("bar"))
-            .map_err(|_| color_eyre::eyre::eyre!("temp path is not valid UTF-8"))?;
-        super::make_data_dir_private(&dir, nobody_uid())?;
-        let meta = metadata_io(&dir)?;
+        let tmp = CapabilityTempDir::new("make-data-dir-private")?;
+        let dir = tmp.path().join("bar");
+        let nobody = User::from_uid(nobody_uid())
+            .context("User::from_uid failed")?
+            .expect("nobody user should exist");
+        super::make_data_dir_private(&dir, &nobody)?;
+        let meta = metadata(&dir).map_err(|err| color_eyre::eyre::eyre!(err))?;
         assert_eq!(meta.uid(), nobody_uid().as_raw());
         assert_eq!(meta.permissions().mode() & 0o777, 0o700);
         Ok(())
-    }
-
-    fn metadata_io(path: &Utf8PathBuf) -> std::io::Result<cap_std::fs::Metadata> {
-        let stripped = path
-            .strip_prefix("/")
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|_| path.to_path_buf());
-        let dir = Dir::open_ambient_dir("/", ambient_authority())?;
-        if stripped.as_str().is_empty() {
-            dir.dir_metadata()
-        } else {
-            dir.metadata(stripped.as_std_path())
-        }
     }
 }
 
@@ -159,5 +151,6 @@ fn detect_execution_privileges_tracks_effective_uid() -> color_eyre::Result<()> 
             ExecutionPrivileges::Unprivileged
         );
         Ok(())
-    })
+    })?;
+    Ok(())
 }

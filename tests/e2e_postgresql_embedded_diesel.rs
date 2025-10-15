@@ -50,11 +50,14 @@ fn e2e_postgresql_embedded_creates_and_queries_via_diesel() -> Result<()> {
     const SELECT_SQL: &str = "SELECT id, message FROM greetings ORDER BY id";
     const MESSAGE: &str = "hello from diesel";
 
-    let install_dir = Utf8PathBuf::from("/var/tmp/pg-embedded-setup-it/install");
-    let data_dir = Utf8PathBuf::from("/var/tmp/pg-embedded-setup-it/data");
+    let base = Utf8PathBuf::from(format!(
+        "/var/tmp/pg-embedded-setup-it/e2e-{}",
+        std::process::id()
+    ));
+    let install_dir = base.join("install");
+    let data_dir = base.join("data");
 
-    remove_tree(&install_dir)?;
-    remove_tree(&data_dir)?;
+    remove_tree(&base)?;
 
     with_scoped_env(
         [

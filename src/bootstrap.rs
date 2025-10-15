@@ -1,20 +1,17 @@
 //! Bootstraps embedded PostgreSQL while adapting to the caller's privileges.
 use crate::PgEnvCfg;
+use crate::error::BootstrapResult;
+use crate::fs::{ensure_dir_exists, set_permissions};
 use crate::privileges::{
     default_paths_for, drop_process_privileges, ensure_dir_for_user, ensure_tree_owned_by_user,
     make_data_dir_private,
 };
 use camino::{Utf8Path, Utf8PathBuf};
-use cap_std::{
-    ambient_authority,
-    fs::{Dir, PermissionsExt},
-};
-use color_eyre::eyre::{Context, Result};
+use color_eyre::eyre::Context;
 use nix::unistd::{Uid, User, chown, geteuid};
 use ortho_config::OrthoConfig;
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::env;
-use std::io::ErrorKind;
 
 /// Represents the privileges the process is running with when bootstrapping PostgreSQL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,7 +56,7 @@ fn ensure_settings_paths(
     settings: &mut Settings,
     cfg: &PgEnvCfg,
     uid: Uid,
-) -> Result<SettingsPaths> {
+) -> BootstrapResult<SettingsPaths> {
     let (default_install_dir, default_data_dir) = default_paths_for(uid);
     let mut install_default = false;
     let mut data_default = false;
@@ -103,7 +100,34 @@ fn set_env_path(key: &str, value: &Utf8Path) {
     }
 }
 
-pub fn run() -> Result<()> {
+/// Bootstraps an embedded PostgreSQL instance, branching between root and unprivileged flows.
+///
+/// The bootstrap honours the following environment variables when present:
+/// - `PG_RUNTIME_DIR`: Overrides the PostgreSQL installation directory.
+/// - `PG_DATA_DIR`: Overrides the data directory used for initialisation.
+/// - `PG_SUPERUSER`: Sets the superuser account name.
+/// - `PG_PASSWORD`: Supplies the superuser password.
+///
+/// When executed as `root` on Unix platforms the runtime drops privileges to the `nobody` user
+/// and prepares the filesystem on that user's behalf. Unprivileged executions reuse the current
+/// user identity. The function returns a [`crate::Error`] describing failures encountered during
+/// bootstrap.
+///
+/// # Examples
+/// ```no_run
+/// use pg_embedded_setup_unpriv::run;
+///
+/// fn main() -> Result<(), pg_embedded_setup_unpriv::Error> {
+///     run()?;
+///     Ok(())
+/// }
+/// ```
+pub fn run() -> crate::Result<()> {
+    run_internal()?;
+    Ok(())
+}
+
+fn run_internal() -> BootstrapResult<()> {
     // `color_eyre::install()` is idempotent for logging but returns an error if invoked twice.
     // Behavioural tests exercise consecutive bootstraps, so ignore the duplicate registration.
     let _ = color_eyre::install();
@@ -137,11 +161,12 @@ pub fn run() -> Result<()> {
 }
 
 #[cfg(unix)]
+#[allow(clippy::collapsible_if)]
 fn bootstrap_with_root(
     rt: &tokio::runtime::Runtime,
     mut settings: Settings,
     cfg: &PgEnvCfg,
-) -> Result<()> {
+) -> BootstrapResult<()> {
     let nobody_user = User::from_name("nobody")
         .context("failed to resolve user 'nobody'")?
         .ok_or_else(|| color_eyre::eyre::eyre!("user 'nobody' not found"))?;
@@ -154,19 +179,23 @@ fn bootstrap_with_root(
         data_default,
     } = ensure_settings_paths(&mut settings, cfg, nobody_user.uid)?;
 
-    if install_default && let Some(base_dir) = install_dir.parent() {
-        ensure_dir_for_user(base_dir, nobody_user.uid, 0o755)?;
+    if install_default {
+        if let Some(base_dir) = install_dir.parent() {
+            ensure_dir_for_user(base_dir, &nobody_user, 0o755)?;
+        }
     }
-    if data_default && let Some(base_dir) = data_dir.parent() {
-        ensure_dir_for_user(base_dir, nobody_user.uid, 0o755)?;
+    if data_default {
+        if let Some(base_dir) = data_dir.parent() {
+            ensure_dir_for_user(base_dir, &nobody_user, 0o755)?;
+        }
     }
 
-    ensure_dir_for_user(&install_dir, nobody_user.uid, 0o755)?;
+    ensure_dir_for_user(&install_dir, &nobody_user, 0o755)?;
     if install_default {
         ensure_tree_owned_by_user(&install_dir, &nobody_user)?;
     }
 
-    make_data_dir_private(&data_dir, nobody_user.uid)?;
+    make_data_dir_private(&data_dir, &nobody_user)?;
     if data_default {
         ensure_tree_owned_by_user(&data_dir, &nobody_user)?;
     }
@@ -178,7 +207,7 @@ fn bootstrap_with_root(
             Some(nobody_user.gid),
         )
         .with_context(|| format!("chown {}", password_file.as_str()))?;
-        set_mode(&password_file, 0o600)?;
+        set_permissions(&password_file, 0o600)?;
     }
     set_env_path("PGPASSFILE", &password_file);
 
@@ -205,11 +234,12 @@ fn bootstrap_with_root(
 }
 
 #[cfg(unix)]
+#[allow(clippy::collapsible_if)]
 fn bootstrap_unprivileged(
     rt: &tokio::runtime::Runtime,
     mut settings: Settings,
     cfg: &PgEnvCfg,
-) -> Result<()> {
+) -> BootstrapResult<()> {
     let uid = geteuid();
     let SettingsPaths {
         install_dir,
@@ -219,21 +249,25 @@ fn bootstrap_unprivileged(
         data_default,
     } = ensure_settings_paths(&mut settings, cfg, uid)?;
 
-    if install_default && let Some(base_dir) = install_dir.parent() {
-        ensure_dir_exists(base_dir)?;
+    if install_default {
+        if let Some(base_dir) = install_dir.parent() {
+            ensure_dir_exists(base_dir)?;
+        }
     }
-    if data_default && let Some(base_dir) = data_dir.parent() {
-        ensure_dir_exists(base_dir)?;
+    if data_default {
+        if let Some(base_dir) = data_dir.parent() {
+            ensure_dir_exists(base_dir)?;
+        }
     }
 
     ensure_dir_exists(&install_dir)?;
-    set_mode(&install_dir, 0o755)?;
+    set_permissions(&install_dir, 0o755)?;
 
     ensure_dir_exists(&data_dir)?;
-    set_mode(&data_dir, 0o700)?;
+    set_permissions(&data_dir, 0o700)?;
 
     if password_file.as_std_path().exists() {
-        set_mode(&password_file, 0o600)?;
+        set_permissions(&password_file, 0o600)?;
     }
     set_env_path("PGPASSFILE", &password_file);
 
@@ -261,7 +295,7 @@ fn bootstrap_unprivileged(
     rt: &tokio::runtime::Runtime,
     settings: Settings,
     _cfg: &PgEnvCfg,
-) -> Result<()> {
+) -> BootstrapResult<()> {
     rt.block_on(async move {
         let mut pg = PostgreSQL::new(settings);
         pg.setup()
@@ -271,50 +305,6 @@ fn bootstrap_unprivileged(
     })?;
 
     Ok(())
-}
-
-fn ensure_dir_exists(path: &Utf8Path) -> Result<()> {
-    let (dir, relative) = ambient_dir_and_path(path)?;
-    if relative.as_str().is_empty() {
-        return Ok(());
-    }
-    dir.create_dir_all(relative.as_std_path())
-        .or_else(|err| {
-            if err.kind() == ErrorKind::AlreadyExists {
-                Ok(())
-            } else {
-                Err(err)
-            }
-        })
-        .with_context(|| format!("create {}", path.as_str()))
-}
-
-fn set_mode(path: &Utf8Path, mode: u32) -> Result<()> {
-    let (dir, relative) = ambient_dir_and_path(path)?;
-    if relative.as_str().is_empty() {
-        return Ok(());
-    }
-    dir.set_permissions(
-        relative.as_std_path(),
-        cap_std::fs::Permissions::from_mode(mode),
-    )
-    .with_context(|| format!("chmod {}", path.as_str()))
-}
-
-fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
-    if path.has_root() {
-        let stripped = path
-            .strip_prefix("/")
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|_| path.to_path_buf());
-        let dir = Dir::open_ambient_dir("/", ambient_authority())
-            .context("open ambient root directory")?;
-        Ok((dir, stripped))
-    } else {
-        let dir = Dir::open_ambient_dir(".", ambient_authority())
-            .context("open ambient working directory")?;
-        Ok((dir, path.to_path_buf()))
-    }
 }
 
 #[cfg(test)]
