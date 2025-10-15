@@ -14,13 +14,15 @@ use pg_embedded_setup_unpriv::{
 };
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
-use temp_env::with_vars;
 use tempfile::TempDir;
 
 #[path = "support/mod.rs"]
 mod support;
 
-use support::cap_fs::{metadata, remove_tree, set_permissions};
+use support::{
+    cap_fs::{metadata, remove_tree, set_permissions},
+    env::with_scoped_env,
+};
 
 #[derive(Debug)]
 struct BootstrapSandbox {
@@ -58,7 +60,7 @@ impl BootstrapSandbox {
     where
         F: FnOnce() -> R,
     {
-        with_vars(
+        with_scoped_env(
             [
                 (
                     OsString::from("PG_RUNTIME_DIR"),

@@ -16,13 +16,15 @@ use nix::unistd::geteuid;
 use ortho_config::OrthoConfig;
 use pg_embedded_setup_unpriv::{PgEnvCfg, nobody_uid, with_temp_euid};
 use postgresql_embedded::PostgreSQL;
-use temp_env::with_vars;
 use tokio::runtime::Builder;
 
 #[path = "support/mod.rs"]
 mod support;
 
-use support::cap_fs::{ensure_dir, open_dir, remove_tree};
+use support::{
+    cap_fs::{ensure_dir, open_dir, remove_tree},
+    env::with_scoped_env,
+};
 
 #[derive(QueryableByName, Debug, PartialEq, Eq)]
 struct GreetingRow {
@@ -54,7 +56,7 @@ fn e2e_postgresql_embedded_creates_and_queries_via_diesel() -> Result<()> {
     remove_tree(&install_dir)?;
     remove_tree(&data_dir)?;
 
-    with_vars(
+    with_scoped_env(
         [
             (
                 OsString::from("PG_RUNTIME_DIR"),
@@ -134,7 +136,7 @@ fn e2e_postgresql_embedded_creates_and_queries_via_diesel() -> Result<()> {
                     )
                     .context("set permissions on password file")?;
 
-                with_vars(
+                with_scoped_env(
                     [
                         (
                             OsString::from("HOME"),
