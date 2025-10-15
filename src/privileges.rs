@@ -1,12 +1,15 @@
+//! Privilege management helpers for dropping root access safely.
+use camino::{Utf8Path, Utf8PathBuf};
+use cap_std::{
+    ambient_authority,
+    fs::{Dir, PermissionsExt},
+};
 use color_eyre::eyre::{Context, Result, bail};
 use nix::unistd::{
     Gid, Uid, User, chown, geteuid, getgroups, getresgid, getresuid, setgroups, setresgid,
     setresuid,
 };
-use std::fs;
 use std::io::ErrorKind;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
 
 /// Captures the process identity before dropping privileges so we can safely restore it.
 pub(crate) struct PrivilegeDropGuard {
@@ -87,16 +90,15 @@ where
     result
 }
 
-pub(crate) fn ensure_dir_for_user<P: AsRef<Path>>(dir: P, uid: Uid, mode: u32) -> Result<()> {
+pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(dir: P, uid: Uid, mode: u32) -> Result<()> {
     let dir = dir.as_ref();
-    fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    chown(dir, Some(uid), None).with_context(|| format!("chown {}", dir.display()))?;
-    fs::set_permissions(dir, fs::Permissions::from_mode(mode))
-        .with_context(|| format!("chmod {}", dir.display()))?;
+    ensure_dir_exists(dir)?;
+    chown(dir.as_std_path(), Some(uid), None).with_context(|| format!("chown {}", dir.as_str()))?;
+    set_permissions(dir, mode)?;
     Ok(())
 }
 
-pub fn make_dir_accessible<P: AsRef<Path>>(dir: P, uid: Uid) -> Result<()> {
+pub fn make_dir_accessible<P: AsRef<Utf8Path>>(dir: P, uid: Uid) -> Result<()> {
     ensure_dir_for_user(dir, uid, 0o755)
 }
 
@@ -105,24 +107,31 @@ pub fn make_dir_accessible<P: AsRef<Path>>(dir: P, uid: Uid) -> Result<()> {
 /// PostgreSQL refuses to use a data directory that is accessible to other
 /// users. This helper creates the directory (if needed), chowns it to `uid`,
 /// and clamps permissions to `0700` to satisfy that requirement.
-pub fn make_data_dir_private<P: AsRef<Path>>(dir: P, uid: Uid) -> Result<()> {
+pub fn make_data_dir_private<P: AsRef<Utf8Path>>(dir: P, uid: Uid) -> Result<()> {
     ensure_dir_for_user(dir, uid, 0o700)
 }
 
-pub(crate) fn ensure_tree_owned_by_user<P: AsRef<Path>>(root: P, user: &User) -> Result<()> {
+pub(crate) fn ensure_tree_owned_by_user<P: AsRef<Utf8Path>>(root: P, user: &User) -> Result<()> {
     let mut stack = vec![root.as_ref().to_path_buf()];
     while let Some(path) = stack.pop() {
-        let entries = match fs::read_dir(&path) {
-            Ok(entries) => entries,
+        let dir = match Dir::open_ambient_dir(path.as_std_path(), ambient_authority()) {
+            Ok(dir) => dir,
             Err(err) if err.kind() == ErrorKind::NotFound => continue,
-            Err(err) => return Err(err).with_context(|| format!("read_dir {}", path.display())),
+            Err(err) => {
+                return Err(err).with_context(|| format!("open directory {}", path.as_str()));
+            }
         };
 
-        for entry in entries {
-            let entry = entry.with_context(|| format!("iterate {}", path.display()))?;
-            let entry_path = entry.path();
-            chown(&entry_path, Some(user.uid), Some(user.gid))
-                .with_context(|| format!("chown {}", entry_path.display()))?;
+        for entry in dir
+            .entries()
+            .with_context(|| format!("read_dir {}", path.as_str()))?
+        {
+            let entry = entry.with_context(|| format!("iterate {}", path.as_str()))?;
+            let joined = path.as_std_path().join(entry.file_name());
+            let entry_path = Utf8PathBuf::from_path_buf(joined)
+                .map_err(|_| color_eyre::eyre::eyre!("non-UTF-8 path under {}", path.as_str()))?;
+            chown(entry_path.as_std_path(), Some(user.uid), Some(user.gid))
+                .with_context(|| format!("chown {}", entry_path.as_str()))?;
             if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                 stack.push(entry_path);
             }
@@ -140,7 +149,51 @@ pub fn nobody_uid() -> Uid {
         .unwrap_or_else(|| Uid::from_raw(65534))
 }
 
-pub fn default_paths_for(uid: Uid) -> (PathBuf, PathBuf) {
-    let base = PathBuf::from(format!("/var/tmp/pg-embed-{}", uid.as_raw()));
+pub fn default_paths_for(uid: Uid) -> (Utf8PathBuf, Utf8PathBuf) {
+    let base = Utf8PathBuf::from(format!("/var/tmp/pg-embed-{}", uid.as_raw()));
     (base.join("install"), base.join("data"))
+}
+
+fn ensure_dir_exists(path: &Utf8Path) -> Result<()> {
+    let (dir, relative) = ambient_dir_and_path(path)?;
+    if relative.as_str().is_empty() {
+        return Ok(());
+    }
+    dir.create_dir_all(relative.as_std_path())
+        .or_else(|err| {
+            if err.kind() == ErrorKind::AlreadyExists {
+                Ok(())
+            } else {
+                Err(err)
+            }
+        })
+        .with_context(|| format!("create {}", path.as_str()))
+}
+
+fn set_permissions(path: &Utf8Path, mode: u32) -> Result<()> {
+    let (dir, relative) = ambient_dir_and_path(path)?;
+    if relative.as_str().is_empty() {
+        return Ok(());
+    }
+    dir.set_permissions(
+        relative.as_std_path(),
+        cap_std::fs::Permissions::from_mode(mode),
+    )
+    .with_context(|| format!("chmod {}", path.as_str()))
+}
+
+fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
+    if path.has_root() {
+        let stripped = path
+            .strip_prefix("/")
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|_| path.to_path_buf());
+        let dir = Dir::open_ambient_dir("/", ambient_authority())
+            .context("open ambient root directory")?;
+        Ok((dir, stripped))
+    } else {
+        let dir = Dir::open_ambient_dir(".", ambient_authority())
+            .context("open ambient working directory")?;
+        Ok((dir, path.to_path_buf()))
+    }
 }

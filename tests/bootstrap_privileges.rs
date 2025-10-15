@@ -1,13 +1,15 @@
+//! Behavioural tests covering privilege-aware bootstrap flows.
 #![cfg(unix)]
 
 use std::cell::RefCell;
-use std::env;
 use std::ffi::OsString;
-use std::fs;
 use std::io::ErrorKind;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::{Path, PathBuf};
 
+use camino::{Utf8Path, Utf8PathBuf};
+use cap_std::{
+    ambient_authority,
+    fs::{Dir, MetadataExt, PermissionsExt},
+};
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use nix::unistd::{Uid, geteuid};
 use pg_embedded_setup_unpriv::{
@@ -15,17 +17,15 @@ use pg_embedded_setup_unpriv::{
 };
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
+use temp_env::with_vars;
 use tempfile::TempDir;
 
 #[derive(Debug)]
 struct BootstrapSandbox {
-    base: TempDir,
-    install_dir: PathBuf,
-    data_dir: PathBuf,
-    previous_runtime_dir: Option<OsString>,
-    previous_data_dir: Option<OsString>,
-    previous_superuser: Option<OsString>,
-    previous_password: Option<OsString>,
+    _base: TempDir,
+    base_path: Utf8PathBuf,
+    install_dir: Utf8PathBuf,
+    data_dir: Utf8PathBuf,
     detected: Option<ExecutionPrivileges>,
     expected_owner: Option<Uid>,
     skip_checks: bool,
@@ -34,51 +34,65 @@ struct BootstrapSandbox {
 impl BootstrapSandbox {
     fn new() -> Result<Self> {
         let base = TempDir::new().context("create sandbox tempdir")?;
-        fs::set_permissions(base.path(), fs::Permissions::from_mode(0o777))
-            .with_context(|| format!("chmod {}", base.path().display()))?;
+        let base_path = Utf8PathBuf::from_path_buf(base.path().to_path_buf())
+            .map_err(|_| eyre!("sandbox path is not valid UTF-8"))?;
+        set_mode(&base_path, 0o777)?;
 
-        let install_dir = base.path().join("install");
-        let data_dir = base.path().join("data");
-
-        let previous_runtime_dir = env::var_os("PG_RUNTIME_DIR");
-        let previous_data_dir = env::var_os("PG_DATA_DIR");
-        let previous_superuser = env::var_os("PG_SUPERUSER");
-        let previous_password = env::var_os("PG_PASSWORD");
-
-        set_env("PG_RUNTIME_DIR", &install_dir);
-        set_env("PG_DATA_DIR", &data_dir);
-        set_env("PG_SUPERUSER", "postgres");
-        set_env("PG_PASSWORD", "postgres");
+        let install_dir = base_path.join("install");
+        let data_dir = base_path.join("data");
 
         Ok(Self {
-            base,
+            _base: base,
+            base_path,
             install_dir,
             data_dir,
-            previous_runtime_dir,
-            previous_data_dir,
-            previous_superuser,
-            previous_password,
             detected: None,
             expected_owner: None,
             skip_checks: false,
         })
     }
 
+    fn with_env<F, R>(&self, body: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        with_vars(
+            [
+                (
+                    OsString::from("PG_RUNTIME_DIR"),
+                    Some(OsString::from(self.install_dir.as_str())),
+                ),
+                (
+                    OsString::from("PG_DATA_DIR"),
+                    Some(OsString::from(self.data_dir.as_str())),
+                ),
+                (
+                    OsString::from("PG_SUPERUSER"),
+                    Some(OsString::from("postgres")),
+                ),
+                (
+                    OsString::from("PG_PASSWORD"),
+                    Some(OsString::from("postgres")),
+                ),
+            ],
+            body,
+        )
+    }
+
+    fn run_bootstrap(&self) -> Result<()> {
+        self.with_env(pg_embedded_setup_unpriv::run)
+    }
+
     fn reset(&mut self) -> Result<()> {
         self.skip_checks = false;
         self.remove_if_present(&self.install_dir)?;
         self.remove_if_present(&self.data_dir)?;
-        fs::set_permissions(self.base.path(), fs::Permissions::from_mode(0o777))
-            .with_context(|| format!("chmod {}", self.base.path().display()))?;
+        set_mode(&self.base_path, 0o777)?;
         Ok(())
     }
 
-    fn remove_if_present(&self, path: &Path) -> Result<()> {
-        match fs::remove_dir_all(path) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(err).with_context(|| format!("remove {}", path.display())),
-        }
+    fn remove_if_present(&self, path: &Utf8Path) -> Result<()> {
+        remove_tree(path)
     }
 
     fn record_privileges(&mut self, privileges: ExecutionPrivileges) {
@@ -125,19 +139,19 @@ impl BootstrapSandbox {
         Ok(())
     }
 
-    fn assert_path_owner(&self, path: &Path, expected: Uid) -> Result<()> {
-        let metadata = match fs::metadata(path) {
+    fn assert_path_owner(&self, path: &Utf8Path, expected: Uid) -> Result<()> {
+        let metadata = match metadata_io(path) {
             Ok(metadata) => metadata,
             Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
             Err(err) if err.kind() == ErrorKind::PermissionDenied => return Ok(()),
             Err(err) => {
-                return Err(err).with_context(|| format!("inspect ownership of {}", path.display()));
+                return Err(err).with_context(|| format!("inspect ownership of {}", path.as_str()));
             }
         };
         ensure!(
             metadata.uid() == expected.as_raw(),
             "expected {} to be owned by uid {} but found {}",
-            path.display(),
+            path.as_str(),
             expected,
             metadata.uid()
         );
@@ -169,29 +183,53 @@ impl BootstrapSandbox {
     }
 }
 
-impl Drop for BootstrapSandbox {
-    fn drop(&mut self) {
-        restore_env("PG_RUNTIME_DIR", self.previous_runtime_dir.take());
-        restore_env("PG_DATA_DIR", self.previous_data_dir.take());
-        restore_env("PG_SUPERUSER", self.previous_superuser.take());
-        restore_env("PG_PASSWORD", self.previous_password.take());
+fn set_mode(path: &Utf8Path, mode: u32) -> Result<()> {
+    let (dir, relative) = ambient_dir_and_path(path)?;
+    if relative.as_str().is_empty() {
+        return Ok(());
+    }
+    dir.set_permissions(
+        relative.as_std_path(),
+        cap_std::fs::Permissions::from_mode(mode),
+    )
+    .with_context(|| format!("chmod {}", path.as_str()))
+}
+
+fn remove_tree(path: &Utf8Path) -> Result<()> {
+    let (dir, relative) = ambient_dir_and_path(path)?;
+    if relative.as_str().is_empty() {
+        return Ok(());
+    }
+    match dir.remove_dir_all(relative.as_std_path()) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("remove {}", path.as_str())),
     }
 }
 
-fn set_env<K, V>(key: K, value: V)
-where
-    K: AsRef<str>,
-    V: Into<OsString>,
-{
-    unsafe { env::set_var(key.as_ref(), value.into()) }
+fn metadata_io(path: &Utf8Path) -> std::io::Result<cap_std::fs::Metadata> {
+    let (dir, relative) =
+        ambient_dir_and_path(path).map_err(|err| std::io::Error::other(err.to_string()))?;
+    if relative.as_str().is_empty() {
+        dir.dir_metadata()
+    } else {
+        dir.metadata(relative.as_std_path())
+    }
 }
 
-fn restore_env(key: &str, value: Option<OsString>) {
-    unsafe {
-        match value {
-            Some(v) => env::set_var(key, v),
-            None => env::remove_var(key),
-        }
+fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
+    if path.has_root() {
+        let stripped = path
+            .strip_prefix("/")
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|_| path.to_path_buf());
+        let dir = Dir::open_ambient_dir("/", ambient_authority())
+            .context("open ambient root directory")?;
+        Ok((dir, stripped))
+    } else {
+        let dir = Dir::open_ambient_dir(".", ambient_authority())
+            .context("open ambient working directory")?;
+        Ok((dir, path.to_path_buf()))
     }
 }
 
@@ -208,23 +246,26 @@ fn given_fresh_sandbox(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
 #[when("the bootstrap runs as an unprivileged user")]
 fn when_bootstrap_runs_unprivileged(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
     if geteuid().is_root() {
-        {
-            sandbox.borrow_mut().set_expected_owner(nobody_uid());
-        }
+        sandbox.borrow_mut().set_expected_owner(nobody_uid());
+        let privileges = with_temp_euid(nobody_uid(), || Ok(detect_execution_privileges()))?;
+        sandbox.borrow_mut().record_privileges(privileges);
         let outcome = with_temp_euid(nobody_uid(), || {
-            sandbox
-                .borrow_mut()
-                .record_privileges(detect_execution_privileges());
-            pg_embedded_setup_unpriv::run()
+            let sandbox_ref = sandbox.borrow();
+            sandbox_ref.run_bootstrap()
         });
         sandbox.borrow_mut().handle_outcome(outcome)
     } else {
         let uid = geteuid();
-        let mut state = sandbox.borrow_mut();
-        state.set_expected_owner(uid);
-        state.record_privileges(detect_execution_privileges());
-        let outcome = pg_embedded_setup_unpriv::run();
-        state.handle_outcome(outcome)
+        {
+            let mut state = sandbox.borrow_mut();
+            state.set_expected_owner(uid);
+            state.record_privileges(detect_execution_privileges());
+        }
+        let outcome = {
+            let sandbox_ref = sandbox.borrow();
+            sandbox_ref.run_bootstrap()
+        };
+        sandbox.borrow_mut().handle_outcome(outcome)
     }
 }
 
@@ -243,7 +284,10 @@ fn when_bootstrap_runs_twice_as_root(sandbox: &RefCell<BootstrapSandbox>) -> Res
     }
 
     {
-        let outcome = pg_embedded_setup_unpriv::run();
+        let outcome = {
+            let sandbox_ref = sandbox.borrow();
+            sandbox_ref.run_bootstrap()
+        };
         let mut state = sandbox.borrow_mut();
         state.handle_outcome(outcome)?;
         if state.is_skipped() {
@@ -251,7 +295,10 @@ fn when_bootstrap_runs_twice_as_root(sandbox: &RefCell<BootstrapSandbox>) -> Res
         }
     }
 
-    let outcome = pg_embedded_setup_unpriv::run();
+    let outcome = {
+        let sandbox_ref = sandbox.borrow();
+        sandbox_ref.run_bootstrap()
+    };
     let mut state = sandbox.borrow_mut();
     if state.is_skipped() {
         return Ok(());

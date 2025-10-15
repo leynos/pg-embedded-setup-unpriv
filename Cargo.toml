@@ -23,6 +23,8 @@ figment = { version = "0.10", features = ["env"] }
 xdg = "3"
 uncased = "0.9"
 figment-json5 = "0.1.1"
+cap-std = "3.4.4"
+camino = "1.2"
 
 [features]
 toml = []
@@ -35,5 +37,5 @@ temp-env = "0.3"
 tempfile = "3"
 color-eyre = "0.6"
 diesel = { version = "2", default-features = false, features = ["postgres"] }
-rstest-bdd = "=0.1.0-alpha4"
-rstest-bdd-macros = "=0.1.0-alpha4"
+rstest-bdd = "0.1.0-alpha4"
+rstest-bdd-macros = "0.1.0-alpha4"

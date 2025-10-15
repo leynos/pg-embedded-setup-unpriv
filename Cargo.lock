@@ -1780,6 +1780,8 @@ dependencies = [
 name = "pg-embed-setup-unpriv"
 version = "0.1.0"
 dependencies = [
+ "camino",
+ "cap-std",
  "clap",
  "color-eyre",
  "diesel",
