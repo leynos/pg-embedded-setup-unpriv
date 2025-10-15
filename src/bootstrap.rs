@@ -95,7 +95,12 @@ fn ensure_settings_paths(
 }
 
 fn set_env_path(key: &str, value: &Utf8Path) {
-    unsafe { env::set_var(key, value.as_str()) }
+    // `std::env::set_var` remains `unsafe` while the crate forbids ambient mutation without
+    // explicit acknowledgement. Keep the `unsafe` block narrowly scoped to this helper so the
+    // callers do not need to propagate it.
+    unsafe {
+        env::set_var(key, value.as_str());
+    }
 }
 
 pub fn run() -> Result<()> {

@@ -3,21 +3,26 @@
 //! downgrading to the `nobody` user for database operations.
 #![cfg(unix)]
 
-use color_eyre::eyre::{Context, Result};
+use std::ffi::OsString;
+use std::io::Write;
+use std::time::Duration;
+
+use camino::Utf8PathBuf;
+use cap_std::fs::{OpenOptions, PermissionsExt};
+use color_eyre::eyre::{Context, Result, eyre};
 use diesel::prelude::*;
 use diesel::sql_types::{Int4, Text};
 use nix::unistd::geteuid;
 use ortho_config::OrthoConfig;
 use pg_embedded_setup_unpriv::{PgEnvCfg, nobody_uid, with_temp_euid};
 use postgresql_embedded::PostgreSQL;
-use std::env;
-use std::ffi::OsString;
-use std::fs;
-use std::io::{ErrorKind, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use temp_env::with_vars;
 use tokio::runtime::Builder;
+
+#[path = "support/mod.rs"]
+mod support;
+
+use support::cap_fs::{ensure_dir, open_dir, remove_tree};
 
 #[derive(QueryableByName, Debug, PartialEq, Eq)]
 struct GreetingRow {
@@ -43,122 +48,178 @@ fn e2e_postgresql_embedded_creates_and_queries_via_diesel() -> Result<()> {
     const SELECT_SQL: &str = "SELECT id, message FROM greetings ORDER BY id";
     const MESSAGE: &str = "hello from diesel";
 
-    let install_dir = PathBuf::from("/var/tmp/pg-embedded-setup-it/install");
-    let data_dir = PathBuf::from("/var/tmp/pg-embedded-setup-it/data");
+    let install_dir = Utf8PathBuf::from("/var/tmp/pg-embedded-setup-it/install");
+    let data_dir = Utf8PathBuf::from("/var/tmp/pg-embedded-setup-it/data");
 
-    remove_dir_if_present(&install_dir)?;
-    remove_dir_if_present(&data_dir)?;
+    remove_tree(&install_dir)?;
+    remove_tree(&data_dir)?;
 
-    set_env("PG_RUNTIME_DIR", install_dir.as_os_str());
-    set_env("PG_DATA_DIR", data_dir.as_os_str());
-    set_env("PG_VERSION_REQ", VERSION_REQ);
-    set_env("PG_PORT", PORT.to_string());
-    set_env("PG_SUPERUSER", "postgres");
-    set_env("PG_PASSWORD", PASSWORD);
+    with_vars(
+        [
+            (
+                OsString::from("PG_RUNTIME_DIR"),
+                Some(OsString::from(install_dir.as_str())),
+            ),
+            (
+                OsString::from("PG_DATA_DIR"),
+                Some(OsString::from(data_dir.as_str())),
+            ),
+            (
+                OsString::from("PG_VERSION_REQ"),
+                Some(OsString::from(VERSION_REQ)),
+            ),
+            (
+                OsString::from("PG_PORT"),
+                Some(OsString::from(PORT.to_string())),
+            ),
+            (
+                OsString::from("PG_SUPERUSER"),
+                Some(OsString::from("postgres")),
+            ),
+            (
+                OsString::from("PG_PASSWORD"),
+                Some(OsString::from(PASSWORD)),
+            ),
+        ],
+        || {
+            if let Err(err) = pg_embedded_setup_unpriv::run() {
+                let message = err.to_string();
+                if message.contains("rate limit exceeded") {
+                    eprintln!("Skipping e2e postgres test: {message}");
+                    return Ok(());
+                }
+                return Err(err).wrap_err("initialise postgres environment");
+            }
 
-    if let Err(err) = pg_embedded_setup_unpriv::run() {
-        let message = err.to_string();
-        if message.contains("rate limit exceeded") {
-            eprintln!("Skipping e2e postgres test: {message}");
-            return Ok(());
-        }
-        return Err(err).wrap_err("initialise postgres environment");
-    }
+            let cfg = PgEnvCfg::load().wrap_err("reload pg settings from environment")?;
+            let mut settings = cfg
+                .to_settings()
+                .wrap_err("convert environment to settings")?;
+            settings.timeout = Some(Duration::from_secs(60));
+            let password_file = install_dir.join(".pgpass");
+            settings.password_file = password_file.clone().into_std_path_buf();
+            settings.password = PASSWORD.to_string();
 
-    let cfg = PgEnvCfg::load().wrap_err("reload pg settings from environment")?;
-    let mut settings = cfg
-        .to_settings()
-        .wrap_err("convert environment to settings")?;
-    settings.timeout = Some(Duration::from_secs(60));
-    settings.password_file = install_dir.join(".pgpass");
-    settings.password = PASSWORD.to_string();
+            let cache_dir = install_dir.join("cache");
+            let runtime_dir = install_dir.join("run");
 
-    let cache_dir = install_dir.join("cache");
-    let runtime_dir = install_dir.join("run");
-    let password_file = settings.password_file.clone();
+            let cache_dir_for_nobody = cache_dir.clone();
+            let runtime_dir_for_nobody = runtime_dir.clone();
+            let password_file_for_nobody = password_file.clone();
+            let install_dir_for_nobody = install_dir.clone();
+            let settings_for_nobody = settings.clone();
 
-    with_temp_euid(nobody_uid(), move || {
-        fs::create_dir_all(&cache_dir).wrap_err("create cache directory for nobody")?;
-        fs::create_dir_all(&runtime_dir).wrap_err("create runtime directory for nobody")?;
-        let mut pgpass = fs::File::create(&password_file)
-            .wrap_err("provision password file for embedded postgres")?;
-        write!(pgpass, "{}", settings.password).wrap_err("write postgres password")?;
-        pgpass.sync_all().wrap_err("flush password file")?;
-        fs::set_permissions(&password_file, fs::Permissions::from_mode(0o600))
-            .wrap_err("set permissions on password file")?;
+            with_temp_euid(nobody_uid(), move || -> Result<()> {
+                ensure_dir(&cache_dir_for_nobody, 0o755)?;
+                ensure_dir(&runtime_dir_for_nobody, 0o755)?;
 
-        set_env("HOME", install_dir.as_os_str());
-        set_env("XDG_CACHE_HOME", cache_dir.as_os_str());
-        set_env("XDG_RUNTIME_DIR", runtime_dir.as_os_str());
-        set_env("PGPASSFILE", password_file.as_os_str());
-        set_env("TZDIR", "/usr/share/zoneinfo");
-        set_env("TZ", "UTC");
+                let install_handle = open_dir(&install_dir_for_nobody)
+                    .context("open install directory for nobody")?;
+                let password_relative = password_file_for_nobody
+                    .strip_prefix(&install_dir_for_nobody)
+                    .map_err(|_| eyre!("password file must live inside install dir"))?;
+                let mut pgpass = install_handle
+                    .open_with(
+                        password_relative.as_std_path(),
+                        OpenOptions::new().create(true).truncate(true).write(true),
+                    )
+                    .context("provision password file for embedded postgres")?;
+                write!(pgpass, "{}", settings_for_nobody.password)
+                    .context("write postgres password")?;
+                pgpass.sync_all().context("flush password file")?;
+                install_handle
+                    .set_permissions(
+                        password_relative.as_std_path(),
+                        cap_std::fs::Permissions::from_mode(0o600),
+                    )
+                    .context("set permissions on password file")?;
 
-        eprintln!(
-            "postgresql install dir {}",
-            settings.installation_dir.display()
-        );
-        eprintln!("postgresql data dir {}", settings.data_dir.display());
+                with_vars(
+                    [
+                        (
+                            OsString::from("HOME"),
+                            Some(OsString::from(install_dir_for_nobody.as_str())),
+                        ),
+                        (
+                            OsString::from("XDG_CACHE_HOME"),
+                            Some(OsString::from(cache_dir_for_nobody.as_str())),
+                        ),
+                        (
+                            OsString::from("XDG_RUNTIME_DIR"),
+                            Some(OsString::from(runtime_dir_for_nobody.as_str())),
+                        ),
+                        (
+                            OsString::from("PGPASSFILE"),
+                            Some(OsString::from(password_file_for_nobody.as_str())),
+                        ),
+                        (
+                            OsString::from("TZDIR"),
+                            Some(OsString::from("/usr/share/zoneinfo")),
+                        ),
+                        (OsString::from("TZ"), Some(OsString::from("UTC"))),
+                    ],
+                    move || -> Result<()> {
+                        eprintln!(
+                            "postgresql install dir {}",
+                            settings_for_nobody.installation_dir.display()
+                        );
+                        eprintln!(
+                            "postgresql data dir {}",
+                            settings_for_nobody.data_dir.display()
+                        );
 
-        let runtime = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .wrap_err("initialise tokio runtime for postgresql-embedded e2e test")?;
+                        let runtime = Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .wrap_err(
+                                "initialise tokio runtime for postgresql-embedded e2e test",
+                            )?;
 
-        let (postgresql, database_url) = runtime.block_on(async {
-            let mut postgresql = PostgreSQL::new(settings.clone());
-            postgresql.setup().await?;
-            postgresql.start().await?;
-            postgresql.create_database(DATABASE_NAME).await?;
-            let database_url = postgresql.settings().url(DATABASE_NAME);
-            Ok::<_, color_eyre::Report>((postgresql, database_url))
-        })?;
+                        let (postgresql, database_url) = runtime.block_on(async {
+                            let mut postgresql = PostgreSQL::new(settings_for_nobody.clone());
+                            postgresql.setup().await?;
+                            postgresql.start().await?;
+                            postgresql.create_database(DATABASE_NAME).await?;
+                            let database_url = postgresql.settings().url(DATABASE_NAME);
+                            Ok::<_, color_eyre::Report>((postgresql, database_url))
+                        })?;
 
-        let mut connection = PgConnection::establish(&database_url)
-            .wrap_err("connect to embedded postgres via diesel")?;
+                        let mut connection = PgConnection::establish(&database_url)
+                            .wrap_err("connect to embedded postgres via diesel")?;
 
-        diesel::sql_query(TABLE_SQL)
-            .execute(&mut connection)
-            .wrap_err("create greetings table")?;
+                        diesel::sql_query(TABLE_SQL)
+                            .execute(&mut connection)
+                            .wrap_err("create greetings table")?;
 
-        diesel::sql_query(INSERT_SQL)
-            .bind::<Text, _>(MESSAGE)
-            .execute(&mut connection)
-            .wrap_err("insert greeting row")?;
+                        diesel::sql_query(INSERT_SQL)
+                            .bind::<Text, _>(MESSAGE)
+                            .execute(&mut connection)
+                            .wrap_err("insert greeting row")?;
 
-        let rows: Vec<GreetingRow> = diesel::sql_query(SELECT_SQL)
-            .load(&mut connection)
-            .wrap_err("select greetings via diesel")?;
+                        let rows: Vec<GreetingRow> = diesel::sql_query(SELECT_SQL)
+                            .load(&mut connection)
+                            .wrap_err("select greetings via diesel")?;
 
-        assert_eq!(
-            rows,
-            vec![GreetingRow {
-                id: 1,
-                message: MESSAGE.to_string()
-            }]
-        );
+                        assert_eq!(
+                            rows,
+                            vec![GreetingRow {
+                                id: 1,
+                                message: MESSAGE.to_string()
+                            }]
+                        );
 
-        runtime
-            .block_on(postgresql.stop())
-            .wrap_err("stop embedded postgres instance")?;
+                        runtime
+                            .block_on(postgresql.stop())
+                            .wrap_err("stop embedded postgres instance")?;
 
-        Ok(())
-    })
-}
+                        Ok::<(), color_eyre::Report>(())
+                    },
+                )?;
 
-fn remove_dir_if_present(path: &Path) -> Result<()> {
-    match fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).with_context(|| format!("remove {}", path.display())),
-    }
-}
+                Ok::<(), color_eyre::Report>(())
+            })?;
 
-fn set_env<K, V>(key: K, value: V)
-where
-    K: AsRef<str>,
-    V: Into<OsString>,
-{
-    // Environment variables drive both pg-embedded-setup-unpriv and the later settings reload.
-    unsafe { env::set_var(key.as_ref(), value.into()) }
+            Ok(())
+        },
+    )
 }

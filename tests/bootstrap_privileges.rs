@@ -6,10 +6,7 @@ use std::ffi::OsString;
 use std::io::ErrorKind;
 
 use camino::{Utf8Path, Utf8PathBuf};
-use cap_std::{
-    ambient_authority,
-    fs::{Dir, MetadataExt, PermissionsExt},
-};
+use cap_std::fs::MetadataExt;
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use nix::unistd::{Uid, geteuid};
 use pg_embedded_setup_unpriv::{
@@ -19,6 +16,11 @@ use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
 use temp_env::with_vars;
 use tempfile::TempDir;
+
+#[path = "support/mod.rs"]
+mod support;
+
+use support::cap_fs::{metadata, remove_tree, set_permissions};
 
 #[derive(Debug)]
 struct BootstrapSandbox {
@@ -36,7 +38,7 @@ impl BootstrapSandbox {
         let base = TempDir::new().context("create sandbox tempdir")?;
         let base_path = Utf8PathBuf::from_path_buf(base.path().to_path_buf())
             .map_err(|_| eyre!("sandbox path is not valid UTF-8"))?;
-        set_mode(&base_path, 0o777)?;
+        set_permissions(&base_path, 0o777)?;
 
         let install_dir = base_path.join("install");
         let data_dir = base_path.join("data");
@@ -87,7 +89,7 @@ impl BootstrapSandbox {
         self.skip_checks = false;
         self.remove_if_present(&self.install_dir)?;
         self.remove_if_present(&self.data_dir)?;
-        set_mode(&self.base_path, 0o777)?;
+        set_permissions(&self.base_path, 0o777)?;
         Ok(())
     }
 
@@ -140,7 +142,7 @@ impl BootstrapSandbox {
     }
 
     fn assert_path_owner(&self, path: &Utf8Path, expected: Uid) -> Result<()> {
-        let metadata = match metadata_io(path) {
+        let metadata = match metadata(path) {
             Ok(metadata) => metadata,
             Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
             Err(err) if err.kind() == ErrorKind::PermissionDenied => return Ok(()),
@@ -180,56 +182,6 @@ impl BootstrapSandbox {
                 }
             }
         }
-    }
-}
-
-fn set_mode(path: &Utf8Path, mode: u32) -> Result<()> {
-    let (dir, relative) = ambient_dir_and_path(path)?;
-    if relative.as_str().is_empty() {
-        return Ok(());
-    }
-    dir.set_permissions(
-        relative.as_std_path(),
-        cap_std::fs::Permissions::from_mode(mode),
-    )
-    .with_context(|| format!("chmod {}", path.as_str()))
-}
-
-fn remove_tree(path: &Utf8Path) -> Result<()> {
-    let (dir, relative) = ambient_dir_and_path(path)?;
-    if relative.as_str().is_empty() {
-        return Ok(());
-    }
-    match dir.remove_dir_all(relative.as_std_path()) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).with_context(|| format!("remove {}", path.as_str())),
-    }
-}
-
-fn metadata_io(path: &Utf8Path) -> std::io::Result<cap_std::fs::Metadata> {
-    let (dir, relative) =
-        ambient_dir_and_path(path).map_err(|err| std::io::Error::other(err.to_string()))?;
-    if relative.as_str().is_empty() {
-        dir.dir_metadata()
-    } else {
-        dir.metadata(relative.as_std_path())
-    }
-}
-
-fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
-    if path.has_root() {
-        let stripped = path
-            .strip_prefix("/")
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|_| path.to_path_buf());
-        let dir = Dir::open_ambient_dir("/", ambient_authority())
-            .context("open ambient root directory")?;
-        Ok((dir, stripped))
-    } else {
-        let dir = Dir::open_ambient_dir(".", ambient_authority())
-            .context("open ambient working directory")?;
-        Ok((dir, path.to_path_buf()))
     }
 }
 
