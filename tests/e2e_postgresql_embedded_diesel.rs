@@ -1,7 +1,7 @@
 //! Exercises `postgresql-embedded` end-to-end while relying on
 //! `pg-embedded-setup-unpriv` to bootstrap directories as root before
 //! downgrading to the `nobody` user for database operations.
-#![cfg(unix)]
+#![cfg(all(unix, feature = "privileged-tests"))]
 
 use std::ffi::OsString;
 use std::io::Write;

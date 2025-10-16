@@ -196,7 +196,6 @@ pub fn default_paths_for(uid: Uid) -> (Utf8PathBuf, Utf8PathBuf) {
     (base.join("install"), base.join("data"))
 }
 
-#[cfg(feature = "privileged-tests")]
 /// Temporarily switches the process effective user ID for test scenarios.
 ///
 /// # Safety
@@ -214,6 +213,7 @@ pub fn default_paths_for(uid: Uid) -> (Utf8PathBuf, Utf8PathBuf) {
 /// # Ok(())
 /// # }
 /// ```
+#[cfg(feature = "privileged-tests")]
 pub fn with_temp_euid<F, R>(target: Uid, body: F) -> crate::Result<R>
 where
     F: FnOnce() -> crate::Result<R>,

@@ -1,4 +1,3 @@
-#![allow(dead_code)] // Integration suites reuse this module without exercising all helpers.
 //! Environment helpers for integration tests.
 
 use std::ffi::OsString;

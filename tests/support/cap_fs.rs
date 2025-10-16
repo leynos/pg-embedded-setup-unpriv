@@ -1,4 +1,3 @@
-#![cfg(unix)]
 #![expect(
     dead_code,
     reason = "Integration suites include this module but exercise different helper subsets."

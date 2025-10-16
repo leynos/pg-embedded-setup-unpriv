@@ -9,14 +9,16 @@
 mod bootstrap;
 mod error;
 mod fs;
+#[cfg(unix)]
 mod privileges;
 #[doc(hidden)]
 pub mod test_support;
 
 pub use bootstrap::{ExecutionPrivileges, detect_execution_privileges, run};
 pub use error::{Error, Result};
-#[cfg(feature = "privileged-tests")]
+#[cfg(all(unix, feature = "privileged-tests"))]
 pub use privileges::with_temp_euid;
+#[cfg(unix)]
 pub use privileges::{default_paths_for, make_data_dir_private, make_dir_accessible, nobody_uid};
 
 use color_eyre::eyre::Context;

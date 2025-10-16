@@ -98,15 +98,15 @@ fn with_temp_euid_changes_uid() -> color_eyre::Result<()> {
 }
 
 #[cfg(unix)]
-#[path = "support/mod.rs"]
-mod support;
+#[path = "support/cap_fs.rs"]
+mod cap_fs;
 
 #[cfg(unix)]
 mod dir_accessible_tests {
     use super::*;
     use cap_std::fs::{MetadataExt, PermissionsExt};
 
-    use crate::support::cap_fs::{CapabilityTempDir, metadata};
+    use cap_fs::{CapabilityTempDir, metadata};
 
     #[rstest]
     fn make_dir_accessible_allows_nobody() -> color_eyre::Result<()> {
