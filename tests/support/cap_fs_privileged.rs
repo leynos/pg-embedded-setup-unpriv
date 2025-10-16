@@ -1,19 +1,15 @@
 //! Capability helpers used by privileged integration tests.
 
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8Path;
 use cap_std::{ambient_authority, fs::Dir};
 use color_eyre::eyre::{Context, Result};
 
+pub use pg_embedded_setup_unpriv::test_support::ambient_dir_and_path;
 use pg_embedded_setup_unpriv::test_support::{
-    ambient_dir_and_path as shared_ambient_dir_and_path,
     ensure_dir_exists as shared_ensure_dir_exists, set_permissions as shared_set_permissions,
 };
 
 /// Splits an absolute or relative path into a capability directory and the relative path.
-pub fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
-    shared_ambient_dir_and_path(path)
-}
-
 /// Ensures a directory exists with the provided permissions mode.
 pub fn ensure_dir(path: &Utf8Path, mode: u32) -> Result<()> {
     shared_ensure_dir_exists(path)?;

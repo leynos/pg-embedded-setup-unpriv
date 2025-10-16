@@ -13,6 +13,9 @@ static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 /// The guard restores any pre-existing values when `body` returns, ensuring tests do
 /// not leak environment configuration across scenarios. A global mutex serialises
 /// access so concurrent tests cannot interleave environment mutations.
+///
+/// Important: this guard is not re-entrant. Do not nest `with_scoped_env` calls, as
+/// the inner invocation will deadlock waiting for the mutex held by the outer scope.
 pub fn with_scoped_env<R>(
     vars: impl IntoIterator<Item = (OsString, Option<OsString>)>,
     body: impl FnOnce() -> R,

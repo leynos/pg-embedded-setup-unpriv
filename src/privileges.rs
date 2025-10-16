@@ -1,3 +1,10 @@
+#![cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+))]
 //! Privilege management helpers for dropping root access safely.
 use crate::error::{PrivilegeError, PrivilegeResult};
 use crate::fs::{ensure_dir_exists, set_permissions};
@@ -100,7 +107,7 @@ pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
 /// use nix::unistd::User;
 /// use pg_embedded_setup_unpriv::make_dir_accessible;
 ///
-/// # fn demo(user: &User) -> pg_embedded_setup_unpriv::Result<()> {
+/// # fn demo(user: &User) -> pg_embedded_setup_unpriv::error::PrivilegeResult<()> {
 /// let dir = camino::Utf8Path::new("/var/tmp/my-install");
 /// make_dir_accessible(dir, user)?;
 /// # Ok(())
@@ -121,7 +128,7 @@ pub fn make_dir_accessible<P: AsRef<Utf8Path>>(dir: P, user: &User) -> Privilege
 /// use nix::unistd::User;
 /// use pg_embedded_setup_unpriv::make_data_dir_private;
 ///
-/// # fn demo(user: &User) -> pg_embedded_setup_unpriv::Result<()> {
+/// # fn demo(user: &User) -> pg_embedded_setup_unpriv::error::PrivilegeResult<()> {
 /// let dir = camino::Utf8Path::new("/var/tmp/my-data");
 /// make_data_dir_private(dir, user)?;
 /// # Ok(())

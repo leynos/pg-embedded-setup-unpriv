@@ -161,7 +161,10 @@ fn run_internal() -> BootstrapResult<()> {
 }
 
 #[cfg(unix)]
-#[allow(clippy::collapsible_if)]
+#[expect(
+    clippy::collapsible_if,
+    reason = "Keep the privilege-branch parameters explicit for staged directory prep"
+)]
 fn bootstrap_with_root(
     rt: &tokio::runtime::Runtime,
     mut settings: Settings,
@@ -234,7 +237,10 @@ fn bootstrap_with_root(
 }
 
 #[cfg(unix)]
-#[allow(clippy::collapsible_if)]
+#[expect(
+    clippy::collapsible_if,
+    reason = "Keep the privilege-branch parameters explicit for staged directory prep"
+)]
 fn bootstrap_unprivileged(
     rt: &tokio::runtime::Runtime,
     mut settings: Settings,
