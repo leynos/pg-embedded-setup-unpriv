@@ -216,7 +216,7 @@ pub fn default_paths_for(uid: Uid) -> (Utf8PathBuf, Utf8PathBuf) {
 /// ```
 pub fn with_temp_euid<F, R>(target: Uid, body: F) -> crate::Result<R>
 where
-    F: FnOnce() -> color_eyre::eyre::Result<R>,
+    F: FnOnce() -> crate::Result<R>,
 {
     let user = User::from_uid(target)
         .context("User::from_uid failed")
@@ -224,7 +224,7 @@ where
         .ok_or_else(|| color_eyre::eyre::eyre!("no passwd entry for uid {}", target))
         .map_err(PrivilegeError::from)?;
     let guard = drop_process_privileges(&user)?;
-    let result = body().map_err(PrivilegeError::from)?;
+    let result = body()?;
     drop(guard);
     Ok(result)
 }

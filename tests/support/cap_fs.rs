@@ -1,35 +1,31 @@
 #![cfg(unix)]
-#![allow(dead_code)] // Integration tests include this module but use different subsets of the helpers.
+#![expect(
+    dead_code,
+    reason = "Integration suites include this module but exercise different helper subsets."
+)]
 
 //! Capability-based filesystem helpers for tests.
 
 use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::{
     ambient_authority,
-    fs::{Dir, Metadata, Permissions, PermissionsExt},
+    fs::{Dir, Metadata},
 };
 use color_eyre::eyre::{Context, Result};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use pg_embedded_setup_unpriv::test_support::{
+    ambient_dir_and_path as shared_ambient_dir_and_path,
+    ensure_dir_exists as shared_ensure_dir_exists, set_permissions as shared_set_permissions,
+};
 
 /// Splits an absolute or relative path into a capability directory and the relative path.
 ///
 /// Absolute paths are rebased under the ambient root directory. Relative paths reuse the
 /// current working directory.
 pub fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
-    if path.has_root() {
-        let stripped = path
-            .strip_prefix("/")
-            .map(Utf8Path::to_path_buf)
-            .unwrap_or_else(|_| path.to_path_buf());
-        let dir = Dir::open_ambient_dir("/", ambient_authority())
-            .context("open ambient root directory")?;
-        Ok((dir, stripped))
-    } else {
-        let dir = Dir::open_ambient_dir(".", ambient_authority())
-            .context("open ambient working directory")?;
-        Ok((dir, path.to_path_buf()))
-    }
+    shared_ambient_dir_and_path(path)
 }
 
 /// Ensures a directory exists with the provided permissions mode.
@@ -37,27 +33,13 @@ pub fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
 /// A missing directory is created recursively; existing directories have their permissions
 /// re-applied to guarantee consistency across repeated calls.
 pub fn ensure_dir(path: &Utf8Path, mode: u32) -> Result<()> {
-    let (dir, relative) = ambient_dir_and_path(path)?;
-    if relative.as_str().is_empty() {
-        return Ok(());
-    }
-
-    dir.create_dir_all(relative.as_std_path())
-        .with_context(|| format!("create {}", path))?;
-    dir.set_permissions(relative.as_std_path(), Permissions::from_mode(mode))
-        .with_context(|| format!("chmod {}", path))?;
-    Ok(())
+    shared_ensure_dir_exists(path)?;
+    shared_set_permissions(path, mode)
 }
 
 /// Applies the provided POSIX mode to the path when it exists.
 pub fn set_permissions(path: &Utf8Path, mode: u32) -> Result<()> {
-    let (dir, relative) = ambient_dir_and_path(path)?;
-    if relative.as_str().is_empty() {
-        return Ok(());
-    }
-
-    dir.set_permissions(relative.as_std_path(), Permissions::from_mode(mode))
-        .with_context(|| format!("chmod {}", path))
+    shared_set_permissions(path, mode)
 }
 
 /// Removes a directory tree when present, ignoring `NotFound` errors.

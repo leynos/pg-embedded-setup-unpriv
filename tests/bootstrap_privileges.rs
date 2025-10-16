@@ -9,9 +9,9 @@ use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::fs::MetadataExt;
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use nix::unistd::{Uid, geteuid};
-use pg_embedded_setup_unpriv::{
-    ExecutionPrivileges, detect_execution_privileges, nobody_uid, with_temp_euid,
-};
+#[cfg(feature = "privileged-tests")]
+use pg_embedded_setup_unpriv::with_temp_euid;
+use pg_embedded_setup_unpriv::{ExecutionPrivileges, detect_execution_privileges, nobody_uid};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
 
@@ -210,6 +210,27 @@ impl BootstrapSandbox {
     }
 }
 
+#[cfg(feature = "privileged-tests")]
+fn run_bootstrap_with_temp_drop(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
+    sandbox.borrow_mut().set_expected_owner(nobody_uid());
+    let privileges = with_temp_euid(nobody_uid(), || Ok(detect_execution_privileges()))
+        .map_err(|err| eyre!(err))?;
+    sandbox.borrow_mut().record_privileges(privileges);
+    let outcome = with_temp_euid(nobody_uid(), || {
+        let sandbox_ref = sandbox.borrow();
+        sandbox_ref.run_bootstrap()
+    });
+    sandbox.borrow_mut().handle_outcome(outcome)
+}
+
+#[cfg(not(feature = "privileged-tests"))]
+fn run_bootstrap_with_temp_drop(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
+    sandbox
+        .borrow_mut()
+        .mark_skipped("SKIP-BOOTSTRAP: privileged scenario requires the privileged-tests feature");
+    Ok(())
+}
+
 #[fixture]
 fn sandbox() -> RefCell<BootstrapSandbox> {
     RefCell::new(BootstrapSandbox::new().expect("create bootstrap sandbox"))
@@ -223,16 +244,7 @@ fn given_fresh_sandbox(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
 #[when("the bootstrap runs as an unprivileged user")]
 fn when_bootstrap_runs_unprivileged(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
     if geteuid().is_root() {
-        sandbox.borrow_mut().set_expected_owner(nobody_uid());
-        let privileges = with_temp_euid(nobody_uid(), || Ok(detect_execution_privileges()))
-            .map_err(|err| eyre!(err))?;
-        sandbox.borrow_mut().record_privileges(privileges);
-        let outcome = with_temp_euid(nobody_uid(), || {
-            let sandbox_ref = sandbox.borrow();
-            sandbox_ref.run_bootstrap().map_err(|err| eyre!(err))?;
-            Ok(())
-        });
-        sandbox.borrow_mut().handle_outcome(outcome)
+        run_bootstrap_with_temp_drop(sandbox)
     } else {
         let uid = geteuid();
         {

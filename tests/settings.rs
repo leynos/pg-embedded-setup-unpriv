@@ -1,11 +1,13 @@
 use std::path::PathBuf;
 
-use color_eyre::eyre::Context;
+use color_eyre::eyre::{Context, eyre};
 use nix::unistd::{User, geteuid, getgid, getuid};
 use pg_embedded_setup_unpriv::{
     ExecutionPrivileges, PgEnvCfg, detect_execution_privileges, make_data_dir_private,
-    make_dir_accessible, nobody_uid, with_temp_euid,
+    make_dir_accessible, nobody_uid,
 };
+#[cfg(feature = "privileged-tests")]
+use pg_embedded_setup_unpriv::{test_support::privilege_error, with_temp_euid};
 use postgresql_embedded::VersionReq;
 use rstest::rstest;
 
@@ -56,7 +58,7 @@ fn to_settings_default_config() {
     assert!(cfg.to_settings().is_ok());
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "privileged-tests"))]
 #[rstest]
 /// Verify that the effective uid is changed within the passed block
 fn with_temp_euid_changes_uid() -> color_eyre::Result<()> {
@@ -72,14 +74,26 @@ fn with_temp_euid_changes_uid() -> color_eyre::Result<()> {
         assert_eq!(geteuid(), nobody_uid());
         assert_eq!(getuid(), nobody_uid());
         let nobody = User::from_uid(nobody_uid())
-            .context("User::from_uid failed")?
-            .expect("nobody user should exist");
+            .context("User::from_uid failed")
+            .map_err(privilege_error)?
+            .ok_or_else(|| privilege_error(eyre!("nobody user should exist")))?;
         assert_eq!(getgid(), nobody.gid);
         Ok(())
-    })?;
+    })
+    .map_err(|err| eyre!(err))?;
 
     assert_eq!(geteuid(), original_euid);
     assert_eq!(getuid(), original_uid);
+    Ok(())
+}
+
+#[cfg(all(unix, not(feature = "privileged-tests")))]
+#[rstest]
+/// Stub variant ensuring the suite reports skipped when privilege drops are unavailable.
+fn with_temp_euid_changes_uid() -> color_eyre::Result<()> {
+    eprintln!(
+        "skipping root-dependent test: enable the privileged-tests feature to exercise privilege drops",
+    );
     Ok(())
 }
 
@@ -145,12 +159,22 @@ fn detect_execution_privileges_tracks_effective_uid() -> color_eyre::Result<()> 
     }
 
     assert_eq!(detect_execution_privileges(), ExecutionPrivileges::Root);
+    #[cfg(not(feature = "privileged-tests"))]
+    {
+        eprintln!(
+            "skipping privileged uid swap: enable the privileged-tests feature to drop privileges",
+        );
+        return Ok(());
+    }
+
+    #[cfg(feature = "privileged-tests")]
     with_temp_euid(nobody_uid(), || {
         assert_eq!(
             detect_execution_privileges(),
             ExecutionPrivileges::Unprivileged
         );
         Ok(())
-    })?;
+    })
+    .map_err(|err| eyre!(err))?;
     Ok(())
 }

@@ -10,6 +10,8 @@ mod bootstrap;
 mod error;
 mod fs;
 mod privileges;
+#[doc(hidden)]
+pub mod test_support;
 
 pub use bootstrap::{ExecutionPrivileges, detect_execution_privileges, run};
 pub use error::{Error, Result};
