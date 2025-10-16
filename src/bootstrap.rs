@@ -311,7 +311,6 @@ fn bootstrap_unprivileged(
 mod tests {
     use super::*;
     use nix::unistd::Uid;
-    use std::path::PathBuf;
 
     #[test]
     fn ensure_settings_paths_applies_defaults() {
@@ -332,8 +331,8 @@ mod tests {
     #[test]
     fn ensure_settings_paths_respects_user_provided_dirs() {
         let cfg = PgEnvCfg {
-            runtime_dir: Some(PathBuf::from("/custom/install")),
-            data_dir: Some(PathBuf::from("/custom/data")),
+            runtime_dir: Some(Utf8PathBuf::from("/custom/install")),
+            data_dir: Some(Utf8PathBuf::from("/custom/data")),
             ..PgEnvCfg::default()
         };
         let mut settings = cfg.to_settings().expect("custom config should convert");

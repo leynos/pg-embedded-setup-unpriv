@@ -1,8 +1,3 @@
-#![expect(
-    dead_code,
-    reason = "Integration suites include this module but exercise different helper subsets."
-)]
-
 //! Capability-based filesystem helpers for tests.
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -15,8 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pg_embedded_setup_unpriv::test_support::{
-    ambient_dir_and_path as shared_ambient_dir_and_path,
-    ensure_dir_exists as shared_ensure_dir_exists, set_permissions as shared_set_permissions,
+    ambient_dir_and_path as shared_ambient_dir_and_path, set_permissions as shared_set_permissions,
 };
 
 /// Splits an absolute or relative path into a capability directory and the relative path.
@@ -25,15 +19,6 @@ use pg_embedded_setup_unpriv::test_support::{
 /// current working directory.
 pub fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
     shared_ambient_dir_and_path(path)
-}
-
-/// Ensures a directory exists with the provided permissions mode.
-///
-/// A missing directory is created recursively; existing directories have their permissions
-/// re-applied to guarantee consistency across repeated calls.
-pub fn ensure_dir(path: &Utf8Path, mode: u32) -> Result<()> {
-    shared_ensure_dir_exists(path)?;
-    shared_set_permissions(path, mode)
 }
 
 /// Applies the provided POSIX mode to the path when it exists.
@@ -64,12 +49,6 @@ pub fn metadata(path: &Utf8Path) -> std::io::Result<Metadata> {
     } else {
         dir.metadata(relative.as_std_path())
     }
-}
-
-/// Opens a capability directory handle to the specified path.
-pub fn open_dir(path: &Utf8Path) -> Result<Dir> {
-    Dir::open_ambient_dir(path.as_std_path(), ambient_authority())
-        .with_context(|| format!("open {}", path))
 }
 
 /// Capability-aware temporary directory that exposes both a [`Dir`] handle and the UTF-8 path.

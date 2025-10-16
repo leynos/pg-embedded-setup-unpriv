@@ -20,13 +20,13 @@ use pg_embedded_setup_unpriv::{
 use postgresql_embedded::PostgreSQL;
 use tokio::runtime::Builder;
 
-#[path = "support/mod.rs"]
-mod support;
+#[path = "support/cap_fs_privileged.rs"]
+mod cap_fs;
+#[path = "support/env.rs"]
+mod env;
 
-use support::{
-    cap_fs::{ensure_dir, open_dir, remove_tree},
-    env::with_scoped_env,
-};
+use cap_fs::{ensure_dir, open_dir, remove_tree};
+use env::with_scoped_env;
 
 #[derive(QueryableByName, Debug, PartialEq, Eq)]
 struct GreetingRow {

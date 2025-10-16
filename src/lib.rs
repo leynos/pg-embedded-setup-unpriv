@@ -27,6 +27,7 @@ use postgresql_embedded::{Settings, VersionReq};
 use serde::{Deserialize, Serialize};
 
 use crate::error::ConfigResult;
+use camino::Utf8PathBuf;
 
 #[allow(non_snake_case)]
 #[derive(Debug, Clone, Serialize, Deserialize, OrthoConfig, Default)]
@@ -37,8 +38,8 @@ pub struct PgEnvCfg {
     pub port: Option<u16>,
     pub superuser: Option<String>,
     pub password: Option<String>,
-    pub data_dir: Option<std::path::PathBuf>,
-    pub runtime_dir: Option<std::path::PathBuf>,
+    pub data_dir: Option<Utf8PathBuf>,
+    pub runtime_dir: Option<Utf8PathBuf>,
     pub locale: Option<String>,
     pub encoding: Option<String>,
 }
@@ -84,10 +85,10 @@ impl PgEnvCfg {
 
     fn apply_paths(&self, settings: &mut Settings) {
         if let Some(ref dir) = self.data_dir {
-            settings.data_dir = dir.clone();
+            settings.data_dir = dir.clone().into_std_path_buf();
         }
         if let Some(ref dir) = self.runtime_dir {
-            settings.installation_dir = dir.clone();
+            settings.installation_dir = dir.clone().into_std_path_buf();
         }
     }
 

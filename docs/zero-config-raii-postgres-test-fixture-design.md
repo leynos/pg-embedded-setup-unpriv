@@ -39,9 +39,10 @@ extra([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace45932974
 - Filesystem work now routes through `cap-std` with `camino` path handling so
   bootstrap always honours capability-based sandboxing and fails fast when
   callers provide non UTF-8 directories.
-- Behavioural tests wrap environment changes in `temp_env::with_vars` to avoid
-  leaking global state between scenarios and to follow the project testing
-  guidelines.
+- Behavioural tests wrap environment changes with the shared `with_scoped_env`
+  helper. The helper guards `temp_env::with_vars` behind a process-wide mutex
+  so concurrent scenarios cannot interleave global mutations, keeping runs
+  isolated and aligned with the testing guidelines.
 
 - **If running as root on Linux:** the helper will perform the necessary
   privilege drop to a safe user (such as `"nobody"`) before initializing

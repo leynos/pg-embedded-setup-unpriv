@@ -1,3 +1,4 @@
+use camino::Utf8PathBuf;
 use std::path::PathBuf;
 
 use color_eyre::eyre::{Context, eyre};
@@ -28,8 +29,8 @@ fn to_settings_roundtrip() -> color_eyre::Result<()> {
         port: Some(5433),
         superuser: Some("admin".into()),
         password: Some("secret".into()),
-        data_dir: Some(PathBuf::from("/tmp/data")),
-        runtime_dir: Some(PathBuf::from("/tmp/runtime")),
+        data_dir: Some(Utf8PathBuf::from("/tmp/data")),
+        runtime_dir: Some(Utf8PathBuf::from("/tmp/runtime")),
         locale: Some("en_US".into()),
         encoding: Some("UTF8".into()),
     };
@@ -98,7 +99,7 @@ fn with_temp_euid_changes_uid() -> color_eyre::Result<()> {
 }
 
 #[cfg(unix)]
-#[path = "support/cap_fs.rs"]
+#[path = "support/cap_fs_settings.rs"]
 mod cap_fs;
 
 #[cfg(unix)]
