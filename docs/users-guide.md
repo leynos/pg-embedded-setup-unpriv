@@ -81,6 +81,11 @@ still running as `root`, follow these steps:
 - **Download rate limits**: `postgresql_embedded` fetches binaries from the
   Theseus GitHub releases. Supply a `GITHUB_TOKEN` environment variable if you
   hit rate limits in CI.
+- **CLI arguments in tests**: `PgEnvCfg::load()` ignores `std::env::args`
+  during library use so Cargo test filters (for example,
+  `bootstrap_privileges::bootstrap_as_root`) do not trip the underlying Clap
+  parser. Provide configuration through environment variables or config files
+  when embedding the crate.
 
 ## Further reading
 

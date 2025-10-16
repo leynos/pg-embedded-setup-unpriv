@@ -9,7 +9,6 @@
 mod bootstrap;
 mod error;
 mod fs;
-#[cfg(unix)]
 #[cfg(any(
     target_os = "linux",
     target_os = "android",
@@ -43,13 +42,14 @@ pub use privileges::with_temp_euid;
 ))]
 pub use privileges::{default_paths_for, make_data_dir_private, make_dir_accessible, nobody_uid};
 
-use color_eyre::eyre::Context;
+use color_eyre::eyre::{Context, eyre};
 use ortho_config::OrthoConfig;
 use postgresql_embedded::{Settings, VersionReq};
 use serde::{Deserialize, Serialize};
 
-use crate::error::ConfigResult;
+use crate::error::{ConfigError, ConfigResult};
 use camino::Utf8PathBuf;
+use std::ffi::OsString;
 
 #[allow(non_snake_case)]
 #[derive(Debug, Clone, Serialize, Deserialize, OrthoConfig, Default)]
@@ -67,6 +67,12 @@ pub struct PgEnvCfg {
 }
 
 impl PgEnvCfg {
+    /// Loads configuration from environment variables without parsing CLI arguments.
+    pub fn load() -> ConfigResult<Self> {
+        let args = [OsString::from("pg-embedded-setup-unpriv")];
+        Self::load_from_iter(args).map_err(|err| ConfigError::from(eyre!(err)))
+    }
+
     /// Converts the configuration into a complete `postgresql_embedded::Settings` object.
     ///
     /// Applies version, connection, path, and locale settings from the current configuration.

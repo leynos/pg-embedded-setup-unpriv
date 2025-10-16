@@ -13,7 +13,6 @@ use color_eyre::eyre::{Context, Result, eyre};
 use diesel::prelude::*;
 use diesel::sql_types::{Int4, Text};
 use nix::unistd::geteuid;
-use ortho_config::OrthoConfig;
 use pg_embedded_setup_unpriv::{
     PgEnvCfg, nobody_uid, test_support::bootstrap_error, with_temp_euid,
 };

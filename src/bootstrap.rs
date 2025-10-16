@@ -9,7 +9,6 @@ use crate::privileges::{
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::Context;
 use nix::unistd::{Uid, User, chown, geteuid};
-use ortho_config::OrthoConfig;
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::env;
 

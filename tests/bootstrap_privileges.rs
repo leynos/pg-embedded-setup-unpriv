@@ -11,7 +11,9 @@ use color_eyre::eyre::{Context, Result, ensure, eyre};
 use nix::unistd::{Uid, geteuid};
 #[cfg(feature = "privileged-tests")]
 use pg_embedded_setup_unpriv::with_temp_euid;
-use pg_embedded_setup_unpriv::{ExecutionPrivileges, detect_execution_privileges, nobody_uid};
+use pg_embedded_setup_unpriv::{
+    Error as SetupError, ExecutionPrivileges, detect_execution_privileges, nobody_uid,
+};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
 
@@ -181,7 +183,11 @@ impl BootstrapSandbox {
         match outcome {
             Ok(()) => Ok(()),
             Err(err) => {
-                let message = err.to_string();
+                let message = match &err {
+                    SetupError::Bootstrap(inner) => format!("{inner:?}"),
+                    SetupError::Privilege(inner) => format!("{inner:?}"),
+                    SetupError::Config(inner) => format!("{inner:?}"),
+                };
                 const SKIP_CONDITIONS: &[(&str, &str)] = &[
                     (
                         "rate limit exceeded",
@@ -203,7 +209,7 @@ impl BootstrapSandbox {
                     self.mark_skipped(format!("{reason}: {message}"));
                     Ok(())
                 } else {
-                    Err(eyre!(err))
+                    Err(eyre!(message))
                 }
             }
         }
