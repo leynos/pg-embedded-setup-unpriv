@@ -1,9 +1,12 @@
-#![cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "openbsd",
-    target_os = "dragonfly",
+#![cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    )
 ))]
 //! Privilege management helpers for dropping root access safely.
 use crate::error::{PrivilegeError, PrivilegeResult};
@@ -105,6 +108,8 @@ pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
 
 /// Ensures `dir` exists, is owned by `user`, and grants world-readable access.
 ///
+/// The example returns `PrivilegeResult` so callers propagate the helper's
+/// domain-specific error type rather than the opaque crate alias.
 /// # Examples
 /// ```no_run
 /// use nix::unistd::User;
@@ -125,6 +130,9 @@ pub fn make_dir_accessible<P: AsRef<Utf8Path>>(dir: P, user: &User) -> Privilege
 /// PostgreSQL refuses to use a data directory that is accessible to other
 /// users. This helper creates the directory (if needed), chowns it to `user`,
 /// and clamps permissions to `0700` to satisfy that requirement.
+///
+/// The example returns `PrivilegeResult` to demonstrate how callers surface the
+/// helper's domain errors when composing setup flows.
 ///
 /// # Examples
 /// ```no_run
@@ -242,6 +250,9 @@ pub fn default_paths_for(uid: Uid) -> (Utf8PathBuf, Utf8PathBuf) {
 /// This function mutates the entire process identity. Callers must ensure no
 /// other threads perform privileged operations while the guard is active.
 /// Prefer invoking this helper in single-threaded test binaries only.
+///
+/// The example returns `PrivilegeResult` to reinforce that callers should
+/// propagate privilege failures through the domain error surface.
 ///
 /// # Examples
 /// ```

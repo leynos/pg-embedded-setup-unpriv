@@ -9,12 +9,15 @@
 mod bootstrap;
 mod error;
 mod fs;
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "openbsd",
-    target_os = "dragonfly",
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
 ))]
 mod privileges;
 #[doc(hidden)]
@@ -23,20 +26,26 @@ pub mod test_support;
 pub use bootstrap::{ExecutionPrivileges, detect_execution_privileges, run};
 pub use error::{Error, Result};
 #[cfg(feature = "privileged-tests")]
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "openbsd",
-    target_os = "dragonfly",
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
 ))]
 pub use privileges::with_temp_euid;
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "openbsd",
-    target_os = "dragonfly",
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
 ))]
 pub use privileges::{default_paths_for, make_data_dir_private, make_dir_accessible, nobody_uid};
 
