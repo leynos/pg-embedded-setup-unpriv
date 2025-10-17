@@ -103,58 +103,40 @@ impl TestConfig {
     }
 
     fn bootstrap_env(&self) -> Vec<(OsString, Option<OsString>)> {
-        Self::env_pairs(vec![
-            (
-                OsString::from("PG_RUNTIME_DIR"),
-                OsString::from(self.install_dir.as_str()),
-            ),
-            (
-                OsString::from("PG_DATA_DIR"),
-                OsString::from(self.data_dir.as_str()),
-            ),
-            (
-                OsString::from("PG_VERSION_REQ"),
-                OsString::from(self.version_req),
-            ),
-            (
-                OsString::from("PG_PORT"),
-                OsString::from(self.port.to_string()),
-            ),
-            (OsString::from("PG_SUPERUSER"), OsString::from("postgres")),
-            (OsString::from("PG_PASSWORD"), OsString::from(self.password)),
+        let port = self.port.to_string();
+
+        Self::build_env([
+            ("PG_RUNTIME_DIR", self.install_dir.as_str()),
+            ("PG_DATA_DIR", self.data_dir.as_str()),
+            ("PG_VERSION_REQ", self.version_req),
+            ("PG_PORT", port.as_str()),
+            ("PG_SUPERUSER", "postgres"),
+            ("PG_PASSWORD", self.password),
         ])
     }
 
     fn runtime_env(&self, password_file: &Utf8PathBuf) -> Vec<(OsString, Option<OsString>)> {
-        Self::env_pairs(vec![
-            (
-                OsString::from("HOME"),
-                OsString::from(self.install_dir.as_str()),
-            ),
-            (
-                OsString::from("XDG_CACHE_HOME"),
-                OsString::from(self.cache_dir().as_str()),
-            ),
-            (
-                OsString::from("XDG_RUNTIME_DIR"),
-                OsString::from(self.runtime_dir().as_str()),
-            ),
-            (
-                OsString::from("PGPASSFILE"),
-                OsString::from(password_file.as_str()),
-            ),
-            (
-                OsString::from("TZDIR"),
-                OsString::from("/usr/share/zoneinfo"),
-            ),
-            (OsString::from("TZ"), OsString::from("UTC")),
+        let cache_dir = self.cache_dir();
+        let runtime_dir = self.runtime_dir();
+
+        Self::build_env([
+            ("HOME", self.install_dir.as_str()),
+            ("XDG_CACHE_HOME", cache_dir.as_str()),
+            ("XDG_RUNTIME_DIR", runtime_dir.as_str()),
+            ("PGPASSFILE", password_file.as_str()),
+            ("TZDIR", "/usr/share/zoneinfo"),
+            ("TZ", "UTC"),
         ])
     }
 
-    fn env_pairs(pairs: Vec<(OsString, OsString)>) -> Vec<(OsString, Option<OsString>)> {
-        pairs
-            .into_iter()
-            .map(|(key, value)| (key, Some(value)))
+    fn build_env<I, K, V>(vars: I) -> Vec<(OsString, Option<OsString>)>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        vars.into_iter()
+            .map(|(key, value)| (key.into(), Some(value.into())))
             .collect()
     }
 }
