@@ -22,6 +22,13 @@ pub enum ExecutionPrivileges {
     Unprivileged,
 }
 
+#[derive(Debug, Clone)]
+struct XdgDirs {
+    home: Utf8PathBuf,
+    cache: Utf8PathBuf,
+    runtime: Utf8PathBuf,
+}
+
 /// Captures the environment variables prepared for test executions.
 #[derive(Debug, Clone)]
 pub struct TestBootstrapEnvironment {
@@ -34,17 +41,11 @@ pub struct TestBootstrapEnvironment {
 }
 
 impl TestBootstrapEnvironment {
-    fn new(
-        home: Utf8PathBuf,
-        cache: Utf8PathBuf,
-        runtime: Utf8PathBuf,
-        pgpass_file: Utf8PathBuf,
-        timezone: TimezoneEnv,
-    ) -> Self {
+    fn new(xdg: XdgDirs, pgpass_file: Utf8PathBuf, timezone: TimezoneEnv) -> Self {
         Self {
-            home,
-            xdg_cache_home: cache,
-            xdg_runtime_dir: runtime,
+            home: xdg.home,
+            xdg_cache_home: xdg.cache,
+            xdg_runtime_dir: xdg.runtime,
             pgpass_file,
             tz_dir: timezone.dir,
             timezone: timezone.zone,
@@ -380,8 +381,12 @@ fn bootstrap_with_root(
     })?;
     drop(guard);
 
-    let environment =
-        TestBootstrapEnvironment::new(install_dir, cache_dir, runtime_dir, password_file, timezone);
+    let xdg = XdgDirs {
+        home: install_dir,
+        cache: cache_dir,
+        runtime: runtime_dir,
+    };
+    let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
 
     Ok(PreparedBootstrap {
         settings,
@@ -448,8 +453,12 @@ fn bootstrap_unprivileged(
         Ok::<(), color_eyre::Report>(())
     })?;
 
-    let environment =
-        TestBootstrapEnvironment::new(install_dir, cache_dir, runtime_dir, password_file, timezone);
+    let xdg = XdgDirs {
+        home: install_dir,
+        cache: cache_dir,
+        runtime: runtime_dir,
+    };
+    let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
 
     Ok(PreparedBootstrap {
         settings,
@@ -498,8 +507,12 @@ fn bootstrap_unprivileged(
         Ok::<(), color_eyre::Report>(())
     })?;
 
-    let environment =
-        TestBootstrapEnvironment::new(install_dir, cache_dir, runtime_dir, password_file, timezone);
+    let xdg = XdgDirs {
+        home: install_dir,
+        cache: cache_dir,
+        runtime: runtime_dir,
+    };
+    let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
 
     Ok(PreparedBootstrap {
         settings,
