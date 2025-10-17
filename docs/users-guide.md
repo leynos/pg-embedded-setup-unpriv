@@ -41,6 +41,33 @@ explains how to configure the tool and integrate it into automated test flows.
    `postgresql_embedded` directly after the setup step, it can reuse the staged
    binaries and data directory without needing `root`.
 
+## Bootstrap for test suites
+
+Call `pg_embedded_setup_unpriv::bootstrap_for_tests()` from integration tests
+when you need both the prepared filesystem layout and the resulting settings.
+The helper performs the same orchestration as the CLI entry point but returns a
+`TestBootstrapSettings` struct containing the final
+`postgresql_embedded::Settings` and the environment variables required to
+exercise the cluster.
+
+```rust
+use pg_embedded_setup_unpriv::{bootstrap_for_tests, TestBootstrapSettings};
+
+fn bootstrap() -> pg_embedded_setup_unpriv::error::BootstrapResult<TestBootstrapSettings> {
+    let prepared = bootstrap_for_tests()?;
+    for (key, value) in prepared.environment.to_env() {
+        std::env::set_var(key, value);
+    }
+    Ok(prepared)
+}
+```
+
+`bootstrap_for_tests()` ensures that `PGPASSFILE`, `HOME`, `XDG_CACHE_HOME`,
+`XDG_RUNTIME_DIR`, `TZDIR`, and `TZ` are populated with deterministic defaults.
+If the system timezone database is missing the helper returns an error advising
+the caller to install `tzdata` or set `TZDIR` explicitly, making the dependency
+visible during test startup rather than when PostgreSQL launches.
+
 ## Privilege detection and idempotence
 
 - `pg_embedded_setup_unpriv` detects its effective user ID at runtime. Root
@@ -69,9 +96,12 @@ still running as `root`, follow these steps:
   `pg_embedded_setup_unpriv::with_temp_euid`) prior to starting the database.
 - Ensure the `PGPASSFILE` environment variable points to the file created in
   the runtime directory so subsequent Diesel or libpq connections can
-  authenticate without interactive prompts.
+  authenticate without interactive prompts. The
+  `bootstrap_for_tests().environment.pgpass_file` helper returns the path if
+  the bootstrap ran inside the test process.
 - Provide `TZDIR=/usr/share/zoneinfo` (or the correct path for your
-  distribution) to guarantee PostgreSQL can resolve the `TimeZone` setting.
+  distribution) if you are running the CLI. The library helper sets both
+  `TZDIR` and `TZ` automatically when it discovers a valid timezone database.
 
 ## Known issues and mitigations
 

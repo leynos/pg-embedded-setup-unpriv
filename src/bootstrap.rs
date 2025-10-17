@@ -11,6 +11,7 @@ use color_eyre::eyre::Context;
 use nix::unistd::{Uid, User, chown, geteuid};
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::env;
+use std::path::PathBuf;
 
 /// Represents the privileges the process is running with when bootstrapping PostgreSQL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +20,59 @@ pub enum ExecutionPrivileges {
     Root,
     /// The process is already unprivileged, so bootstrap tasks run with the current UID/GID.
     Unprivileged,
+}
+
+/// Captures the environment variables prepared for test executions.
+#[derive(Debug, Clone)]
+pub struct TestBootstrapEnvironment {
+    pub home: Utf8PathBuf,
+    pub xdg_cache_home: Utf8PathBuf,
+    pub xdg_runtime_dir: Utf8PathBuf,
+    pub pgpass_file: Utf8PathBuf,
+    pub tz_dir: Utf8PathBuf,
+    pub timezone: String,
+}
+
+impl TestBootstrapEnvironment {
+    fn new(
+        home: Utf8PathBuf,
+        cache: Utf8PathBuf,
+        runtime: Utf8PathBuf,
+        pgpass_file: Utf8PathBuf,
+        timezone: TimezoneEnv,
+    ) -> Self {
+        Self {
+            home,
+            xdg_cache_home: cache,
+            xdg_runtime_dir: runtime,
+            pgpass_file,
+            tz_dir: timezone.dir,
+            timezone: timezone.zone,
+        }
+    }
+
+    /// Returns the prepared environment variables as key/value pairs.
+    pub fn to_env(&self) -> Vec<(String, String)> {
+        vec![
+            ("HOME".into(), self.home.as_str().into()),
+            ("XDG_CACHE_HOME".into(), self.xdg_cache_home.as_str().into()),
+            (
+                "XDG_RUNTIME_DIR".into(),
+                self.xdg_runtime_dir.as_str().into(),
+            ),
+            ("PGPASSFILE".into(), self.pgpass_file.as_str().into()),
+            ("TZDIR".into(), self.tz_dir.as_str().into()),
+            ("TZ".into(), self.timezone.clone()),
+        ]
+    }
+}
+
+/// Structured settings returned from [`bootstrap_for_tests`].
+#[derive(Debug, Clone)]
+pub struct TestBootstrapSettings {
+    pub privileges: ExecutionPrivileges,
+    pub settings: Settings,
+    pub environment: TestBootstrapEnvironment,
 }
 
 /// Determines the current execution privileges for the bootstrap sequence.
@@ -49,6 +103,17 @@ struct SettingsPaths {
     password_file: Utf8PathBuf,
     install_default: bool,
     data_default: bool,
+}
+
+struct PreparedBootstrap {
+    settings: Settings,
+    environment: TestBootstrapEnvironment,
+}
+
+#[derive(Debug, Clone)]
+struct TimezoneEnv {
+    dir: Utf8PathBuf,
+    zone: String,
 }
 
 fn ensure_settings_paths(
@@ -99,6 +164,67 @@ fn set_env_path(key: &str, value: &Utf8Path) {
     }
 }
 
+fn prepare_timezone_env() -> BootstrapResult<TimezoneEnv> {
+    const DEFAULT_TIMEZONE: &str = "UTC";
+
+    let tz_dir = if let Some(dir) = env::var_os("TZDIR") {
+        let path = Utf8PathBuf::from_path_buf(PathBuf::from(dir)).map_err(
+            |_| -> crate::error::BootstrapError {
+                color_eyre::eyre::eyre!("TZDIR must be valid UTF-8").into()
+            },
+        )?;
+        if !path.exists() {
+            return Err(color_eyre::eyre::eyre!(
+                "timezone database not found at {}. Set TZDIR or install tzdata.",
+                path
+            )
+            .into());
+        }
+        path
+    } else {
+        let candidate = timezone_dir_candidates()
+            .iter()
+            .map(Utf8Path::new)
+            .find(|path| path.exists())
+            .ok_or_else(|| -> crate::error::BootstrapError {
+                color_eyre::eyre::eyre!("timezone database not found. Set TZDIR or install tzdata.")
+                    .into()
+            })?;
+        set_env_path("TZDIR", candidate);
+        candidate.to_owned()
+    };
+
+    let timezone = match env::var("TZ") {
+        Ok(value) if !value.trim().is_empty() => value,
+        Ok(_) | Err(std::env::VarError::NotPresent) => {
+            unsafe {
+                env::set_var("TZ", DEFAULT_TIMEZONE);
+            }
+            DEFAULT_TIMEZONE.to_string()
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(color_eyre::eyre::eyre!("TZ must be valid UTF-8").into());
+        }
+    };
+
+    Ok(TimezoneEnv {
+        dir: tz_dir,
+        zone: timezone,
+    })
+}
+
+fn timezone_dir_candidates() -> &'static [&'static str] {
+    #[cfg(unix)]
+    {
+        static CANDIDATES: [&str; 2] = ["/usr/share/zoneinfo", "/usr/lib/zoneinfo"];
+        &CANDIDATES
+    }
+    #[cfg(not(unix))]
+    {
+        &[]
+    }
+}
+
 /// Bootstraps an embedded PostgreSQL instance, branching between root and unprivileged flows.
 ///
 /// The bootstrap honours the following environment variables when present:
@@ -122,11 +248,16 @@ fn set_env_path(key: &str, value: &Utf8Path) {
 /// }
 /// ```
 pub fn run() -> crate::Result<()> {
-    run_internal()?;
+    orchestrate_bootstrap()?;
     Ok(())
 }
 
-fn run_internal() -> BootstrapResult<()> {
+/// Bootstraps PostgreSQL for integration tests and surfaces the prepared settings.
+pub fn bootstrap_for_tests() -> BootstrapResult<TestBootstrapSettings> {
+    orchestrate_bootstrap()
+}
+
+fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
     // `color_eyre::install()` is idempotent for logging but returns an error if invoked twice.
     // Behavioural tests exercise consecutive bootstraps, so ignore the duplicate registration.
     let _ = color_eyre::install();
@@ -141,22 +272,23 @@ fn run_internal() -> BootstrapResult<()> {
         .context("failed to create Tokio runtime")?;
 
     #[cfg(unix)]
-    {
+    let prepared = {
         match (privileges, settings) {
-            (ExecutionPrivileges::Root, settings) => {
-                bootstrap_with_root(&rt, settings, &cfg)?;
-            }
+            (ExecutionPrivileges::Root, settings) => bootstrap_with_root(&rt, settings, &cfg)?,
             (ExecutionPrivileges::Unprivileged, settings) => {
-                bootstrap_unprivileged(&rt, settings, &cfg)?;
+                bootstrap_unprivileged(&rt, settings, &cfg)?
             }
         }
-    }
-    #[cfg(not(unix))]
-    {
-        bootstrap_unprivileged(&rt, settings, &cfg)?;
-    }
+    };
 
-    Ok(())
+    #[cfg(not(unix))]
+    let prepared = bootstrap_unprivileged(&rt, settings, &cfg)?;
+
+    Ok(TestBootstrapSettings {
+        privileges,
+        settings: prepared.settings,
+        environment: prepared.environment,
+    })
 }
 
 #[cfg(unix)]
@@ -168,7 +300,7 @@ fn bootstrap_with_root(
     rt: &tokio::runtime::Runtime,
     mut settings: Settings,
     cfg: &PgEnvCfg,
-) -> BootstrapResult<()> {
+) -> BootstrapResult<PreparedBootstrap> {
     let nobody_user = User::from_name("nobody")
         .context("failed to resolve user 'nobody'")?
         .ok_or_else(|| color_eyre::eyre::eyre!("user 'nobody' not found"))?;
@@ -222,9 +354,11 @@ fn bootstrap_with_root(
     set_env_path("XDG_RUNTIME_DIR", &runtime_dir);
     ensure_dir_exists(&cache_dir)?;
     ensure_dir_exists(&runtime_dir)?;
+    let timezone = prepare_timezone_env()?;
+    let setup_settings = settings.clone();
 
     rt.block_on(async move {
-        let mut pg = PostgreSQL::new(settings);
+        let mut pg = PostgreSQL::new(setup_settings);
         pg.setup()
             .await
             .wrap_err("postgresql_embedded::setup() failed")?;
@@ -232,7 +366,13 @@ fn bootstrap_with_root(
     })?;
     drop(guard);
 
-    Ok(())
+    let environment =
+        TestBootstrapEnvironment::new(install_dir, cache_dir, runtime_dir, password_file, timezone);
+
+    Ok(PreparedBootstrap {
+        settings,
+        environment,
+    })
 }
 
 #[cfg(unix)]
@@ -244,7 +384,7 @@ fn bootstrap_unprivileged(
     rt: &tokio::runtime::Runtime,
     mut settings: Settings,
     cfg: &PgEnvCfg,
-) -> BootstrapResult<()> {
+) -> BootstrapResult<PreparedBootstrap> {
     let uid = geteuid();
     let SettingsPaths {
         install_dir,
@@ -283,33 +423,74 @@ fn bootstrap_unprivileged(
     set_env_path("XDG_RUNTIME_DIR", &runtime_dir);
     ensure_dir_exists(&cache_dir)?;
     ensure_dir_exists(&runtime_dir)?;
+    let timezone = prepare_timezone_env()?;
+    let setup_settings = settings.clone();
 
     rt.block_on(async move {
-        let mut pg = PostgreSQL::new(settings);
+        let mut pg = PostgreSQL::new(setup_settings);
         pg.setup()
             .await
             .wrap_err("postgresql_embedded::setup() failed")?;
         Ok::<(), color_eyre::Report>(())
     })?;
 
-    Ok(())
+    let environment =
+        TestBootstrapEnvironment::new(install_dir, cache_dir, runtime_dir, password_file, timezone);
+
+    Ok(PreparedBootstrap {
+        settings,
+        environment,
+    })
 }
 
 #[cfg(not(unix))]
 fn bootstrap_unprivileged(
     rt: &tokio::runtime::Runtime,
-    settings: Settings,
+    mut settings: Settings,
     _cfg: &PgEnvCfg,
-) -> BootstrapResult<()> {
+) -> BootstrapResult<PreparedBootstrap> {
+    let install_dir = Utf8PathBuf::from_path_buf(settings.installation_dir.clone())
+        .map_err(|_| color_eyre::eyre::eyre!("installation_dir must be valid UTF-8"))?;
+    let data_dir = Utf8PathBuf::from_path_buf(settings.data_dir.clone())
+        .map_err(|_| color_eyre::eyre::eyre!("data_dir must be valid UTF-8"))?;
+    let password_file = install_dir.join(".pgpass");
+    settings.password_file = password_file.clone().into_std_path_buf();
+
+    ensure_dir_exists(&install_dir)?;
+    set_permissions(&install_dir, 0o755)?;
+    ensure_dir_exists(&data_dir)?;
+    set_permissions(&data_dir, 0o700)?;
+
+    if password_file.as_std_path().exists() {
+        set_permissions(&password_file, 0o600)?;
+    }
+    set_env_path("PGPASSFILE", &password_file);
+
+    let cache_dir = install_dir.join("cache");
+    let runtime_dir = install_dir.join("run");
+    set_env_path("HOME", &install_dir);
+    set_env_path("XDG_CACHE_HOME", &cache_dir);
+    set_env_path("XDG_RUNTIME_DIR", &runtime_dir);
+    ensure_dir_exists(&cache_dir)?;
+    ensure_dir_exists(&runtime_dir)?;
+    let timezone = prepare_timezone_env()?;
+    let setup_settings = settings.clone();
+
     rt.block_on(async move {
-        let mut pg = PostgreSQL::new(settings);
+        let mut pg = PostgreSQL::new(setup_settings);
         pg.setup()
             .await
             .wrap_err("postgresql_embedded::setup() failed")?;
         Ok::<(), color_eyre::Report>(())
     })?;
 
-    Ok(())
+    let environment =
+        TestBootstrapEnvironment::new(install_dir, cache_dir, runtime_dir, password_file, timezone);
+
+    Ok(PreparedBootstrap {
+        settings,
+        environment,
+    })
 }
 
 #[cfg(test)]

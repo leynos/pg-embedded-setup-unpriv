@@ -173,6 +173,22 @@ tests([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace45932974
    This gives visibility into where the data directory and binaries are, and
   the connection info (like the chosen port).
 
+### Implementation update (2024-05-24)
+
+- `bootstrap_for_tests()` now returns `TestBootstrapSettings`, a struct that
+  bundles the derived `postgresql_embedded::Settings`, the detected
+  `ExecutionPrivileges`, and a `TestBootstrapEnvironment` describing the
+  process variables needed by downstream clients.
+- `TestBootstrapEnvironment::to_env()` exposes the prepared environment map so
+  callers can export `HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`, `PGPASSFILE`,
+  `TZDIR`, and `TZ` without reimplementing path logic. The helper honours
+  user-provided timezone overrides and falls back to common Linux locations,
+  surfacing a clear error when `tzdata` is missing.
+- Behavioural tests implemented with `rstest-bdd` verify the happy path and the
+  timezone error case. The scenarios assert that the returned settings target
+  the sandboxed directories supplied via the environment and that the exported
+  variables match the defaults recorded by the helper.
+
 In practice, **`TestCluster::start()` can wrap `bootstrap_for_tests()`**
 internally. For example, `TestCluster::start()` would call
 `bootstrap_for_tests()` to do all the config+init work, then launch the
