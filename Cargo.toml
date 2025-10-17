@@ -34,7 +34,7 @@ yaml = []
 privileged-tests = []
 
 [dev-dependencies]
-rstest = "0.18"
+rstest = "0.26"
 temp-env = "0.3"
 tempfile = "3"
 color-eyre = "0.6"
