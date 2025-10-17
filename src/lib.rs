@@ -22,15 +22,13 @@ pub mod test_support;
 
 pub use bootstrap::{ExecutionPrivileges, detect_execution_privileges, run};
 pub use error::{Error, Result};
-#[cfg(all(
-    feature = "privileged-tests",
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
+#[cfg(feature = "privileged-tests")]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
 ))]
 pub use privileges::with_temp_euid;
 #[cfg(any(

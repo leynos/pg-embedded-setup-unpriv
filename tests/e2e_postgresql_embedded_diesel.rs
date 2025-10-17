@@ -170,8 +170,13 @@ fn e2e_postgresql_embedded_creates_and_queries_via_diesel() -> Result<()> {
 
     let test_result = run_e2e_test(&config);
 
-    if test_result.is_ok() {
-        let _ = remove_tree(config.base_dir());
+    if test_result.is_ok()
+        && let Err(err) = remove_tree(config.base_dir())
+    {
+        eprintln!(
+            "warning: failed to clean e2e base dir {}: {err}",
+            config.base_dir().as_str()
+        );
     }
 
     test_result
