@@ -9,7 +9,10 @@
 use crate::error::{PrivilegeError, PrivilegeResult};
 use crate::fs::{ensure_dir_exists, set_permissions};
 use camino::{Utf8Path, Utf8PathBuf};
-use cap_std::{ambient_authority, fs::Dir};
+use cap_std::{
+    ambient_authority,
+    fs::{Dir, DirEntry},
+};
 use color_eyre::eyre::{Context, eyre};
 use nix::unistd::{
     Gid, Uid, User, chown, geteuid, getgroups, getresgid, getresuid, setgroups, setresgid,
@@ -143,32 +146,62 @@ pub(crate) fn ensure_tree_owned_by_user<P: AsRef<Utf8Path>>(
     user: &User,
 ) -> PrivilegeResult<()> {
     let mut stack = vec![root.as_ref().to_path_buf()];
-    while let Some(path) = stack.pop() {
-        let dir = match Dir::open_ambient_dir(path.as_std_path(), ambient_authority()) {
-            Ok(dir) => dir,
-            Err(err) if err.kind() == ErrorKind::NotFound => continue,
-            Err(err) => {
-                let report = eyre!(err).wrap_err(format!("open directory {}", path.as_str()));
-                return Err(PrivilegeError::from(report));
-            }
-        };
-
-        for entry in dir
-            .entries()
-            .with_context(|| format!("read_dir {}", path.as_str()))?
-        {
-            let entry = entry.with_context(|| format!("iterate {}", path.as_str()))?;
-            let joined = path.as_std_path().join(entry.file_name());
-            let entry_path = Utf8PathBuf::from_path_buf(joined)
-                .map_err(|_| color_eyre::eyre::eyre!("non-UTF-8 path under {}", path.as_str()))?;
-            chown(entry_path.as_std_path(), Some(user.uid), Some(user.gid))
-                .with_context(|| format!("chown {}", entry_path.as_str()))?;
-            if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                stack.push(entry_path);
-            }
+    while let Some(path_buf) = stack.pop() {
+        let path = path_buf.as_path();
+        if let Some(dir_result) = open_directory_if_exists(path) {
+            let dir = dir_result?;
+            process_directory_entries(path, &dir, user, &mut stack)?;
         }
     }
     Ok(())
+}
+
+fn open_directory_if_exists(path: &Utf8Path) -> Option<PrivilegeResult<Dir>> {
+    match Dir::open_ambient_dir(path.as_std_path(), ambient_authority()) {
+        Ok(dir) => Some(Ok(dir)),
+        Err(err) if err.kind() == ErrorKind::NotFound => None,
+        Err(err) => {
+            let report = eyre!(err).wrap_err(format!("open directory {}", path.as_str()));
+            Some(Err(PrivilegeError::from(report)))
+        }
+    }
+}
+
+fn process_directory_entries(
+    path: &Utf8Path,
+    dir: &Dir,
+    user: &User,
+    stack: &mut Vec<Utf8PathBuf>,
+) -> PrivilegeResult<()> {
+    for entry in dir
+        .entries()
+        .with_context(|| format!("read_dir {}", path.as_str()))?
+    {
+        let entry = entry.with_context(|| format!("iterate {}", path.as_str()))?;
+        let entry_path = resolve_entry_path(path, &entry)?;
+        chown_entry(&entry_path, user)?;
+        if is_directory(&entry) {
+            stack.push(entry_path);
+        }
+    }
+    Ok(())
+}
+
+fn resolve_entry_path(path: &Utf8Path, entry: &DirEntry) -> PrivilegeResult<Utf8PathBuf> {
+    let joined = path.as_std_path().join(entry.file_name());
+    let entry_path = Utf8PathBuf::from_path_buf(joined)
+        .map_err(|_| eyre!("non-UTF-8 path under {}", path.as_str()))?;
+    Ok(entry_path)
+}
+
+fn chown_entry(path: &Utf8Path, user: &User) -> PrivilegeResult<()> {
+    chown(path.as_std_path(), Some(user.uid), Some(user.gid))
+        .with_context(|| format!("chown {}", path.as_str()))?;
+    Ok(())
+}
+
+fn is_directory(entry: &DirEntry) -> bool {
+    entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false)
 }
 
 /// Retrieves the UID of the `nobody` account, defaulting to 65534 when absent.

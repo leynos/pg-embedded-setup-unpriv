@@ -220,11 +220,9 @@ impl BootstrapSandbox {
 fn run_bootstrap_with_temp_drop(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
     sandbox.borrow_mut().set_expected_owner(nobody_uid());
     let privileges = with_temp_euid(nobody_uid(), || {
-        Ok::<ExecutionPrivileges, pg_embedded_setup_unpriv::Error>(
-            detect_execution_privileges(),
-        )
+        Ok::<ExecutionPrivileges, pg_embedded_setup_unpriv::Error>(detect_execution_privileges())
     })
-        .map_err(|err| eyre!(err))?;
+    .map_err(|err| eyre!(err))?;
     sandbox.borrow_mut().record_privileges(privileges);
     let outcome = with_temp_euid(nobody_uid(), || {
         let sandbox_ref = sandbox.borrow();
