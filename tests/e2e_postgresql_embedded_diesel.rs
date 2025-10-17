@@ -3,7 +3,6 @@
 //! downgrading to the `nobody` user for database operations.
 #![cfg(all(unix, feature = "privileged-tests"))]
 
-use std::ffi::OsString;
 use std::io::Write;
 use std::time::Duration;
 
@@ -25,7 +24,7 @@ mod cap_fs;
 mod env;
 
 use cap_fs::{ensure_dir, open_dir, remove_tree};
-use env::with_scoped_env;
+use env::{ScopedEnvVars, build_env, with_scoped_env};
 
 #[derive(QueryableByName, Debug, PartialEq, Eq)]
 struct GreetingRow {
@@ -102,10 +101,10 @@ impl TestConfig {
         self.install_dir.join(".pgpass")
     }
 
-    fn bootstrap_env(&self) -> Vec<(OsString, Option<OsString>)> {
+    fn bootstrap_env(&self) -> ScopedEnvVars {
         let port = self.port.to_string();
 
-        Self::build_env([
+        build_env([
             ("PG_RUNTIME_DIR", self.install_dir.as_str()),
             ("PG_DATA_DIR", self.data_dir.as_str()),
             ("PG_VERSION_REQ", self.version_req),
@@ -115,11 +114,11 @@ impl TestConfig {
         ])
     }
 
-    fn runtime_env(&self, password_file: &Utf8PathBuf) -> Vec<(OsString, Option<OsString>)> {
+    fn runtime_env(&self, password_file: &Utf8PathBuf) -> ScopedEnvVars {
         let cache_dir = self.cache_dir();
         let runtime_dir = self.runtime_dir();
 
-        Self::build_env([
+        build_env([
             ("HOME", self.install_dir.as_str()),
             ("XDG_CACHE_HOME", cache_dir.as_str()),
             ("XDG_RUNTIME_DIR", runtime_dir.as_str()),
@@ -127,17 +126,6 @@ impl TestConfig {
             ("TZDIR", "/usr/share/zoneinfo"),
             ("TZ", "UTC"),
         ])
-    }
-
-    fn build_env<I, K, V>(vars: I) -> Vec<(OsString, Option<OsString>)>
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: Into<OsString>,
-        V: Into<OsString>,
-    {
-        vars.into_iter()
-            .map(|(key, value)| (key.into(), Some(value.into())))
-            .collect()
     }
 }
 

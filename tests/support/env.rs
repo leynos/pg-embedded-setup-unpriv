@@ -8,6 +8,21 @@ use temp_env::with_vars;
 
 static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
+/// Collection type for guarded environment variables.
+pub type ScopedEnvVars = Vec<(OsString, Option<OsString>)>;
+
+/// Builds guarded environment variables from any iterable of key/value pairs.
+pub fn build_env<I, K, V>(vars: I) -> ScopedEnvVars
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: Into<OsString>,
+    V: Into<OsString>,
+{
+    vars.into_iter()
+        .map(|(key, value)| (key.into(), Some(value.into())))
+        .collect()
+}
+
 /// Runs `body` with the provided environment variables temporarily set.
 ///
 /// The guard restores any pre-existing values when `body` returns, ensuring tests do

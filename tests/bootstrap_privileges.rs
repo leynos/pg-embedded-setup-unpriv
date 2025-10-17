@@ -2,7 +2,6 @@
 #![cfg(unix)]
 
 use std::cell::RefCell;
-use std::ffi::OsString;
 use std::io::ErrorKind;
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -22,7 +21,7 @@ mod support;
 
 use support::{
     cap_fs::{CapabilityTempDir, metadata, remove_tree, set_permissions},
-    env::with_scoped_env,
+    env::{build_env, with_scoped_env},
 };
 
 #[derive(Debug)]
@@ -62,24 +61,12 @@ impl BootstrapSandbox {
         F: FnOnce() -> R,
     {
         with_scoped_env(
-            [
-                (
-                    OsString::from("PG_RUNTIME_DIR"),
-                    Some(OsString::from(self.install_dir.as_str())),
-                ),
-                (
-                    OsString::from("PG_DATA_DIR"),
-                    Some(OsString::from(self.data_dir.as_str())),
-                ),
-                (
-                    OsString::from("PG_SUPERUSER"),
-                    Some(OsString::from("postgres")),
-                ),
-                (
-                    OsString::from("PG_PASSWORD"),
-                    Some(OsString::from("postgres")),
-                ),
-            ],
+            build_env([
+                ("PG_RUNTIME_DIR", self.install_dir.as_str()),
+                ("PG_DATA_DIR", self.data_dir.as_str()),
+                ("PG_SUPERUSER", "postgres"),
+                ("PG_PASSWORD", "postgres"),
+            ]),
             body,
         )
     }
