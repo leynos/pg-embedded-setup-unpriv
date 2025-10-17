@@ -44,6 +44,42 @@ extra([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace45932974
   so concurrent scenarios cannot interleave global mutations, keeping runs
   isolated and aligned with the testing guidelines.
 
+- The bootstrap orchestration now follows the flow illustrated below. The
+  sequence diagram highlights the privilege detection and the branching between
+  the root and unprivileged bootstrap paths, including the privilege drop,
+  directory provisioning, and environment normalisation phases.
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Bootstrap as bootstrap::run()
+    participant Detect as detect_execution_privileges()
+    participant RootPath as bootstrap_with_root
+    participant UnprivPath as bootstrap_unprivileged
+    participant PG as PostgreSQL Setup
+
+    Caller->>Bootstrap: invoke run()
+    Bootstrap->>Detect: check effective UID
+    alt Unix and UID == 0
+        Detect-->>Bootstrap: ExecutionPrivileges::Root
+        Bootstrap->>RootPath: route to root path
+        RootPath->>RootPath: drop to nobody via PrivilegeDropGuard
+        RootPath->>RootPath: ensure/chown dirs to nobody
+        RootPath->>RootPath: set environment (PGPASSFILE, HOME, XDG)
+        RootPath->>PG: run setup as nobody
+        RootPath-->>Bootstrap: result
+    else Unix and UID != 0 or Non-Unix
+        Detect-->>Bootstrap: ExecutionPrivileges::Unprivileged
+        Bootstrap->>UnprivPath: route to unprivileged path
+        UnprivPath->>UnprivPath: ensure dirs with caller UID
+        UnprivPath->>UnprivPath: apply permissions (0755/0700)
+        UnprivPath->>UnprivPath: set environment
+        UnprivPath->>PG: run setup as caller
+        UnprivPath-->>Bootstrap: result
+    end
+    Bootstrap-->>Caller: Result<()>
+```
+
 - **If running as root on Linux:** the helper will perform the necessary
   privilege drop to a safe user (such as `"nobody"`) before initializing
   PostgreSQL. This uses the existing logic to temporarily drop `EUID` and
