@@ -63,10 +63,13 @@ fn bootstrap() -> pg_embedded_setup_unpriv::error::BootstrapResult<TestBootstrap
 ```
 
 `bootstrap_for_tests()` ensures that `PGPASSFILE`, `HOME`, `XDG_CACHE_HOME`,
-`XDG_RUNTIME_DIR`, `TZDIR`, and `TZ` are populated with deterministic defaults.
-If the system timezone database is missing the helper returns an error advising
-the caller to install `tzdata` or set `TZDIR` explicitly, making the dependency
-visible during test startup rather than when PostgreSQL launches.
+`XDG_RUNTIME_DIR`, and `TZ` are populated with deterministic defaults. When a
+timezone database can be discovered (currently on Unix-like hosts) the helper
+also sets `TZDIR`; otherwise it leaves any caller-provided value untouched so
+platform-specific defaults remain available. If the system timezone database is
+missing the helper returns an error advising the caller to install `tzdata` or
+set `TZDIR` explicitly, making the dependency visible during test startup
+rather than when PostgreSQL launches.
 
 ## Privilege detection and idempotence
 
@@ -100,8 +103,9 @@ still running as `root`, follow these steps:
   `bootstrap_for_tests().environment.pgpass_file` helper returns the path if
   the bootstrap ran inside the test process.
 - Provide `TZDIR=/usr/share/zoneinfo` (or the correct path for your
-  distribution) if you are running the CLI. The library helper sets both
-  `TZDIR` and `TZ` automatically when it discovers a valid timezone database.
+  distribution) if you are running the CLI. The library helper sets `TZ`
+  automatically and, on Unix-like hosts, also seeds `TZDIR` when it discovers a
+  valid timezone database.
 
 ## Known issues and mitigations
 

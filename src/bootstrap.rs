@@ -53,7 +53,7 @@ impl TestBootstrapEnvironment {
 
     /// Returns the prepared environment variables as key/value pairs.
     pub fn to_env(&self) -> Vec<(String, String)> {
-        vec![
+        let mut env = vec![
             ("HOME".into(), self.home.as_str().into()),
             ("XDG_CACHE_HOME".into(), self.xdg_cache_home.as_str().into()),
             (
@@ -61,9 +61,15 @@ impl TestBootstrapEnvironment {
                 self.xdg_runtime_dir.as_str().into(),
             ),
             ("PGPASSFILE".into(), self.pgpass_file.as_str().into()),
-            ("TZDIR".into(), self.tz_dir.as_str().into()),
-            ("TZ".into(), self.timezone.clone()),
-        ]
+        ];
+
+        if !self.tz_dir.as_str().is_empty() {
+            env.push(("TZDIR".into(), self.tz_dir.as_str().into()));
+        }
+
+        env.push(("TZ".into(), self.timezone.clone()));
+
+        env
     }
 }
 
@@ -182,16 +188,13 @@ fn prepare_timezone_env() -> BootstrapResult<TimezoneEnv> {
         }
         path
     } else {
-        let candidate = timezone_dir_candidates()
-            .iter()
-            .map(Utf8Path::new)
-            .find(|path| path.exists())
-            .ok_or_else(|| -> crate::error::BootstrapError {
-                color_eyre::eyre::eyre!("timezone database not found. Set TZDIR or install tzdata.")
-                    .into()
-            })?;
-        set_env_path("TZDIR", candidate);
-        candidate.to_owned()
+        match discover_timezone_dir()? {
+            Some(candidate) => {
+                set_env_path("TZDIR", &candidate);
+                candidate
+            }
+            None => Utf8PathBuf::new(),
+        }
     };
 
     let timezone = match env::var("TZ") {
@@ -213,15 +216,26 @@ fn prepare_timezone_env() -> BootstrapResult<TimezoneEnv> {
     })
 }
 
-fn timezone_dir_candidates() -> &'static [&'static str] {
+fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
     #[cfg(unix)]
     {
         static CANDIDATES: [&str; 2] = ["/usr/share/zoneinfo", "/usr/lib/zoneinfo"];
-        &CANDIDATES
+
+        let candidate = CANDIDATES
+            .iter()
+            .map(Utf8Path::new)
+            .find(|path| path.exists())
+            .ok_or_else(|| -> crate::error::BootstrapError {
+                color_eyre::eyre::eyre!("timezone database not found. Set TZDIR or install tzdata.")
+                    .into()
+            })?;
+
+        Ok(Some(candidate.to_owned()))
     }
+
     #[cfg(not(unix))]
     {
-        &[]
+        Ok(None)
     }
 }
 

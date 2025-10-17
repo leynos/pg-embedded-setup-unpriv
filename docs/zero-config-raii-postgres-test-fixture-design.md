@@ -181,9 +181,10 @@ tests([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace45932974
   process variables needed by downstream clients.
 - `TestBootstrapEnvironment::to_env()` exposes the prepared environment map so
   callers can export `HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`, `PGPASSFILE`,
-  `TZDIR`, and `TZ` without reimplementing path logic. The helper honours
-  user-provided timezone overrides and falls back to common Linux locations,
-  surfacing a clear error when `tzdata` is missing.
+  and `TZ` without reimplementing path logic. When a timezone database is
+  discovered the helper also emits `TZDIR`, honouring user-provided overrides
+  and falling back to common Linux locations whilst surfacing a clear error
+  when `tzdata` is missing.
 - Behavioural tests implemented with `rstest-bdd` verify the happy path and the
   timezone error case. The scenarios assert that the returned settings target
   the sandboxed directories supplied via the environment and that the exported
