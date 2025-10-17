@@ -248,7 +248,7 @@ pub fn default_paths_for(uid: Uid) -> (Utf8PathBuf, Utf8PathBuf) {
 /// # use nix::unistd::Uid;
 /// use pg_embedded_setup_unpriv::with_temp_euid;
 ///
-/// # fn demo(uid: Uid) -> pg_embedded_setup_unpriv::Result<()> {
+/// # fn demo(uid: Uid) -> pg_embedded_setup_unpriv::error::PrivilegeResult<()> {
 /// with_temp_euid(uid, || Ok(()))?;
 /// # Ok(())
 /// # }
