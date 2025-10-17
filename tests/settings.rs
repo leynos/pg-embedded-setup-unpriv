@@ -1,8 +1,12 @@
 use camino::Utf8PathBuf;
 use std::path::PathBuf;
 
-use color_eyre::eyre::{Context, eyre};
-use nix::unistd::{User, geteuid, getgid, getuid};
+use color_eyre::eyre::Context;
+#[cfg(feature = "privileged-tests")]
+use color_eyre::eyre::eyre;
+use nix::unistd::{User, geteuid};
+#[cfg(feature = "privileged-tests")]
+use nix::unistd::{getgid, getuid};
 use pg_embedded_setup_unpriv::{
     ExecutionPrivileges, PgEnvCfg, detect_execution_privileges, make_data_dir_private,
     make_dir_accessible, nobody_uid,
@@ -171,14 +175,6 @@ fn detect_execution_privileges_tracks_effective_uid() -> color_eyre::Result<()> 
     }
 
     assert_eq!(detect_execution_privileges(), ExecutionPrivileges::Root);
-    #[cfg(not(feature = "privileged-tests"))]
-    {
-        eprintln!(
-            "skipping privileged uid swap: enable the privileged-tests feature to drop privileges",
-        );
-        return Ok(());
-    }
-
     #[cfg(feature = "privileged-tests")]
     with_temp_euid(nobody_uid(), || {
         assert_eq!(
@@ -188,5 +184,12 @@ fn detect_execution_privileges_tracks_effective_uid() -> color_eyre::Result<()> 
         Ok(())
     })
     .map_err(|err| eyre!(err))?;
+
+    #[cfg(not(feature = "privileged-tests"))]
+    {
+        eprintln!(
+            "skipping privileged uid swap: enable the privileged-tests feature to drop privileges",
+        );
+    }
     Ok(())
 }
