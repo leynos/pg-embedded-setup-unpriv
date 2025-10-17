@@ -15,6 +15,71 @@ accordingly, so the developer “shouldn’t have to do anything”
 extra([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace459329747e62fa4cd479318aa1bfb07628/docs/next-steps.md#L5-L6)).
  This can be done at runtime by checking the effective user ID:
 
+### Implementation update (2024-05-09)
+
+- Runtime detection now materialises as an `ExecutionPrivileges` enum. The
+  enum communicates whether the bootstrapper must drop privileges or can
+  proceed in-place, allowing call sites and behavioural tests to assert the
+  chosen path without reimplementing the detection logic.
+- Root execution uses `bootstrap_with_root`, a helper that prepares the
+  installation and data directories for the `nobody` account, drops process
+  identity via `with_temp_euid`, and runs `postgresql_embedded::setup()`
+  entirely as `nobody`. The helper deliberately re-applies ownership and
+  permissions on every invocation so two consecutive bootstraps remain
+  idempotent.
+- Unprivileged execution now exercises `bootstrap_unprivileged`, which sets up
+  directories with the caller’s UID, clamps permissions to PostgreSQL-friendly
+  defaults (0755 runtime, 0700 data), and reuses the same environment
+  normalisation as the root flow. This guarantees identical layout regardless
+  of privileges.
+- Behavioural tests implemented with `rstest-bdd` cover both flows. The
+  scenarios share a reusable sandbox that records the detected privileges, runs
+  bootstrap as either root or `nobody`, and asserts ownership plus double-run
+  idempotence for the privileged path.
+- Filesystem work now routes through `cap-std` with `camino` path handling so
+  bootstrap always honours capability-based sandboxing and fails fast when
+  callers provide non UTF-8 directories.
+- Behavioural tests wrap environment changes with the shared `with_scoped_env`
+  helper. The helper guards `temp_env::with_vars` behind a process-wide mutex
+  so concurrent scenarios cannot interleave global mutations, keeping runs
+  isolated and aligned with the testing guidelines.
+
+- The bootstrap orchestration now follows the flow illustrated below. The
+  sequence diagram highlights the privilege detection and the branching between
+  the root and unprivileged bootstrap paths, including the privilege drop,
+  directory provisioning, and environment normalisation phases.
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Bootstrap as bootstrap::run()
+    participant Detect as detect_execution_privileges()
+    participant RootPath as bootstrap_with_root
+    participant UnprivPath as bootstrap_unprivileged
+    participant PG as PostgreSQL Setup
+
+    Caller->>Bootstrap: invoke run()
+    Bootstrap->>Detect: check effective UID
+    alt Unix and UID == 0
+        Detect-->>Bootstrap: ExecutionPrivileges::Root
+        Bootstrap->>RootPath: route to root path
+        RootPath->>RootPath: drop to nobody via PrivilegeDropGuard
+        RootPath->>RootPath: ensure/chown dirs to nobody
+        RootPath->>RootPath: set environment (PGPASSFILE, HOME, XDG)
+        RootPath->>PG: run setup as nobody
+        RootPath-->>Bootstrap: result
+    else Unix and UID != 0 or Non-Unix
+        Detect-->>Bootstrap: ExecutionPrivileges::Unprivileged
+        Bootstrap->>UnprivPath: route to unprivileged path
+        UnprivPath->>UnprivPath: ensure dirs with caller UID
+        UnprivPath->>UnprivPath: apply permissions (0755/0700)
+        UnprivPath->>UnprivPath: set environment
+        UnprivPath->>PG: run setup as caller
+        UnprivPath-->>Bootstrap: result
+    end
+    Bootstrap-->>Caller: Result<()>
+```
+
 - **If running as root on Linux:** the helper will perform the necessary
   privilege drop to a safe user (such as `"nobody"`) before initializing
   PostgreSQL. This uses the existing logic to temporarily drop `EUID` and

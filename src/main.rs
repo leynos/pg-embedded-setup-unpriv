@@ -5,5 +5,6 @@
 //! with status code `0` on success and `1` on error.
 
 fn main() -> color_eyre::eyre::Result<()> {
-    pg_embedded_setup_unpriv::run()
+    pg_embedded_setup_unpriv::run().map_err(|err| color_eyre::eyre::eyre!(err))?;
+    Ok(())
 }
