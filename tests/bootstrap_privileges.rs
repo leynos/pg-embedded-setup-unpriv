@@ -219,7 +219,11 @@ impl BootstrapSandbox {
 #[cfg(feature = "privileged-tests")]
 fn run_bootstrap_with_temp_drop(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
     sandbox.borrow_mut().set_expected_owner(nobody_uid());
-    let privileges = with_temp_euid(nobody_uid(), || Ok(detect_execution_privileges()))
+    let privileges = with_temp_euid(nobody_uid(), || {
+        Ok::<ExecutionPrivileges, pg_embedded_setup_unpriv::Error>(
+            detect_execution_privileges(),
+        )
+    })
         .map_err(|err| eyre!(err))?;
     sandbox.borrow_mut().record_privileges(privileges);
     let outcome = with_temp_euid(nobody_uid(), || {
