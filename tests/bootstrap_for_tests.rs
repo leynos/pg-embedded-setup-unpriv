@@ -90,7 +90,7 @@ impl TestBootstrapSandbox {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct EnvSnapshot {
     pgpassfile: Option<String>,
     tzdir: Option<String>,
@@ -114,6 +114,7 @@ struct BootstrapWorld {
     error: Option<String>,
     skip_reason: Option<String>,
     tzdir_before: Option<OsString>,
+    env_before: Option<EnvSnapshot>,
     env_after: Option<EnvSnapshot>,
 }
 
@@ -125,6 +126,7 @@ impl BootstrapWorld {
             error: None,
             skip_reason: None,
             tzdir_before: None,
+            env_before: None,
             env_after: None,
         })
     }
@@ -147,6 +149,7 @@ impl BootstrapWorld {
     fn record_error(&mut self, message: String) {
         self.error = Some(message);
         self.settings = None;
+        self.env_before = None;
         self.env_after = None;
     }
 
@@ -196,6 +199,15 @@ impl BootstrapWorld {
             .as_ref()
             .ok_or_else(|| eyre!("bootstrap_for_tests did not set environment"))
     }
+
+    fn env_before(&self) -> Result<&EnvSnapshot> {
+        if self.is_skipped() {
+            return Err(eyre!("scenario skipped"));
+        }
+        self.env_before
+            .as_ref()
+            .ok_or_else(|| eyre!("bootstrap_for_tests did not capture the initial environment"))
+    }
 }
 
 #[fixture]
@@ -208,17 +220,20 @@ fn given_bootstrap_sandbox(world: &RefCell<BootstrapWorld>) -> Result<()> {
     world.borrow().sandbox.reset()
 }
 
-#[when("bootstrap_for_tests runs without timezone overrides")]
+#[when("bootstrap_for_tests runs without time zone overrides")]
 fn when_bootstrap_for_tests(world: &RefCell<BootstrapWorld>) -> Result<()> {
     world.borrow_mut().tzdir_before = std::env::var_os("TZDIR");
     let env_vars = world.borrow().sandbox.env_without_timezone();
-    let (outcome, snapshot) = world.borrow().sandbox.with_env(env_vars, || {
+    let (outcome, before, snapshot) = world.borrow().sandbox.with_env(env_vars, || {
+        let before = EnvSnapshot::capture();
         let outcome = bootstrap_for_tests().map_err(|err| err.to_string());
         let snapshot = EnvSnapshot::capture();
-        (outcome, snapshot)
+        (outcome, before, snapshot)
     });
-    world.borrow_mut().record_env(snapshot);
-    world.borrow_mut().handle_outcome(outcome)
+    let mut world_mut = world.borrow_mut();
+    world_mut.env_before = Some(before);
+    world_mut.record_env(snapshot);
+    world_mut.handle_outcome(outcome)
 }
 
 #[then("the helper returns sandbox-aligned settings")]
@@ -268,18 +283,35 @@ fn then_prepares_env(world: &RefCell<BootstrapWorld>) -> Result<()> {
     let settings = world_ref.settings()?;
     let env_settings = &settings.environment;
     let captured = world_ref.env()?;
+    let before = world_ref.env_before()?;
 
     ensure!(
-        captured.pgpassfile.as_deref() == Some(env_settings.pgpass_file.as_str()),
-        "PGPASSFILE was not set to the password file"
+        env_settings.home == world_ref.sandbox.install_dir,
+        "HOME should match the install directory"
     );
     ensure!(
-        captured.tzdir.as_deref() == Some(env_settings.tz_dir.as_str()),
-        "TZDIR was not populated"
+        env_settings.xdg_cache_home == env_settings.home.join("cache"),
+        "XDG_CACHE_HOME should sit under the install directory"
     );
     ensure!(
-        captured.timezone.as_deref() == Some(env_settings.timezone.as_str()),
-        "TZ was not populated"
+        env_settings.xdg_runtime_dir == env_settings.home.join("run"),
+        "XDG_RUNTIME_DIR should sit under the install directory"
+    );
+    ensure!(
+        !env_settings.timezone.is_empty(),
+        "time zone should not be empty"
+    );
+    ensure!(
+        !env_settings.tz_dir.as_str().is_empty(),
+        "TZDIR should record the discovered time zone directory"
+    );
+    ensure!(
+        env_settings.timezone == "UTC",
+        "Expected default time zone to be UTC when unset"
+    );
+    ensure!(
+        captured == before,
+        "bootstrap_for_tests should restore the environment after setup"
     );
     ensure!(
         world_ref.tzdir_before.is_none(),
@@ -289,7 +321,7 @@ fn then_prepares_env(world: &RefCell<BootstrapWorld>) -> Result<()> {
     Ok(())
 }
 
-#[when("bootstrap_for_tests runs with a missing timezone database")]
+#[when("bootstrap_for_tests runs with a missing time zone database")]
 fn when_bootstrap_missing_timezone(world: &RefCell<BootstrapWorld>) -> Result<()> {
     world.borrow_mut().tzdir_before = std::env::var_os("TZDIR");
     let missing = world.borrow().sandbox.install_dir.join("missing-tzdir");
@@ -309,7 +341,7 @@ fn when_bootstrap_missing_timezone(world: &RefCell<BootstrapWorld>) -> Result<()
     }
 }
 
-#[then("the helper reports a timezone error")]
+#[then("the helper reports a time zone error")]
 fn then_timezone_error(world: &RefCell<BootstrapWorld>) -> Result<()> {
     let world_ref = world.borrow();
     if world_ref.is_skipped() {
@@ -318,9 +350,9 @@ fn then_timezone_error(world: &RefCell<BootstrapWorld>) -> Result<()> {
     let message = world_ref
         .error
         .as_ref()
-        .ok_or_else(|| eyre!("expected timezone error message"))?;
+        .ok_or_else(|| eyre!("expected time zone error message"))?;
     ensure!(
-        message.contains("timezone database"),
+        message.contains("time zone database"),
         "unexpected error: {message}"
     );
     Ok(())

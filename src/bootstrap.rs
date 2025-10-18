@@ -1,4 +1,7 @@
 //! Bootstraps embedded PostgreSQL while adapting to the caller's privileges.
+//!
+//! Provides [`bootstrap_for_tests`] so suites can retrieve structured settings and
+//! prepared environment variables without reimplementing bootstrap orchestration.
 use crate::PgEnvCfg;
 use crate::error::BootstrapResult;
 use crate::fs::{ensure_dir_exists, set_permissions};
@@ -11,6 +14,7 @@ use color_eyre::eyre::Context;
 use nix::unistd::{Uid, User, chown, geteuid};
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::env;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// Represents the privileges the process is running with when bootstrapping PostgreSQL.
@@ -27,6 +31,39 @@ struct XdgDirs {
     home: Utf8PathBuf,
     cache: Utf8PathBuf,
     runtime: Utf8PathBuf,
+}
+
+struct EnvGuard {
+    saved: Vec<(String, Option<OsString>)>,
+}
+
+impl EnvGuard {
+    fn apply(vars: &[(String, String)]) -> Self {
+        let mut saved = Vec::with_capacity(vars.len());
+        for (key, value) in vars {
+            let previous = env::var_os(key);
+            unsafe {
+                env::set_var(key, value);
+            }
+            saved.push((key.clone(), previous));
+        }
+        Self { saved }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for (key, value) in self.saved.drain(..).rev() {
+            match value {
+                Some(previous) => unsafe {
+                    env::set_var(&key, previous);
+                },
+                None => unsafe {
+                    env::remove_var(&key);
+                },
+            }
+        }
+    }
 }
 
 /// Captures the environment variables prepared for test executions.
@@ -162,15 +199,6 @@ fn ensure_settings_paths(
     })
 }
 
-fn set_env_path(key: &str, value: &Utf8Path) {
-    // `std::env::set_var` remains `unsafe` while the crate forbids ambient mutation without
-    // explicit acknowledgement. Keep the `unsafe` block narrowly scoped to this helper so the
-    // callers do not need to propagate it.
-    unsafe {
-        env::set_var(key, value.as_str());
-    }
-}
-
 fn prepare_timezone_env() -> BootstrapResult<TimezoneEnv> {
     const DEFAULT_TIMEZONE: &str = "UTC";
 
@@ -182,30 +210,19 @@ fn prepare_timezone_env() -> BootstrapResult<TimezoneEnv> {
         )?;
         if !path.exists() {
             return Err(color_eyre::eyre::eyre!(
-                "timezone database not found at {}. Set TZDIR or install tzdata.",
+                "time zone database not found at {}. Set TZDIR or install tzdata.",
                 path
             )
             .into());
         }
         path
     } else {
-        match discover_timezone_dir()? {
-            Some(candidate) => {
-                set_env_path("TZDIR", &candidate);
-                candidate
-            }
-            None => Utf8PathBuf::new(),
-        }
+        discover_timezone_dir()?.unwrap_or_default()
     };
 
     let timezone = match env::var("TZ") {
         Ok(value) if !value.trim().is_empty() => value,
-        Ok(_) | Err(std::env::VarError::NotPresent) => {
-            unsafe {
-                env::set_var("TZ", DEFAULT_TIMEZONE);
-            }
-            DEFAULT_TIMEZONE.to_string()
-        }
+        Ok(_) | Err(std::env::VarError::NotPresent) => DEFAULT_TIMEZONE.to_string(),
         Err(std::env::VarError::NotUnicode(_)) => {
             return Err(color_eyre::eyre::eyre!("TZ must be valid UTF-8").into());
         }
@@ -227,8 +244,10 @@ fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
             .map(Utf8Path::new)
             .find(|path| path.exists())
             .ok_or_else(|| -> crate::error::BootstrapError {
-                color_eyre::eyre::eyre!("timezone database not found. Set TZDIR or install tzdata.")
-                    .into()
+                color_eyre::eyre::eyre!(
+                    "time zone database not found. Set TZDIR or install tzdata."
+                )
+                .into()
             })?;
 
         Ok(Some(candidate.to_owned()))
@@ -254,7 +273,7 @@ fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
 /// bootstrap.
 ///
 /// # Examples
-/// ```no_run
+/// ```rust
 /// use pg_embedded_setup_unpriv::run;
 ///
 /// fn main() -> Result<(), pg_embedded_setup_unpriv::Error> {
@@ -358,18 +377,24 @@ fn bootstrap_with_root(
         .with_context(|| format!("chown {}", password_file.as_str()))?;
         set_permissions(&password_file, 0o600)?;
     }
-    set_env_path("PGPASSFILE", &password_file);
 
     let cache_dir = install_dir.join("cache");
     let runtime_dir = install_dir.join("run");
 
     let guard = drop_process_privileges(&nobody_user)?;
-    set_env_path("HOME", &install_dir);
-    set_env_path("XDG_CACHE_HOME", &cache_dir);
-    set_env_path("XDG_RUNTIME_DIR", &runtime_dir);
     ensure_dir_exists(&cache_dir)?;
+    set_permissions(&cache_dir, 0o755)?;
     ensure_dir_exists(&runtime_dir)?;
+    set_permissions(&runtime_dir, 0o700)?;
     let timezone = prepare_timezone_env()?;
+    let xdg = XdgDirs {
+        home: install_dir,
+        cache: cache_dir,
+        runtime: runtime_dir,
+    };
+    let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
+    let env_vars = environment.to_env();
+    let env_guard = EnvGuard::apply(&env_vars);
     let setup_settings = settings.clone();
 
     rt.block_on(async move {
@@ -379,14 +404,8 @@ fn bootstrap_with_root(
             .wrap_err("postgresql_embedded::setup() failed")?;
         Ok::<(), color_eyre::Report>(())
     })?;
+    drop(env_guard);
     drop(guard);
-
-    let xdg = XdgDirs {
-        home: install_dir,
-        cache: cache_dir,
-        runtime: runtime_dir,
-    };
-    let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
 
     Ok(PreparedBootstrap {
         settings,
@@ -433,16 +452,22 @@ fn bootstrap_unprivileged(
     if password_file.as_std_path().exists() {
         set_permissions(&password_file, 0o600)?;
     }
-    set_env_path("PGPASSFILE", &password_file);
 
     let cache_dir = install_dir.join("cache");
     let runtime_dir = install_dir.join("run");
-    set_env_path("HOME", &install_dir);
-    set_env_path("XDG_CACHE_HOME", &cache_dir);
-    set_env_path("XDG_RUNTIME_DIR", &runtime_dir);
     ensure_dir_exists(&cache_dir)?;
+    set_permissions(&cache_dir, 0o755)?;
     ensure_dir_exists(&runtime_dir)?;
+    set_permissions(&runtime_dir, 0o700)?;
     let timezone = prepare_timezone_env()?;
+    let xdg = XdgDirs {
+        home: install_dir,
+        cache: cache_dir,
+        runtime: runtime_dir,
+    };
+    let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
+    let env_vars = environment.to_env();
+    let env_guard = EnvGuard::apply(&env_vars);
     let setup_settings = settings.clone();
 
     rt.block_on(async move {
@@ -453,12 +478,7 @@ fn bootstrap_unprivileged(
         Ok::<(), color_eyre::Report>(())
     })?;
 
-    let xdg = XdgDirs {
-        home: install_dir,
-        cache: cache_dir,
-        runtime: runtime_dir,
-    };
-    let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
+    drop(env_guard);
 
     Ok(PreparedBootstrap {
         settings,
@@ -487,16 +507,22 @@ fn bootstrap_unprivileged(
     if password_file.as_std_path().exists() {
         set_permissions(&password_file, 0o600)?;
     }
-    set_env_path("PGPASSFILE", &password_file);
 
     let cache_dir = install_dir.join("cache");
     let runtime_dir = install_dir.join("run");
-    set_env_path("HOME", &install_dir);
-    set_env_path("XDG_CACHE_HOME", &cache_dir);
-    set_env_path("XDG_RUNTIME_DIR", &runtime_dir);
     ensure_dir_exists(&cache_dir)?;
+    set_permissions(&cache_dir, 0o755)?;
     ensure_dir_exists(&runtime_dir)?;
+    set_permissions(&runtime_dir, 0o700)?;
     let timezone = prepare_timezone_env()?;
+    let xdg = XdgDirs {
+        home: install_dir,
+        cache: cache_dir,
+        runtime: runtime_dir,
+    };
+    let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
+    let env_vars = environment.to_env();
+    let env_guard = EnvGuard::apply(&env_vars);
     let setup_settings = settings.clone();
 
     rt.block_on(async move {
@@ -507,12 +533,7 @@ fn bootstrap_unprivileged(
         Ok::<(), color_eyre::Report>(())
     })?;
 
-    let xdg = XdgDirs {
-        home: install_dir,
-        cache: cache_dir,
-        runtime: runtime_dir,
-    };
-    let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
+    drop(env_guard);
 
     Ok(PreparedBootstrap {
         settings,

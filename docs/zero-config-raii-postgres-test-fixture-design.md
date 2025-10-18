@@ -1,14 +1,15 @@
-# Zero-Config RAII Postgres Test Fixture Design
+# Zero-config RAII Postgres test fixture design
 
-To evolve **pg-embedded-setup-unpriv** into a seamless, zero-configuration RAII
-test fixture, we will create a high-level testing helper that automatically
-handles environment differences (root vs non-root) and integrates with Rust
-test frameworks. The goal is for developers to **write tests that spin up an
-embedded PostgreSQL instance with no manual setup**, whether running as root
-(e.g. Codex sandbox) or as an unprivileged user (e.g. GitHub CI), using the
-same code. Below we outline the design steps and features:
+To evolve **pg-embedded-setup-unpriv** into a seamless, zero-configuration
+Resource Acquisition Is Initialization (RAII) test fixture, we will create a
+high-level testing helper that automatically handles environment differences
+(root vs non-root) and integrates with Rust test frameworks. The goal is for
+developers to **write tests that spin up an embedded PostgreSQL instance with
+no manual setup**, whether running as root (e.g. Codex sandbox) or as an
+unprivileged user (e.g. GitHub CI), using the same code. Below we outline the
+design steps and features:
 
-## Automatic Privilege Detection (Root vs. Unprivileged)
+## Automatic privilege detection (root vs. unprivileged)
 
 We will make the fixture **auto-detect the execution context** and adjust
 accordingly, so the developer “shouldn’t have to do anything”
@@ -90,18 +91,18 @@ sequenceDiagram
 
 - **If running as a normal user or on non-Linux platforms:** no privilege
   dropping is needed. The helper will simply use the `postgresql_embedded`
-  crate in its normal mode (which runs as the current user). On MacOS/BSD, we
+  crate in its normal mode (which runs as the current user). On macOS/BSD, we
   treat the helper as a **no-op pass-through** to `postgresql_embedded`
   (privileged setup is only targeted on Linux) – meaning the library will just
   use the embedded Postgres defaults without special permission handling.
 
-This runtime detection makes the behavior “fixed per environment” but
+This runtime detection makes the behaviour “fixed per environment” but
 **transparent to the developer** – your test code calls the same API in all
 cases, and the library decides whether to invoke the privileged path or not.
 (Compile-time detection is less practical for root vs non-root, so a runtime
 check of UID is simplest and robust.)
 
-## RAII `TestCluster` Implementation
+## RAII `TestCluster` implementation
 
 We will introduce a `TestCluster` RAII struct that encapsulates an embedded
 Postgres instance’s
@@ -145,7 +146,7 @@ lifecycle([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace4593
   scenes, so in most cases **the developer simply creates a `TestCluster` with
   no arguments**.
 
-## Bootstrapping and Configuration Handling
+## Bootstrapping and configuration handling
 
 We will provide a high-level **`bootstrap_for_tests()` helper** as a one-call
 setup for
@@ -181,12 +182,12 @@ tests([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace45932974
   process variables needed by downstream clients.
 - `TestBootstrapEnvironment::to_env()` exposes the prepared environment map so
   callers can export `HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`, `PGPASSFILE`,
-  and `TZ` without reimplementing path logic. When a timezone database is
+  and `TZ` without reimplementing path logic. When a time zone database is
   discovered the helper also emits `TZDIR`, honouring user-provided overrides
   and falling back to common Linux locations whilst surfacing a clear error
   when `tzdata` is missing.
 - Behavioural tests implemented with `rstest-bdd` verify the happy path and the
-  timezone error case. The scenarios assert that the returned settings target
+  time zone error case. The scenarios assert that the returned settings target
   the sandboxed directories supplied via the environment and that the exported
   variables match the defaults recorded by the helper.
 
@@ -194,13 +195,13 @@ In practice, **`TestCluster::start()` can wrap `bootstrap_for_tests()`**
 internally. For example, `TestCluster::start()` would call
 `bootstrap_for_tests()` to do all the config+init work, then launch the
 Postgres server process and yield a `TestCluster` instance that holds the
-running server. The idea is to encapsulate all “boilerplate” (timezone env,
+running server. The idea is to encapsulate all “boilerplate” (time zone env,
 password file handling, etc.) so that tests do not repeat those
 steps([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace459329747e62fa4cd479318aa1bfb07628/docs/next-steps.md#L5-L6)).
  This makes starting a test database **trivial** – essentially one line in the
 test setup.
 
-### Ephemeral Ports and Isolation
+### Ephemeral ports and isolation
 
 To allow the same tests to run concurrently (especially under `nextest` which
 runs tests in parallel), our fixture should avoid fixed resources like static
@@ -227,7 +228,7 @@ parallel won’t conflict over the data directory or lock files. The
 Postgres multiple times), but the database **data directory will be distinct
 per cluster**.
 
-## Integration with Test Frameworks (Sync and Async Tests)
+## Integration with test frameworks (sync and async tests)
 
 We will ensure the library works smoothly in both synchronous and asynchronous
 Rust tests:
@@ -258,7 +259,7 @@ Rust tests:
   “foundation for sync and async tests” requirement. For example:
 
 ```rust
-rustCopy code`// Synchronous test
+// Synchronous test
 #[test]
 fn test_something() {
     let cluster = TestCluster::start().expect("PG start failed");
@@ -271,7 +272,6 @@ async fn test_async_thing() {
     let cluster = TestCluster::start_async().await.expect("PG start failed");
     // ... use cluster with async client
 }
-`
 ```
 
 Under the hood, both will configure and launch Postgres appropriately (dropping
@@ -284,17 +284,16 @@ that([3](https://github.com/theseus-rs/postgresql-embedded/blob/b907b245e3f6aa22
   For example, the library can expose:
 
 ```rust
-rustCopy code`#[fixture]
+#[fixture]
 pub fn test_cluster() -> TestCluster {
     TestCluster::start().unwrap()
 }
-`
 ```
 
 This allows tests to simply declare `fn my_test(cluster: TestCluster) { ... }`
 and get a running DB instance injected automatically. This will make
 integration tests highly concise and consistent across projects, since everyone
-can use the same fixture name and behavior. The fixture will handle both root
+can use the same fixture name and behaviour. The fixture will handle both root
 and non-root cases identically (abstracted behind `TestCluster`).
 
 - **Parallel test runners:** Using `cargo nextest` (or even running
@@ -306,7 +305,7 @@ and non-root cases identically (abstracted behind `TestCluster`).
   these measures, our fixture will be **nextest-ready**, and tests can run in
   parallel without interfering with each other.
 
-## Caching and CI-Friendly Features
+## Caching and CI-friendly features
 
 To optimize performance and reliability in CI or rapid local testing, we will
 add a couple of helper functions:
@@ -329,10 +328,10 @@ add a couple of helper functions:
 - **Prerequisite checks (tzdata, etc.):** The helper will detect common
   environment issues and either fix or emit clear
   errors([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace459329747e62fa4cd479318aa1bfb07628/docs/next-steps.md#L7-L8)).
-   A primary example is the TimeZone data requirement – if the host is missing
-  the `tzdata` package, PostgreSQL may fail to start with a timezone
+   A primary example is the time zone data requirement – if the host is missing
+  the `tzdata` package, PostgreSQL may fail to start with a time zone
   error([4](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace459329747e62fa4cd479318aa1bfb07628/README.md#L70-L73)).
-   We can proactively check for the presence of the system timezone database
+   We can proactively check for the presence of the system time zone database
   (e.g. check if `/usr/share/zoneinfo` exists) and **guide the user to install
   it** if not. For instance, if not found, we can return an error like *“Time
   zone database not found (tzdata missing). Please install tzdata (e.g.
@@ -344,14 +343,14 @@ add a couple of helper functions:
 
 - **Environment setup (TZDIR, etc.):** The library can also set up any required
   environment variables automatically. For example, if we need to set `TZDIR`
-  or `TZ` environment for the embedded Postgres to find timezone info, or
+  or `TZ` environment for the embedded Postgres to find time zone info, or
   `PGPASSFILE` for the generated password file, the `bootstrap_for_tests()`
   should handle that
   internally([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace459329747e62fa4cd479318aa1bfb07628/docs/next-steps.md#L5-L6)).
    This encapsulates all those nitty-gritty details so tests don’t need to
   worry about them.
 
-## Logging and Visibility
+## Logging and visibility
 
 For a pleasant developer experience, we will add **logging instrumentation** to
 the helper’s
@@ -377,7 +376,7 @@ doing([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace45932974
 the auto-detection picked up the right settings (for example, confirming it
 used an ephemeral port or the expected PG version).
 
-## Platform Support and Limitations
+## Platform support and limitations
 
 Initially, our focus is **Linux** for the root-dropping functionality. On
 Linux, running tests as root will trigger the privileged path (drop to
@@ -400,7 +399,7 @@ features or support, our fixture inherits them. (For example, Windows support
 is out-of-scope for now, but could be considered in the future through that
 crate.)
 
-## Summary: Developer Experience
+## Summary: developer experience
 
 Once these improvements are in place, using the library in tests will be
 extremely easy and consistent:
