@@ -30,6 +30,7 @@ pub enum ExecutionPrivileges {
     Unprivileged,
 }
 
+/// Groups related XDG Base Directory paths to reduce parameter clutter.
 #[derive(Debug, Clone)]
 struct XdgDirs {
     home: Utf8PathBuf,

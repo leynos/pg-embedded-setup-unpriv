@@ -2,12 +2,13 @@
 #![cfg(unix)]
 
 use std::cell::RefCell;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use pg_embedded_setup_unpriv::{
-    TestBootstrapSettings, bootstrap_for_tests, detect_execution_privileges,
+    TestBootstrapEnvironment, TestBootstrapSettings, bootstrap_for_tests,
+    detect_execution_privileges,
 };
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
@@ -93,18 +94,34 @@ impl TestBootstrapSandbox {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct EnvSnapshot {
-    pgpassfile: Option<String>,
-    tzdir: Option<String>,
-    timezone: Option<String>,
+    pgpassfile: Option<OsString>,
+    tzdir: Option<OsString>,
+    timezone: Option<OsString>,
 }
 
 impl EnvSnapshot {
     fn capture() -> Self {
         Self {
-            pgpassfile: std::env::var("PGPASSFILE").ok(),
-            tzdir: std::env::var("TZDIR").ok(),
-            timezone: std::env::var("TZ").ok(),
+            pgpassfile: std::env::var_os("PGPASSFILE"),
+            tzdir: std::env::var_os("TZDIR"),
+            timezone: std::env::var_os("TZ"),
         }
+    }
+
+    fn from_environment(environment: &TestBootstrapEnvironment) -> Self {
+        environment
+            .to_env()
+            .into_iter()
+            .fold(Self::default(), |mut snapshot, (key, value)| {
+                let value = OsString::from(value);
+                match key.as_str() {
+                    "PGPASSFILE" => snapshot.pgpassfile = Some(value),
+                    "TZDIR" => snapshot.tzdir = Some(value),
+                    "TZ" => snapshot.timezone = Some(value),
+                    _ => {}
+                }
+                snapshot
+            })
     }
 }
 
@@ -115,7 +132,8 @@ struct BootstrapWorld {
     error: Option<String>,
     skip_reason: Option<String>,
     env_before: Option<EnvSnapshot>,
-    env_after: Option<EnvSnapshot>,
+    env_restored: Option<EnvSnapshot>,
+    env_expected: Option<EnvSnapshot>,
 }
 
 impl BootstrapWorld {
@@ -126,7 +144,8 @@ impl BootstrapWorld {
             error: None,
             skip_reason: None,
             env_before: None,
-            env_after: None,
+            env_restored: None,
+            env_expected: None,
         })
     }
 
@@ -149,17 +168,26 @@ impl BootstrapWorld {
         self.error = Some(message);
         self.settings = None;
         self.env_before = None;
-        self.env_after = None;
+        self.env_restored = None;
+        self.env_expected = None;
     }
 
-    fn record_env(&mut self, snapshot: EnvSnapshot) {
-        self.env_after = Some(snapshot);
+    fn record_restored_env(&mut self, snapshot: EnvSnapshot) {
+        self.env_restored = Some(snapshot);
+    }
+
+    fn record_expected_env(&mut self, snapshot: EnvSnapshot) {
+        self.env_expected = Some(snapshot);
     }
 
     fn handle_outcome(&mut self, outcome: Result<TestBootstrapSettings, String>) -> Result<()> {
         match outcome {
             Ok(settings) => {
                 self.record_settings(settings);
+                if let Some(settings) = self.settings.as_ref() {
+                    let expected = EnvSnapshot::from_environment(&settings.environment);
+                    self.record_expected_env(expected);
+                }
                 Ok(())
             }
             Err(message) => {
@@ -190,13 +218,22 @@ impl BootstrapWorld {
             .ok_or_else(|| eyre!("bootstrap_for_tests did not return settings"))
     }
 
-    fn env(&self) -> Result<&EnvSnapshot> {
+    fn restored_env(&self) -> Result<&EnvSnapshot> {
         if self.is_skipped() {
             return Err(eyre!("scenario skipped"));
         }
-        self.env_after
+        self.env_restored
             .as_ref()
             .ok_or_else(|| eyre!("bootstrap_for_tests did not set environment"))
+    }
+
+    fn expected_env(&self) -> Result<&EnvSnapshot> {
+        if self.is_skipped() {
+            return Err(eyre!("scenario skipped"));
+        }
+        self.env_expected
+            .as_ref()
+            .ok_or_else(|| eyre!("bootstrap_for_tests did not surface expected environment"))
     }
 
     fn env_before(&self) -> Result<&EnvSnapshot> {
@@ -230,7 +267,7 @@ fn when_bootstrap_for_tests(world: &RefCell<BootstrapWorld>) -> Result<()> {
     });
     let mut world_mut = world.borrow_mut();
     world_mut.env_before = Some(before);
-    world_mut.record_env(snapshot);
+    world_mut.record_restored_env(snapshot);
     world_mut.handle_outcome(outcome)
 }
 
@@ -280,7 +317,8 @@ fn then_prepares_env(world: &RefCell<BootstrapWorld>) -> Result<()> {
     }
     let settings = world_ref.settings()?;
     let env_settings = &settings.environment;
-    let captured = world_ref.env()?;
+    let restored = world_ref.restored_env()?;
+    let expected = world_ref.expected_env()?;
     let before = world_ref.env_before()?;
 
     ensure!(
@@ -311,8 +349,29 @@ fn then_prepares_env(world: &RefCell<BootstrapWorld>) -> Result<()> {
         "Expected default time zone to be UTC when unset"
     );
     ensure!(
-        captured == before,
-        "bootstrap_for_tests should restore the environment after setup"
+        restored == before,
+        "bootstrap_for_tests must restore the environment"
+    );
+    if let Some(ref tz_dir) = env_settings.tz_dir {
+        ensure!(
+            expected
+                .tzdir
+                .as_ref()
+                .is_some_and(|value| value == OsStr::new(tz_dir.as_str())),
+            "TZDIR should equal the discovered directory"
+        );
+    } else {
+        ensure!(
+            expected.tzdir.is_none(),
+            "TZDIR should be absent when discovery fails"
+        );
+    }
+    ensure!(
+        expected
+            .timezone
+            .as_ref()
+            .is_some_and(|value| value == OsStr::new(env_settings.timezone.as_str())),
+        "TZ should reflect the prepared time zone"
     );
     Ok(())
 }
