@@ -17,7 +17,8 @@ mod cap_fs;
 #[path = "support/env.rs"]
 mod env;
 
-use cap_fs::{CapabilityTempDir, remove_tree, set_permissions};
+use cap_fs::{remove_tree, set_permissions};
+use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
 use env::{ScopedEnvVars, build_env, with_scoped_env};
 
 #[derive(Debug)]
