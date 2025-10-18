@@ -16,13 +16,14 @@ use pg_embedded_setup_unpriv::{
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
 
-#[path = "support/mod.rs"]
-mod support;
+#[path = "support/cap_fs_bootstrap.rs"]
+mod cap_fs_bootstrap;
+#[path = "support/env.rs"]
+mod env;
 
-use support::{
-    cap_fs::{CapabilityTempDir, metadata, remove_tree, set_permissions},
-    env::{build_env, with_scoped_env},
-};
+use cap_fs_bootstrap::{CapabilityTempDir, remove_tree, set_permissions};
+use env::{build_env, with_scoped_env};
+use pg_embedded_setup_unpriv::test_support::metadata;
 
 #[derive(Debug)]
 struct BootstrapSandbox {
