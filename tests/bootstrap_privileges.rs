@@ -22,8 +22,8 @@ mod cap_fs_bootstrap;
 mod env;
 
 use cap_fs_bootstrap::{remove_tree, set_permissions};
-use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
 use env::{build_env, with_scoped_env};
+use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
 use pg_embedded_setup_unpriv::test_support::metadata;
 
 #[derive(Debug)]

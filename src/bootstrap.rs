@@ -18,6 +18,7 @@ use std::env;
 use std::ffi::OsString;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 use tokio::runtime::{Builder, Handle, Runtime};
 
 /// Represents the privileges the process is running with when bootstrapping PostgreSQL.
@@ -36,12 +37,25 @@ struct XdgDirs {
     runtime: Utf8PathBuf,
 }
 
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// Guards process environment mutations so bootstrap orchestration can operate
+/// safely within tests.
+///
+/// SAFETY: Environment mutation in Rust 2024 requires `unsafe` because reads and
+/// writes bypass the borrow checker. This guard serializes all mutations through
+/// a global mutex and assumes callers avoid invoking
+/// [`bootstrap_for_tests`](crate::bootstrap_for_tests) concurrently from the
+/// same process. Any simultaneous access to the environment outside the guard's
+/// lock will still race.
 struct EnvGuard {
+    _lock: MutexGuard<'static, ()>,
     saved: Vec<(String, Option<OsString>)>,
 }
 
 impl EnvGuard {
     fn apply(vars: &[(String, String)]) -> Self {
+        let lock = ENV_LOCK.lock().expect("environment lock poisoned");
         let mut saved = Vec::with_capacity(vars.len());
         for (key, value) in vars {
             let previous = env::var_os(key);
@@ -50,7 +64,7 @@ impl EnvGuard {
             }
             saved.push((key.clone(), previous));
         }
-        Self { saved }
+        Self { _lock: lock, saved }
     }
 }
 
@@ -69,6 +83,12 @@ impl Drop for EnvGuard {
     }
 }
 
+/// Runtime handle used to execute bootstrap tasks.
+///
+/// Reuses an ambient Tokio runtime when one exists, otherwise builds a
+/// temporary single-threaded runtime. [`BootstrapRuntime::block_on`] performs a
+/// blocking wait and must not be called from asynchronous contexts running on
+/// the captured runtime.
 enum BootstrapRuntime {
     Handle(Handle),
     Owned(Runtime),
@@ -87,6 +107,11 @@ impl BootstrapRuntime {
         }
     }
 
+    /// Blocks on the provided future to completion.
+    ///
+    /// Calling this from within an asynchronous context that is already running
+    /// on the captured runtime will deadlock or panic, so the helper must only
+    /// be used from synchronous bootstrap entry points.
     fn block_on<F, T>(&self, future: F) -> color_eyre::Result<T>
     where
         F: Future<Output = color_eyre::Result<T>>,

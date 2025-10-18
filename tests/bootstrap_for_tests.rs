@@ -18,8 +18,8 @@ mod cap_fs;
 mod env;
 
 use cap_fs::{remove_tree, set_permissions};
-use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
 use env::{ScopedEnvVars, build_env, with_scoped_env};
+use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
 
 #[derive(Debug)]
 struct TestBootstrapSandbox {
