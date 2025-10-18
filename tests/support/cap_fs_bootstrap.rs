@@ -4,10 +4,7 @@ use camino::Utf8Path;
 use color_eyre::eyre::{Context, Result};
 
 use pg_embedded_setup_unpriv::test_support::set_permissions as shared_set_permissions;
-#[allow(unused_imports)]
-pub use pg_embedded_setup_unpriv::test_support::{
-    CapabilityTempDir, ambient_dir_and_path, metadata,
-};
+pub use pg_embedded_setup_unpriv::test_support::{CapabilityTempDir, ambient_dir_and_path};
 
 /// Splits an absolute or relative path into a capability directory and the relative path.
 ///

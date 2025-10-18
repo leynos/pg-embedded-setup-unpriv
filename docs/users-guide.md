@@ -43,8 +43,8 @@ explains how to configure the tool and integrate it into automated test flows.
 
 ## Bootstrap for test suites
 
-Call `pg_embedded_setup_unpriv::bootstrap_for_tests()` from integration tests
-when you need both the prepared filesystem layout and the resulting settings.
+Invoke `pg_embedded_setup_unpriv::bootstrap_for_tests()` in integration suites
+when both the prepared filesystem layout and the resulting settings are needed.
 The helper performs the same orchestration as the CLI entry point but returns a
 `TestBootstrapSettings` struct containing the final
 `postgresql_embedded::Settings` and the environment variables required to
@@ -52,8 +52,9 @@ exercise the cluster.
 
 ```rust
 use pg_embedded_setup_unpriv::{bootstrap_for_tests, TestBootstrapSettings};
+use pg_embedded_setup_unpriv::error::BootstrapResult;
 
-fn bootstrap() -> pg_embedded_setup_unpriv::error::BootstrapResult<TestBootstrapSettings> {
+fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
     let prepared = bootstrap_for_tests()?;
     for (key, value) in prepared.environment.to_env() {
         std::env::set_var(key, value);

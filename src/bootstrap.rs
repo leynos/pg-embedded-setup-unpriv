@@ -15,7 +15,9 @@ use nix::unistd::{Uid, User, chown, geteuid};
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::env;
 use std::ffi::OsString;
+use std::future::Future;
 use std::path::PathBuf;
+use tokio::runtime::{Builder, Handle, Runtime};
 
 /// Represents the privileges the process is running with when bootstrapping PostgreSQL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +64,35 @@ impl Drop for EnvGuard {
                     env::remove_var(&key);
                 },
             }
+        }
+    }
+}
+
+enum BootstrapRuntime {
+    Handle(Handle),
+    Owned(Runtime),
+}
+
+impl BootstrapRuntime {
+    fn new() -> BootstrapResult<Self> {
+        if let Ok(handle) = Handle::try_current() {
+            Ok(Self::Handle(handle))
+        } else {
+            let runtime = Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("failed to create Tokio runtime")?;
+            Ok(Self::Owned(runtime))
+        }
+    }
+
+    fn block_on<F, T>(&self, future: F) -> color_eyre::Result<T>
+    where
+        F: Future<Output = color_eyre::Result<T>>,
+    {
+        match self {
+            Self::Handle(handle) => handle.block_on(future),
+            Self::Owned(runtime) => runtime.block_on(future),
         }
     }
 }
@@ -300,23 +331,20 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
     let cfg = PgEnvCfg::load().context("failed to load configuration via OrthoConfig")?;
     let settings = cfg.to_settings()?;
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("failed to create Tokio runtime")?;
+    let runtime = BootstrapRuntime::new()?;
 
     #[cfg(unix)]
     let prepared = {
         match (privileges, settings) {
-            (ExecutionPrivileges::Root, settings) => bootstrap_with_root(&rt, settings, &cfg)?,
+            (ExecutionPrivileges::Root, settings) => bootstrap_with_root(&runtime, settings, &cfg)?,
             (ExecutionPrivileges::Unprivileged, settings) => {
-                bootstrap_unprivileged(&rt, settings, &cfg)?
+                bootstrap_unprivileged(&runtime, settings, &cfg)?
             }
         }
     };
 
     #[cfg(not(unix))]
-    let prepared = bootstrap_unprivileged(&rt, settings, &cfg)?;
+    let prepared = bootstrap_unprivileged(&runtime, settings, &cfg)?;
 
     Ok(TestBootstrapSettings {
         privileges,
@@ -331,7 +359,7 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
     reason = "Keep the privilege-branch parameters explicit for staged directory prep"
 )]
 fn bootstrap_with_root(
-    rt: &tokio::runtime::Runtime,
+    runtime: &BootstrapRuntime,
     mut settings: Settings,
     cfg: &PgEnvCfg,
 ) -> BootstrapResult<PreparedBootstrap> {
@@ -397,7 +425,7 @@ fn bootstrap_with_root(
     let env_guard = EnvGuard::apply(&env_vars);
     let setup_settings = settings.clone();
 
-    rt.block_on(async move {
+    runtime.block_on(async move {
         let mut pg = PostgreSQL::new(setup_settings);
         pg.setup()
             .await
@@ -419,7 +447,7 @@ fn bootstrap_with_root(
     reason = "Keep the privilege-branch parameters explicit for staged directory prep"
 )]
 fn bootstrap_unprivileged(
-    rt: &tokio::runtime::Runtime,
+    runtime: &BootstrapRuntime,
     mut settings: Settings,
     cfg: &PgEnvCfg,
 ) -> BootstrapResult<PreparedBootstrap> {
@@ -470,7 +498,7 @@ fn bootstrap_unprivileged(
     let env_guard = EnvGuard::apply(&env_vars);
     let setup_settings = settings.clone();
 
-    rt.block_on(async move {
+    runtime.block_on(async move {
         let mut pg = PostgreSQL::new(setup_settings);
         pg.setup()
             .await
@@ -488,7 +516,7 @@ fn bootstrap_unprivileged(
 
 #[cfg(not(unix))]
 fn bootstrap_unprivileged(
-    rt: &tokio::runtime::Runtime,
+    runtime: &BootstrapRuntime,
     mut settings: Settings,
     _cfg: &PgEnvCfg,
 ) -> BootstrapResult<PreparedBootstrap> {
@@ -525,7 +553,7 @@ fn bootstrap_unprivileged(
     let env_guard = EnvGuard::apply(&env_vars);
     let setup_settings = settings.clone();
 
-    rt.block_on(async move {
+    runtime.block_on(async move {
         let mut pg = PostgreSQL::new(setup_settings);
         pg.setup()
             .await

@@ -180,16 +180,31 @@ tests([1](https://github.com/leynos/pg-embedded-setup-unpriv/blob/2faace45932974
   bundles the derived `postgresql_embedded::Settings`, the detected
   `ExecutionPrivileges`, and a `TestBootstrapEnvironment` describing the
   process variables needed by downstream clients.
-- `TestBootstrapEnvironment::to_env()` exposes the prepared environment map so
+- `TestBootstrapEnvironment::to_env()` exposes the prepared environment map, so
   callers can export `HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`, `PGPASSFILE`,
   and `TZ` without reimplementing path logic. When a time zone database is
-  discovered the helper also emits `TZDIR`, honouring user-provided overrides
+  discovered, the helper also emits `TZDIR`, honouring user-provided overrides
   and falling back to common Linux locations whilst surfacing a clear error
   when `tzdata` is missing.
 - Behavioural tests implemented with `rstest-bdd` verify the happy path and the
   time zone error case. The scenarios assert that the returned settings target
   the sandboxed directories supplied via the environment and that the exported
   variables match the defaults recorded by the helper.
+
+Example usage:
+
+```rust
+use pg_embedded_setup_unpriv::{bootstrap_for_tests, TestBootstrapSettings};
+use pg_embedded_setup_unpriv::error::BootstrapResult;
+
+fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
+    let prepared = bootstrap_for_tests()?;
+    for (key, value) in prepared.environment.to_env() {
+        std::env::set_var(key, value);
+    }
+    Ok(prepared)
+}
+```
 
 In practice, **`TestCluster::start()` can wrap `bootstrap_for_tests()`**
 internally. For example, `TestCluster::start()` would call

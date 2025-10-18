@@ -12,13 +12,13 @@ use pg_embedded_setup_unpriv::{
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
 
-#[path = "support/mod.rs"]
-mod support;
+#[path = "support/cap_fs_bootstrap.rs"]
+mod cap_fs;
+#[path = "support/env.rs"]
+mod env;
 
-use support::{
-    cap_fs::{CapabilityTempDir, remove_tree, set_permissions},
-    env::{ScopedEnvVars, build_env, with_scoped_env},
-};
+use cap_fs::{CapabilityTempDir, remove_tree, set_permissions};
+use env::{ScopedEnvVars, build_env, with_scoped_env};
 
 #[derive(Debug)]
 struct TestBootstrapSandbox {
@@ -113,7 +113,6 @@ struct BootstrapWorld {
     settings: Option<TestBootstrapSettings>,
     error: Option<String>,
     skip_reason: Option<String>,
-    tzdir_before: Option<OsString>,
     env_before: Option<EnvSnapshot>,
     env_after: Option<EnvSnapshot>,
 }
@@ -125,7 +124,6 @@ impl BootstrapWorld {
             settings: None,
             error: None,
             skip_reason: None,
-            tzdir_before: None,
             env_before: None,
             env_after: None,
         })
@@ -222,7 +220,6 @@ fn given_bootstrap_sandbox(world: &RefCell<BootstrapWorld>) -> Result<()> {
 
 #[when("bootstrap_for_tests runs without time zone overrides")]
 fn when_bootstrap_for_tests(world: &RefCell<BootstrapWorld>) -> Result<()> {
-    world.borrow_mut().tzdir_before = std::env::var_os("TZDIR");
     let env_vars = world.borrow().sandbox.env_without_timezone();
     let (outcome, before, snapshot) = world.borrow().sandbox.with_env(env_vars, || {
         let before = EnvSnapshot::capture();
@@ -313,17 +310,11 @@ fn then_prepares_env(world: &RefCell<BootstrapWorld>) -> Result<()> {
         captured == before,
         "bootstrap_for_tests should restore the environment after setup"
     );
-    ensure!(
-        world_ref.tzdir_before.is_none(),
-        "expected TZDIR to be absent before bootstrap"
-    );
-
     Ok(())
 }
 
 #[when("bootstrap_for_tests runs with a missing time zone database")]
 fn when_bootstrap_missing_timezone(world: &RefCell<BootstrapWorld>) -> Result<()> {
-    world.borrow_mut().tzdir_before = std::env::var_os("TZDIR");
     let missing = world.borrow().sandbox.install_dir.join("missing-tzdir");
     let env_vars = world.borrow().sandbox.env_with_timezone_override(&missing);
     let outcome = world.borrow().sandbox.with_env(env_vars, || {

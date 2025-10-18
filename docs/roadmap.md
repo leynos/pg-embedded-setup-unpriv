@@ -15,9 +15,9 @@
 - [x] **Task:** Deliver a `bootstrap_for_tests()` helper that wraps
   configuration discovery, handles privilege checks, and prepares directories,
   returning a structured settings object exercised in sample tests.
-- [x] **Task:** Automate environment variable preparation (for example `TZDIR`
-  and `PGPASSFILE`) with traceable defaults validated through assertions in the
-  bootstrap tests.
+- [x] **Task:** Automate environment variable preparation (for example
+  `TZDIR` and `PGPASSFILE`) with traceable defaults validated through
+  assertions in the bootstrap tests.
 
 ## Phase 2: Provide an ergonomic RAII fixture
 
