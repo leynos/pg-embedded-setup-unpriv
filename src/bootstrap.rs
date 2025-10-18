@@ -11,6 +11,7 @@ use crate::privileges::{
 };
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::Context;
+#[cfg(unix)]
 use nix::unistd::{Uid, User, chown, geteuid};
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::env;
@@ -100,11 +101,17 @@ impl BootstrapRuntime {
 /// Captures the environment variables prepared for test executions.
 #[derive(Debug, Clone)]
 pub struct TestBootstrapEnvironment {
+    /// Effective home directory for the PostgreSQL user during the tests.
     pub home: Utf8PathBuf,
+    /// Directory used for cached PostgreSQL artefacts.
     pub xdg_cache_home: Utf8PathBuf,
+    /// Directory used for PostgreSQL runtime state, such as sockets.
     pub xdg_runtime_dir: Utf8PathBuf,
+    /// Location of the generated `.pgpass` file.
     pub pgpass_file: Utf8PathBuf,
-    pub tz_dir: Utf8PathBuf,
+    /// Resolved time zone database directory, if discovery succeeded.
+    pub tz_dir: Option<Utf8PathBuf>,
+    /// Time zone identifier exported via the `TZ` environment variable.
     pub timezone: String,
 }
 
@@ -132,8 +139,8 @@ impl TestBootstrapEnvironment {
             ("PGPASSFILE".into(), self.pgpass_file.as_str().into()),
         ];
 
-        if !self.tz_dir.as_str().is_empty() {
-            env.push(("TZDIR".into(), self.tz_dir.as_str().into()));
+        if let Some(dir) = &self.tz_dir {
+            env.push(("TZDIR".into(), dir.as_str().into()));
         }
 
         env.push(("TZ".into(), self.timezone.clone()));
@@ -145,8 +152,11 @@ impl TestBootstrapEnvironment {
 /// Structured settings returned from [`bootstrap_for_tests`].
 #[derive(Debug, Clone)]
 pub struct TestBootstrapSettings {
+    /// Privilege level detected for the current process.
     pub privileges: ExecutionPrivileges,
+    /// PostgreSQL configuration prepared for the embedded instance.
     pub settings: Settings,
+    /// Environment variables required to exercise the embedded instance.
     pub environment: TestBootstrapEnvironment,
 }
 
@@ -172,6 +182,7 @@ pub fn detect_execution_privileges() -> ExecutionPrivileges {
     }
 }
 
+#[cfg(unix)]
 struct SettingsPaths {
     install_dir: Utf8PathBuf,
     data_dir: Utf8PathBuf,
@@ -187,10 +198,11 @@ struct PreparedBootstrap {
 
 #[derive(Debug, Clone)]
 struct TimezoneEnv {
-    dir: Utf8PathBuf,
+    dir: Option<Utf8PathBuf>,
     zone: String,
 }
 
+#[cfg(unix)]
 fn ensure_settings_paths(
     settings: &mut Settings,
     cfg: &PgEnvCfg,
@@ -230,6 +242,12 @@ fn ensure_settings_paths(
     })
 }
 
+/// Determines the appropriate timezone settings for the bootstrap sequence.
+///
+/// # Errors
+/// On Unix, fails if `TZDIR` is unset and no time zone database is discovered in
+/// the standard locations. Configure `TZDIR` explicitly when the database is
+/// installed elsewhere.
 fn prepare_timezone_env() -> BootstrapResult<TimezoneEnv> {
     const DEFAULT_TIMEZONE: &str = "UTC";
 
@@ -246,9 +264,9 @@ fn prepare_timezone_env() -> BootstrapResult<TimezoneEnv> {
             )
             .into());
         }
-        path
+        Some(path)
     } else {
-        discover_timezone_dir()?.unwrap_or_default()
+        discover_timezone_dir()?
     };
 
     let timezone = match env::var("TZ") {
@@ -268,7 +286,12 @@ fn prepare_timezone_env() -> BootstrapResult<TimezoneEnv> {
 fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
     #[cfg(unix)]
     {
-        static CANDIDATES: [&str; 2] = ["/usr/share/zoneinfo", "/usr/lib/zoneinfo"];
+        static CANDIDATES: [&str; 4] = [
+            "/usr/share/zoneinfo",
+            "/usr/lib/zoneinfo",
+            "/etc/zoneinfo",
+            "/share/zoneinfo",
+        ];
 
         let candidate = CANDIDATES
             .iter()
@@ -303,6 +326,9 @@ fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
 /// user identity. The function returns a [`crate::Error`] describing failures encountered during
 /// bootstrap.
 ///
+/// This convenience wrapper discards the detailed [`TestBootstrapSettings`]. Call
+/// [`bootstrap_for_tests`] to obtain the structured response for assertions.
+///
 /// # Examples
 /// ```rust
 /// use pg_embedded_setup_unpriv::run;
@@ -318,6 +344,20 @@ pub fn run() -> crate::Result<()> {
 }
 
 /// Bootstraps PostgreSQL for integration tests and surfaces the prepared settings.
+///
+/// # Examples
+/// ```no_run
+/// use pg_embedded_setup_unpriv::bootstrap_for_tests;
+///
+/// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+/// let bootstrap = bootstrap_for_tests()?;
+/// for (key, value) in bootstrap.environment.to_env() {
+///     std::env::set_var(&key, &value);
+/// }
+/// // Launch application logic that relies on `bootstrap.settings` here.
+/// # Ok(())
+/// # }
+/// ```
 pub fn bootstrap_for_tests() -> BootstrapResult<TestBootstrapSettings> {
     orchestrate_bootstrap()
 }
@@ -569,7 +609,7 @@ fn bootstrap_unprivileged(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use nix::unistd::Uid;

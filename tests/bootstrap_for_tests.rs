@@ -299,7 +299,10 @@ fn then_prepares_env(world: &RefCell<BootstrapWorld>) -> Result<()> {
         "time zone should not be empty"
     );
     ensure!(
-        !env_settings.tz_dir.as_str().is_empty(),
+        env_settings
+            .tz_dir
+            .as_ref()
+            .is_some_and(|path| path.exists()),
         "TZDIR should record the discovered time zone directory"
     );
     ensure!(
