@@ -13,31 +13,19 @@ use pg_embedded_setup_unpriv::with_temp_euid;
 use pg_embedded_setup_unpriv::{ExecutionPrivileges, detect_execution_privileges, nobody_uid};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
-use std::sync::{Mutex, MutexGuard};
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs_bootstrap;
 #[path = "support/env.rs"]
 mod env;
+#[path = "support/serial.rs"]
+mod serial;
 
 use cap_fs_bootstrap::{remove_tree, set_permissions};
 use env::{build_env, with_scoped_env};
 use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
 use pg_embedded_setup_unpriv::test_support::metadata;
-
-static SCENARIO_MUTEX: Mutex<()> = Mutex::new(());
-
-struct ScenarioSerialGuard {
-    _guard: MutexGuard<'static, ()>,
-}
-
-#[fixture]
-fn serial_guard() -> ScenarioSerialGuard {
-    let guard = SCENARIO_MUTEX
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    ScenarioSerialGuard { _guard: guard }
-}
+use serial::{ScenarioSerialGuard, serial_guard};
 
 #[derive(Debug)]
 struct BootstrapSandbox {

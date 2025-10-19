@@ -107,22 +107,26 @@ impl TestBootstrapEnvironment {
     }
 
     /// Returns the prepared environment variables as key/value pairs.
-    pub fn to_env(&self) -> Vec<(String, String)> {
+    pub fn to_env(&self) -> Vec<(String, Option<String>)> {
         let mut env = vec![
-            ("HOME".into(), self.home.as_str().into()),
-            ("XDG_CACHE_HOME".into(), self.xdg_cache_home.as_str().into()),
+            ("HOME".into(), Some(self.home.as_str().into())),
+            (
+                "XDG_CACHE_HOME".into(),
+                Some(self.xdg_cache_home.as_str().into()),
+            ),
             (
                 "XDG_RUNTIME_DIR".into(),
-                self.xdg_runtime_dir.as_str().into(),
+                Some(self.xdg_runtime_dir.as_str().into()),
             ),
-            ("PGPASSFILE".into(), self.pgpass_file.as_str().into()),
+            ("PGPASSFILE".into(), Some(self.pgpass_file.as_str().into())),
         ];
 
-        if let Some(dir) = &self.tz_dir {
-            env.push(("TZDIR".into(), dir.as_str().into()));
-        }
+        env.push((
+            "TZDIR".into(),
+            self.tz_dir.as_ref().map(|dir| dir.as_str().into()),
+        ));
 
-        env.push(("TZ".into(), self.timezone.clone()));
+        env.push(("TZ".into(), Some(self.timezone.clone())));
 
         env
     }
@@ -331,7 +335,10 @@ pub fn run() -> crate::Result<()> {
 /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
 /// let bootstrap = bootstrap_for_tests()?;
 /// for (key, value) in bootstrap.environment.to_env() {
-///     std::env::set_var(&key, &value);
+///     match value {
+///         Some(value) => std::env::set_var(&key, &value),
+///         None => std::env::remove_var(&key),
+///     }
 /// }
 /// // Launch application logic that relies on `bootstrap.settings` here.
 /// # Ok(())

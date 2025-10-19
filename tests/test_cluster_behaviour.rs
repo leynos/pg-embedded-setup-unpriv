@@ -2,8 +2,6 @@
 #![cfg(unix)]
 
 use std::cell::RefCell;
-use std::ffi::OsString;
-use std::sync::{Mutex, MutexGuard};
 
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Context, Result, ensure, eyre};
@@ -19,31 +17,15 @@ mod env;
 mod env_snapshot;
 #[path = "support/sandbox.rs"]
 mod sandbox;
+#[path = "support/serial.rs"]
+mod serial;
 
-use env::ScopedEnvVars;
 use env_snapshot::EnvSnapshot;
-use once_cell::sync::Lazy;
 use sandbox::TestSandbox;
-
-static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-static SCENARIO_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
-struct ScenarioSerialGuard {
-    _guard: MutexGuard<'static, ()>,
-}
-
-#[fixture]
-fn serial_guard() -> ScenarioSerialGuard {
-    let guard = SCENARIO_MUTEX
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    ScenarioSerialGuard { _guard: guard }
-}
+use serial::{ScenarioSerialGuard, serial_guard};
 
 struct ClusterWorld {
     sandbox: TestSandbox,
-    env_guard: Option<Vec<(OsString, Option<OsString>)>>,
-    env_lock: Option<MutexGuard<'static, ()>>,
     cluster: Option<TestCluster>,
     data_dir: Option<Utf8PathBuf>,
     error: Option<String>,
@@ -56,8 +38,6 @@ impl ClusterWorld {
     fn new() -> Result<Self> {
         Ok(Self {
             sandbox: TestSandbox::new("test-cluster-bdd").context("create cluster sandbox")?,
-            env_guard: None,
-            env_lock: None,
             cluster: None,
             data_dir: None,
             error: None,
@@ -77,45 +57,6 @@ impl ClusterWorld {
         self.skip_reason.is_some()
     }
 
-    fn apply_env(&mut self, vars: ScopedEnvVars) {
-        if self.env_guard.is_some() {
-            return;
-        }
-        let lock = ENV_MUTEX.lock().expect("environment mutex poisoned");
-        let mut saved = Vec::with_capacity(vars.len());
-        for (key, value) in vars {
-            let previous = std::env::var_os(&key);
-            match value {
-                Some(ref new_value) => unsafe {
-                    // SAFETY: access is serialised by `env_lock` and restored before releasing it.
-                    std::env::set_var(&key, new_value);
-                },
-                None => unsafe {
-                    std::env::remove_var(&key);
-                },
-            }
-            saved.push((key, previous));
-        }
-        self.env_guard = Some(saved);
-        self.env_lock = Some(lock);
-    }
-
-    fn restore_env(&mut self) {
-        if let Some(saved) = self.env_guard.take() {
-            for (key, value) in saved.into_iter().rev() {
-                match value {
-                    Some(previous) => unsafe {
-                        std::env::set_var(&key, previous);
-                    },
-                    None => unsafe {
-                        std::env::remove_var(&key);
-                    },
-                }
-            }
-        }
-        self.env_lock.take();
-    }
-
     fn record_cluster(&mut self, cluster: TestCluster, before: EnvSnapshot) -> Result<()> {
         let during = EnvSnapshot::capture();
         let data_dir = Utf8PathBuf::from_path_buf(cluster.settings().data_dir.clone())
@@ -133,7 +74,6 @@ impl ClusterWorld {
         let debug = format!("{err:?}");
         self.error = Some(message.clone());
         self.cluster = None;
-        self.restore_env();
         const SKIP_CONDITIONS: &[(&str, &str)] = &[
             (
                 "rate limit exceeded",
@@ -204,7 +144,6 @@ impl ClusterWorld {
 impl Drop for ClusterWorld {
     fn drop(&mut self) {
         drop(self.cluster.take());
-        self.restore_env();
     }
 }
 
@@ -220,28 +159,40 @@ fn given_cluster_sandbox(world: &RefCell<ClusterWorld>) -> Result<()> {
 
 #[when("a TestCluster is created")]
 fn when_cluster_created(world: &RefCell<ClusterWorld>) -> Result<()> {
-    let mut world_mut = world.borrow_mut();
-    let vars = world_mut.sandbox.env_without_timezone();
-    world_mut.apply_env(vars);
     let before = EnvSnapshot::capture();
-    match TestCluster::new() {
-        Ok(cluster) => world_mut.record_cluster(cluster, before),
-        Err(err) => world_mut.record_error(err),
+    let result = {
+        let world_ref = world.borrow();
+        let vars = world_ref.sandbox.env_without_timezone();
+        world_ref.sandbox.with_env(vars, TestCluster::new)
+    };
+    match result {
+        Ok(cluster) => world.borrow_mut().record_cluster(cluster, before),
+        Err(err) => world.borrow_mut().record_error(err),
     }
 }
 
 #[when("a TestCluster is created without a timezone database")]
 fn when_cluster_created_without_timezone(world: &RefCell<ClusterWorld>) -> Result<()> {
-    let mut world_mut = world.borrow_mut();
-    let missing_dir = world_mut.sandbox.install_dir().join("missing-tz");
-    let vars = world_mut.sandbox.env_with_timezone_override(&missing_dir);
-    world_mut.apply_env(vars);
-    match TestCluster::new() {
+    let (result, missing_dir) = {
+        let world_ref = world.borrow();
+        let missing_dir = world_ref.sandbox.install_dir().join("missing-tz");
+        (
+            world_ref.sandbox.with_env(
+                world_ref.sandbox.env_with_timezone_override(&missing_dir),
+                TestCluster::new,
+            ),
+            missing_dir,
+        )
+    };
+    match result {
         Ok(cluster) => {
             drop(cluster);
-            world_mut.record_error(eyre!("expected cluster creation to fail"))
+            world.borrow_mut().record_error(eyre!(
+                "expected cluster creation to fail with missing time zone dir {}",
+                missing_dir
+            ))
         }
-        Err(err) => world_mut.record_error(err),
+        Err(err) => world.borrow_mut().record_error(err),
     }
 }
 
@@ -316,7 +267,6 @@ fn then_cluster_stops(world: &RefCell<ClusterWorld>) -> Result<()> {
 
     drop(world_mut.cluster.take());
     let after = EnvSnapshot::capture();
-    world_mut.restore_env();
 
     ensure!(
         !data_dir.join("postmaster.pid").exists(),

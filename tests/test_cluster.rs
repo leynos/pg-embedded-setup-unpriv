@@ -21,11 +21,16 @@ use sandbox::TestSandbox;
 fn drops_stop_cluster_and_restore_environment() -> Result<()> {
     let sandbox = TestSandbox::new("test-cluster-unit").context("create test cluster sandbox")?;
     sandbox.reset()?;
+    let tz_override = sandbox.env_with_timezone_override(sandbox.install_dir());
+    assert!(
+        tz_override.iter().any(|(key, _)| key == "TZDIR"),
+        "timezone override should include TZDIR"
+    );
 
     let env_before = EnvSnapshot::capture();
     let result = sandbox.with_env(sandbox.env_without_timezone(), || {
         let before_cluster = EnvSnapshot::capture();
-        let cluster = TestCluster::new().map_err(|err| eyre!(format!("{:?}", err)))?;
+        let cluster = TestCluster::new().map_err(color_eyre::Report::from)?;
         let during_cluster = EnvSnapshot::capture();
 
         let data_dir = Utf8PathBuf::from_path_buf(cluster.settings().data_dir.clone())

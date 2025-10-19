@@ -58,7 +58,6 @@ impl TestSandbox {
         vars
     }
 
-    #[allow(dead_code)] // Used in timezone override scenarios; some tests omit it.
     pub fn env_with_timezone_override(&self, tz_dir: &Utf8Path) -> ScopedEnvVars {
         let mut vars = self.base_env();
         vars.push((
@@ -68,7 +67,6 @@ impl TestSandbox {
         vars
     }
 
-    #[allow(dead_code)] // Used by bootstrap scenarios; other tests rely on `apply_env` instead.
     pub fn with_env<R>(&self, vars: ScopedEnvVars, body: impl FnOnce() -> R) -> R {
         with_scoped_env(vars, body)
     }

@@ -20,20 +20,26 @@ impl EnvSnapshot {
         }
     }
 
-    #[allow(dead_code)] // Used by bootstrap scenarios; some tests import without invoking it.
     pub fn from_environment(environment: &TestBootstrapEnvironment) -> Self {
         environment
             .to_env()
             .into_iter()
             .fold(Self::default(), |mut snapshot, (key, value)| {
-                let value = OsString::from(value);
-                match key.as_str() {
-                    "PGPASSFILE" => snapshot.pgpassfile = Some(value),
-                    "TZDIR" => snapshot.tzdir = Some(value),
-                    "TZ" => snapshot.timezone = Some(value),
+                match (key.as_str(), value) {
+                    ("PGPASSFILE", Some(value)) => {
+                        snapshot.pgpassfile = Some(OsString::from(value))
+                    }
+                    ("PGPASSFILE", None) => snapshot.pgpassfile = None,
+                    ("TZDIR", Some(value)) => snapshot.tzdir = Some(OsString::from(value)),
+                    ("TZDIR", None) => snapshot.tzdir = None,
+                    ("TZ", Some(value)) => snapshot.timezone = Some(OsString::from(value)),
+                    ("TZ", None) => snapshot.timezone = None,
                     _ => {}
                 }
                 snapshot
             })
     }
 }
+
+#[cfg(test)]
+const _: fn(&TestBootstrapEnvironment) -> EnvSnapshot = EnvSnapshot::from_environment;

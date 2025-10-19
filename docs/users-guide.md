@@ -20,6 +20,7 @@ explains how to configure the tool and integrate it into automated test flows.
 1. Choose directories for the staged PostgreSQL distribution and the cluster’s
    data files. They must be writable by whichever user will run the helper; the
    tool reapplies ownership and permissions on every invocation.
+
 2. Export configuration:
 
    ```bash
@@ -37,6 +38,7 @@ explains how to configure the tool and integrate it into automated test flows.
    Invocations that begin as `root` drop to `nobody` before bootstrapping and
    repeat the ownership fix-ups on every call so running the tool twice remains
    idempotent.
+
 4. Pass the resulting paths and credentials to your tests. If you use
    `postgresql_embedded` directly after the setup step, it can reuse the staged
    binaries and data directory without needing `root`.
@@ -57,7 +59,10 @@ use pg_embedded_setup_unpriv::error::BootstrapResult;
 fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
     let prepared = bootstrap_for_tests()?;
     for (key, value) in prepared.environment.to_env() {
-        std::env::set_var(key, value);
+        match value {
+            Some(value) => std::env::set_var(&key, value),
+            None => std::env::remove_var(&key),
+        }
     }
     Ok(prepared)
 }
@@ -78,10 +83,10 @@ rather than when PostgreSQL launches.
 RAII lifecycle. Constructing the guard starts PostgreSQL using the discovered
 settings, applies the environment produced by the bootstrap helper, and exposes
 the configuration to callers. Dropping the guard stops the instance and
-restores the prior process environment so subsequent tests start from a clean
+restores the prior process environment, so subsequent tests start from a clean
 slate.
 
-```rust
+```rust,no_run
 use pg_embedded_setup_unpriv::{TestCluster, error::BootstrapResult};
 
 fn exercise_cluster() -> BootstrapResult<()> {
@@ -124,9 +129,9 @@ still running as `root`, follow these steps:
   end-to-end suites.
 - Inside the test, temporarily adopt the `nobody` UID (for example,
   `pg_embedded_setup_unpriv::with_temp_euid`) prior to starting the database.
-- Ensure the `PGPASSFILE` environment variable points to the file created in
-  the runtime directory so subsequent Diesel or libpq connections can
-  authenticate without interactive prompts. The
+- Ensure the `PGPASSFILE` environment variable points to the file created in the
+  runtime directory so subsequent Diesel or libpq connections can authenticate
+  without interactive prompts. The
   `bootstrap_for_tests().environment.pgpass_file` helper returns the path if
   the bootstrap ran inside the test process.
 - Provide `TZDIR=/usr/share/zoneinfo` (or the correct path for your
@@ -142,8 +147,8 @@ still running as `root`, follow these steps:
 - **Download rate limits**: `postgresql_embedded` fetches binaries from the
   Theseus GitHub releases. Supply a `GITHUB_TOKEN` environment variable if you
   hit rate limits in CI.
-- **CLI arguments in tests**: `PgEnvCfg::load()` ignores `std::env::args`
-  during library use so Cargo test filters (for example,
+- **CLI arguments in tests**: `PgEnvCfg::load()` ignores `std::env::args` during
+  library use so Cargo test filters (for example,
   `bootstrap_privileges::bootstrap_as_root`) do not trip the underlying Clap
   parser. Provide configuration through environment variables or config files
   when embedding the crate.

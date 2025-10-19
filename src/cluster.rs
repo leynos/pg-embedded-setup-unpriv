@@ -22,7 +22,32 @@ use crate::error::{BootstrapError, BootstrapResult};
 use crate::{TestBootstrapEnvironment, TestBootstrapSettings};
 use color_eyre::eyre::Context;
 use postgresql_embedded::{PostgreSQL, Settings};
+use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
+use tokio::time;
+
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+))]
+use crate::privileges::drop_process_privileges;
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+))]
+use nix::unistd::User;
 
 /// Embedded PostgreSQL instance whose lifecycle follows Rust's drop semantics.
 #[derive(Debug)]
@@ -50,10 +75,118 @@ impl TestCluster {
         let env_vars = bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
 
-        let start = runtime
-            .block_on(async { postgres.start().await })
-            .context("postgresql_embedded::start() failed")
-            .map_err(BootstrapError::from);
+        match bootstrap.privileges {
+            crate::ExecutionPrivileges::Unprivileged => {
+                let setup = runtime
+                    .block_on(async { postgres.setup().await })
+                    .context("postgresql_embedded::setup() failed")
+                    .map_err(BootstrapError::from);
+                if let Err(err) = setup {
+                    drop(env_guard);
+                    return Err(err);
+                }
+            }
+            crate::ExecutionPrivileges::Root => {
+                #[cfg(all(
+                    unix,
+                    any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "freebsd",
+                        target_os = "openbsd",
+                        target_os = "dragonfly",
+                    ),
+                ))]
+                {
+                    let nobody_user = User::from_name("nobody")
+                        .context("failed to resolve user 'nobody'")
+                        .map_err(BootstrapError::from)?
+                        .ok_or_else(|| color_eyre::eyre::eyre!("user 'nobody' not found"))
+                        .map_err(BootstrapError::from)?;
+                    let guard =
+                        drop_process_privileges(&nobody_user).map_err(BootstrapError::from)?;
+                    let setup = runtime
+                        .block_on(async { postgres.setup().await })
+                        .context("postgresql_embedded::setup() failed")
+                        .map_err(BootstrapError::from);
+                    drop(guard);
+                    if let Err(err) = setup {
+                        drop(env_guard);
+                        return Err(err);
+                    }
+                }
+                #[cfg(not(all(
+                    unix,
+                    any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "freebsd",
+                        target_os = "openbsd",
+                        target_os = "dragonfly",
+                    ),
+                )))]
+                {
+                    let setup = runtime
+                        .block_on(async { postgres.setup().await })
+                        .context("postgresql_embedded::setup() failed")
+                        .map_err(BootstrapError::from);
+                    if let Err(err) = setup {
+                        drop(env_guard);
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        let start = match bootstrap.privileges {
+            crate::ExecutionPrivileges::Unprivileged => runtime
+                .block_on(async { postgres.start().await })
+                .context("postgresql_embedded::start() failed")
+                .map_err(BootstrapError::from),
+            crate::ExecutionPrivileges::Root => {
+                #[cfg(all(
+                    unix,
+                    any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "freebsd",
+                        target_os = "openbsd",
+                        target_os = "dragonfly",
+                    ),
+                ))]
+                {
+                    let nobody_user = User::from_name("nobody")
+                        .context("failed to resolve user 'nobody'")
+                        .map_err(BootstrapError::from)?
+                        .ok_or_else(|| color_eyre::eyre::eyre!("user 'nobody' not found"))
+                        .map_err(BootstrapError::from)?;
+                    let guard =
+                        drop_process_privileges(&nobody_user).map_err(BootstrapError::from)?;
+                    let start = runtime
+                        .block_on(async { postgres.start().await })
+                        .context("postgresql_embedded::start() failed")
+                        .map_err(BootstrapError::from);
+                    drop(guard);
+                    start
+                }
+                #[cfg(not(all(
+                    unix,
+                    any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "freebsd",
+                        target_os = "openbsd",
+                        target_os = "dragonfly",
+                    ),
+                )))]
+                {
+                    runtime
+                        .block_on(async { postgres.start().await })
+                        .context("postgresql_embedded::start() failed")
+                        .map_err(BootstrapError::from)
+                }
+            }
+        };
         if let Err(err) = start {
             drop(env_guard);
             return Err(err);
@@ -85,10 +218,23 @@ impl TestCluster {
 
 impl Drop for TestCluster {
     fn drop(&mut self) {
-        if let Some(postgres) = self.postgres.take()
-            && let Err(err) = self.runtime.block_on(postgres.stop())
-        {
-            eprintln!("SKIP-TEST-CLUSTER: failed to stop embedded postgres instance: {err}");
+        if let Some(postgres) = self.postgres.take() {
+            let outcome = self
+                .runtime
+                .block_on(async { time::timeout(Duration::from_secs(15), postgres.stop()).await });
+            match outcome {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    eprintln!(
+                        "SKIP-TEST-CLUSTER: failed to stop embedded postgres instance: {err}"
+                    );
+                }
+                Err(_) => {
+                    eprintln!(
+                        "SKIP-TEST-CLUSTER: stop() timed out after 15s; proceeding with drop"
+                    );
+                }
+            }
         }
         // `env_guard` drops after this block, restoring the environment.
     }
