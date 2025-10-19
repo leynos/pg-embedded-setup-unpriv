@@ -10,9 +10,7 @@ use color_eyre::eyre::{Context, Result, ensure, eyre};
 use nix::unistd::{Uid, geteuid};
 #[cfg(feature = "privileged-tests")]
 use pg_embedded_setup_unpriv::with_temp_euid;
-use pg_embedded_setup_unpriv::{
-    Error as SetupError, ExecutionPrivileges, detect_execution_privileges, nobody_uid,
-};
+use pg_embedded_setup_unpriv::{ExecutionPrivileges, detect_execution_privileges, nobody_uid};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
 
@@ -130,29 +128,36 @@ impl BootstrapSandbox {
         let expected = self
             .expected_owner
             .ok_or_else(|| eyre!("expected owner not recorded for sandbox"))?;
-        let install_dir = self.install_dir.clone();
-        let data_dir = self.data_dir.clone();
-        self.assert_path_owner(install_dir.as_ref(), expected)?;
-        self.assert_path_owner(data_dir.as_ref(), expected)?;
+        if let Some(reason) = {
+            let path = self.install_dir.as_ref();
+            Self::inspect_path_owner(path, expected)?
+        } {
+            self.mark_skipped(reason);
+        }
+
+        if let Some(reason) = {
+            let path = self.data_dir.as_ref();
+            Self::inspect_path_owner(path, expected)?
+        } {
+            self.mark_skipped(reason);
+        }
         Ok(())
     }
 
-    fn assert_path_owner(&mut self, path: &Utf8Path, expected: Uid) -> Result<()> {
+    fn inspect_path_owner(path: &Utf8Path, expected: Uid) -> Result<Option<String>> {
         let metadata = match metadata(path) {
             Ok(metadata) => metadata,
             Err(err) if err.kind() == ErrorKind::NotFound => {
-                self.mark_skipped(format!(
+                return Ok(Some(format!(
                     "SKIP-BOOTSTRAP: ownership check skipped for {} (missing): {}",
                     path, err
-                ));
-                return Ok(());
+                )));
             }
             Err(err) if err.kind() == ErrorKind::PermissionDenied => {
-                self.mark_skipped(format!(
+                return Ok(Some(format!(
                     "SKIP-BOOTSTRAP: ownership check skipped for {} (permission denied): {}",
                     path, err
-                ));
-                return Ok(());
+                )));
             }
             Err(err) => {
                 return Err(err).with_context(|| format!("inspect ownership of {}", path.as_str()));
@@ -165,18 +170,14 @@ impl BootstrapSandbox {
             expected,
             metadata.uid()
         );
-        Ok(())
+        Ok(None)
     }
 
     fn handle_outcome(&mut self, outcome: pg_embedded_setup_unpriv::Result<()>) -> Result<()> {
         match outcome {
             Ok(()) => Ok(()),
             Err(err) => {
-                let message = match &err {
-                    SetupError::Bootstrap(inner) => format!("{inner:?}"),
-                    SetupError::Privilege(inner) => format!("{inner:?}"),
-                    SetupError::Config(inner) => format!("{inner:?}"),
-                };
+                let message = err.to_string();
                 const SKIP_CONDITIONS: &[(&str, &str)] = &[
                     (
                         "rate limit exceeded",
@@ -198,7 +199,7 @@ impl BootstrapSandbox {
                     self.mark_skipped(format!("{reason}: {message}"));
                     Ok(())
                 } else {
-                    Err(eyre!(message))
+                    Err(err.into())
                 }
             }
         }

@@ -43,15 +43,15 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 /// Guards process environment mutations so bootstrap orchestration can operate
 /// safely within tests.
 ///
-/// SAFETY: Environment mutation in Rust 2024 requires `unsafe` because reads and
-/// writes bypass the borrow checker. This guard serializes all mutations through
-/// a global mutex and assumes callers avoid invoking
-/// [`bootstrap_for_tests`](crate::bootstrap_for_tests) concurrently from the
-/// same process. Any simultaneous access to the environment outside the guard's
-/// lock will still race.
+/// SAFETY: Mutating the process environment is inherently unsafe because reads
+/// and writes bypass the borrow checker. This guard serialises mutations with a
+/// global mutex and restores previous values on drop. Callers must avoid
+/// invoking [`bootstrap_for_tests`](crate::bootstrap_for_tests) concurrently
+/// with other code that touches the environment outside this guard.
 struct EnvGuard {
-    _lock: MutexGuard<'static, ()>,
     saved: Vec<(String, Option<OsString>)>,
+    #[expect(dead_code, reason = "Mutex guard keeps the lock held until drop")]
+    lock: MutexGuard<'static, ()>,
 }
 
 impl EnvGuard {
@@ -65,7 +65,7 @@ impl EnvGuard {
             }
             saved.push((key.clone(), previous));
         }
-        Self { _lock: lock, saved }
+        Self { saved, lock }
     }
 }
 
@@ -81,6 +81,7 @@ impl Drop for EnvGuard {
                 },
             }
         }
+        // `lock` drops here, releasing the mutex once restoration completes.
     }
 }
 
