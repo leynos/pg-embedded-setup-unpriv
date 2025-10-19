@@ -6,7 +6,10 @@ use std::sync::Mutex;
 
 use temp_env::with_vars;
 
-#[allow(dead_code)] // Some integration tests only use the type alias helpers.
+#[expect(
+    dead_code,
+    reason = "Some integration tests only use the type alias helpers."
+)]
 static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Collection type for guarded environment variables.
@@ -32,7 +35,7 @@ where
 ///
 /// Important: this guard is not re-entrant. Do not nest `with_scoped_env` calls, as
 /// the inner invocation will deadlock waiting for the mutex held by the outer scope.
-#[allow(dead_code)] // Other integration tests rely on this guard; some modules do not.
+#[expect(dead_code, reason = "Guard is consumed by specific test modules only")]
 pub fn with_scoped_env<R>(
     vars: impl IntoIterator<Item = (OsString, Option<OsString>)>,
     body: impl FnOnce() -> R,

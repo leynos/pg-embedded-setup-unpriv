@@ -441,17 +441,18 @@ fn bootstrap_with_root(
     };
     let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
     let env_vars = environment.to_env();
-    let env_guard = ScopedEnv::apply(&env_vars);
-    let setup_settings = settings.clone();
+    {
+        let _env_guard = ScopedEnv::apply(&env_vars);
+        let setup_settings = settings.clone();
 
-    runtime.block_on(async move {
-        let mut pg = PostgreSQL::new(setup_settings);
-        pg.setup()
-            .await
-            .wrap_err("postgresql_embedded::setup() failed")?;
-        Ok::<(), color_eyre::Report>(())
-    })?;
-    drop(env_guard);
+        runtime.block_on(async move {
+            let mut pg = PostgreSQL::new(setup_settings);
+            pg.setup()
+                .await
+                .wrap_err("postgresql_embedded::setup() failed")?;
+            Ok::<(), color_eyre::Report>(())
+        })?;
+    }
     drop(guard);
 
     Ok(PreparedBootstrap {
@@ -514,18 +515,18 @@ fn bootstrap_unprivileged(
     };
     let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
     let env_vars = environment.to_env();
-    let env_guard = ScopedEnv::apply(&env_vars);
-    let setup_settings = settings.clone();
+    {
+        let _env_guard = ScopedEnv::apply(&env_vars);
+        let setup_settings = settings.clone();
 
-    runtime.block_on(async move {
-        let mut pg = PostgreSQL::new(setup_settings);
-        pg.setup()
-            .await
-            .wrap_err("postgresql_embedded::setup() failed")?;
-        Ok::<(), color_eyre::Report>(())
-    })?;
-
-    drop(env_guard);
+        runtime.block_on(async move {
+            let mut pg = PostgreSQL::new(setup_settings);
+            pg.setup()
+                .await
+                .wrap_err("postgresql_embedded::setup() failed")?;
+            Ok::<(), color_eyre::Report>(())
+        })?;
+    }
 
     Ok(PreparedBootstrap {
         settings,
@@ -569,18 +570,18 @@ fn bootstrap_unprivileged(
     };
     let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
     let env_vars = environment.to_env();
-    let env_guard = ScopedEnv::apply(&env_vars);
-    let setup_settings = settings.clone();
+    {
+        let _env_guard = ScopedEnv::apply(&env_vars);
+        let setup_settings = settings.clone();
 
-    runtime.block_on(async move {
-        let mut pg = PostgreSQL::new(setup_settings);
-        pg.setup()
-            .await
-            .wrap_err("postgresql_embedded::setup() failed")?;
-        Ok::<(), color_eyre::Report>(())
-    })?;
-
-    drop(env_guard);
+        runtime.block_on(async move {
+            let mut pg = PostgreSQL::new(setup_settings);
+            pg.setup()
+                .await
+                .wrap_err("postgresql_embedded::setup() failed")?;
+            Ok::<(), color_eyre::Report>(())
+        })?;
+    }
 
     Ok(PreparedBootstrap {
         settings,
