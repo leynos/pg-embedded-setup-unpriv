@@ -23,7 +23,10 @@ mod privileges;
 #[doc(hidden)]
 pub mod test_support;
 
-pub use bootstrap::{ExecutionPrivileges, detect_execution_privileges, run};
+pub use bootstrap::{
+    ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings, bootstrap_for_tests,
+    detect_execution_privileges, run,
+};
 pub use error::{Error, Result};
 #[cfg(feature = "privileged-tests")]
 #[cfg(all(
