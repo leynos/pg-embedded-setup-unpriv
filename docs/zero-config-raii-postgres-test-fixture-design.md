@@ -206,6 +206,17 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
 }
 ```
 
+### Implementation update (2024-06-10)
+
+- Implemented the `TestCluster` RAII guard. `TestCluster::new()` reuses
+  `bootstrap_for_tests()` to prepare settings, applies a shared `ScopedEnv`
+  guard that keeps the bootstrap environment active for the duration of the
+  cluster, and starts PostgreSQL on a dedicated current-thread Tokio runtime.
+- Added integration and unit coverage that proves the guard stops PostgreSQL on
+  drop by asserting that `postmaster.pid` disappears and that the environment
+  is restored to its pre-cluster snapshot. Behavioural tests exercise both the
+  happy path and the time zone failure case.
+
 In practice, **`TestCluster::start()` can wrap `bootstrap_for_tests()`**
 internally. For example, `TestCluster::start()` would call
 `bootstrap_for_tests()` to do all the config+init work, then launch the

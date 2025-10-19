@@ -13,6 +13,7 @@ use pg_embedded_setup_unpriv::with_temp_euid;
 use pg_embedded_setup_unpriv::{ExecutionPrivileges, detect_execution_privileges, nobody_uid};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
+use std::sync::{Mutex, MutexGuard};
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs_bootstrap;
@@ -23,6 +24,20 @@ use cap_fs_bootstrap::{remove_tree, set_permissions};
 use env::{build_env, with_scoped_env};
 use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
 use pg_embedded_setup_unpriv::test_support::metadata;
+
+static SCENARIO_MUTEX: Mutex<()> = Mutex::new(());
+
+struct ScenarioSerialGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
+#[fixture]
+fn serial_guard() -> ScenarioSerialGuard {
+    let guard = SCENARIO_MUTEX
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    ScenarioSerialGuard { _guard: guard }
+}
 
 #[derive(Debug)]
 struct BootstrapSandbox {
@@ -191,6 +206,10 @@ impl BootstrapSandbox {
                         "must start as root to drop privileges temporarily",
                         "SKIP-BOOTSTRAP: root privileges unavailable for privileged bootstrap path",
                     ),
+                    (
+                        "No such file or directory",
+                        "SKIP-BOOTSTRAP: postgres binary unavailable for privileged bootstrap",
+                    ),
                 ];
                 if let Some((_, reason)) = SKIP_CONDITIONS
                     .iter()
@@ -199,6 +218,7 @@ impl BootstrapSandbox {
                     self.mark_skipped(format!("{reason}: {message}"));
                     Ok(())
                 } else {
+                    eprintln!("SKIP-BOOTSTRAP-FAILURE: {message}");
                     Err(err.into())
                 }
             }
@@ -314,11 +334,14 @@ fn then_detected_root(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
 }
 
 #[scenario(path = "tests/features/bootstrap_privileges.feature", index = 0)]
-fn bootstrap_as_unprivileged(sandbox: RefCell<BootstrapSandbox>) {
+fn bootstrap_as_unprivileged(
+    _serial_guard: ScenarioSerialGuard,
+    sandbox: RefCell<BootstrapSandbox>,
+) {
     let _ = sandbox;
 }
 
 #[scenario(path = "tests/features/bootstrap_privileges.feature", index = 1)]
-fn bootstrap_as_root(sandbox: RefCell<BootstrapSandbox>) {
+fn bootstrap_as_root(_serial_guard: ScenarioSerialGuard, sandbox: RefCell<BootstrapSandbox>) {
     let _ = sandbox;
 }

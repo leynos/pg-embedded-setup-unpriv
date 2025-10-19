@@ -3,6 +3,7 @@
 //! Provides [`bootstrap_for_tests`] so suites can retrieve structured settings and
 //! prepared environment variables without reimplementing bootstrap orchestration.
 use crate::PgEnvCfg;
+use crate::env::ScopedEnv;
 use crate::error::BootstrapResult;
 use crate::fs::{ensure_dir_exists, set_permissions};
 use crate::privileges::{
@@ -15,10 +16,8 @@ use color_eyre::eyre::Context;
 use nix::unistd::{Uid, User, chown, geteuid};
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::env;
-use std::ffi::OsString;
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
 use tokio::runtime::{Builder, Handle, Runtime};
 
 /// Represents the privileges the process is running with when bootstrapping PostgreSQL.
@@ -36,53 +35,6 @@ struct XdgDirs {
     home: Utf8PathBuf,
     cache: Utf8PathBuf,
     runtime: Utf8PathBuf,
-}
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-/// Guards process environment mutations so bootstrap orchestration can operate
-/// safely within tests.
-///
-/// SAFETY: Mutating the process environment is inherently unsafe because reads
-/// and writes bypass the borrow checker. This guard serialises mutations with a
-/// global mutex and restores previous values on drop. Callers must avoid
-/// invoking [`bootstrap_for_tests`](crate::bootstrap_for_tests) concurrently
-/// with other code that touches the environment outside this guard.
-struct EnvGuard {
-    saved: Vec<(String, Option<OsString>)>,
-    #[expect(dead_code, reason = "Mutex guard keeps the lock held until drop")]
-    lock: MutexGuard<'static, ()>,
-}
-
-impl EnvGuard {
-    fn apply(vars: &[(String, String)]) -> Self {
-        let lock = ENV_LOCK.lock().expect("environment lock poisoned");
-        let mut saved = Vec::with_capacity(vars.len());
-        for (key, value) in vars {
-            let previous = env::var_os(key);
-            unsafe {
-                env::set_var(key, value);
-            }
-            saved.push((key.clone(), previous));
-        }
-        Self { saved, lock }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in self.saved.drain(..).rev() {
-            match value {
-                Some(previous) => unsafe {
-                    env::set_var(&key, previous);
-                },
-                None => unsafe {
-                    env::remove_var(&key);
-                },
-            }
-        }
-        // `lock` drops here, releasing the mutex once restoration completes.
-    }
 }
 
 /// Runtime handle used to execute bootstrap tasks.
@@ -489,7 +441,7 @@ fn bootstrap_with_root(
     };
     let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
     let env_vars = environment.to_env();
-    let env_guard = EnvGuard::apply(&env_vars);
+    let env_guard = ScopedEnv::apply(&env_vars);
     let setup_settings = settings.clone();
 
     runtime.block_on(async move {
@@ -562,7 +514,7 @@ fn bootstrap_unprivileged(
     };
     let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
     let env_vars = environment.to_env();
-    let env_guard = EnvGuard::apply(&env_vars);
+    let env_guard = ScopedEnv::apply(&env_vars);
     let setup_settings = settings.clone();
 
     runtime.block_on(async move {
@@ -617,7 +569,7 @@ fn bootstrap_unprivileged(
     };
     let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
     let env_vars = environment.to_env();
-    let env_guard = EnvGuard::apply(&env_vars);
+    let env_guard = ScopedEnv::apply(&env_vars);
     let setup_settings = settings.clone();
 
     runtime.block_on(async move {

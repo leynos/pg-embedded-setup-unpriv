@@ -72,6 +72,32 @@ missing the helper returns an error advising the caller to install `tzdata` or
 set `TZDIR` explicitly, making the dependency visible during test startup
 rather than when PostgreSQL launches.
 
+## RAII test clusters
+
+`pg_embedded_setup_unpriv::TestCluster` wraps `bootstrap_for_tests()` with an
+RAII lifecycle. Constructing the guard starts PostgreSQL using the discovered
+settings, applies the environment produced by the bootstrap helper, and exposes
+the configuration to callers. Dropping the guard stops the instance and
+restores the prior process environment so subsequent tests start from a clean
+slate.
+
+```rust
+use pg_embedded_setup_unpriv::{TestCluster, error::BootstrapResult};
+
+fn exercise_cluster() -> BootstrapResult<()> {
+    let cluster = TestCluster::new()?;
+    let url = cluster.settings().url("app_db");
+    // Issue queries with your preferred client here.
+    drop(cluster); // PostgreSQL shuts down automatically.
+    Ok(())
+}
+```
+
+The guard keeps `PGPASSFILE`, `TZ`, `TZDIR`, and the XDG directories populated
+for the duration of its lifetime, making synchronous tests usable without extra
+setup. Unit and behavioural tests assert that `postmaster.pid` disappears after
+drop, demonstrating that no orphaned processes remain.
+
 ## Privilege detection and idempotence
 
 - `pg_embedded_setup_unpriv` detects its effective user ID at runtime. Root

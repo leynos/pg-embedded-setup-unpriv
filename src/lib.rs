@@ -7,6 +7,8 @@
 #![allow(non_snake_case)]
 
 mod bootstrap;
+mod cluster;
+mod env;
 mod error;
 mod fs;
 #[cfg(all(
@@ -27,6 +29,7 @@ pub use bootstrap::{
     ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings, bootstrap_for_tests,
     detect_execution_privileges, run,
 };
+pub use cluster::TestCluster;
 pub use error::{Error, Result};
 #[cfg(feature = "privileged-tests")]
 #[cfg(all(
