@@ -1,7 +1,7 @@
 //! Environment helpers for integration tests.
 
 use once_cell::sync::Lazy;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::sync::{Mutex, MutexGuard};
 
 static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -41,9 +41,23 @@ where
     K: Into<OsString>,
     V: Into<OsString>,
 {
-    vars.into_iter()
+    let mut env: ScopedEnvVars = vars
+        .into_iter()
         .map(|(key, value)| (key.into(), Some(value.into())))
-        .collect()
+        .collect();
+
+    if env
+        .iter()
+        .any(|(key, _)| key.as_os_str() == OsStr::new("PG_EMBEDDED_WORKER"))
+    {
+        return env;
+    }
+
+    if let Some(worker) = option_env!("CARGO_BIN_EXE_pg_worker") {
+        env.push((OsString::from("PG_EMBEDDED_WORKER"), Some(worker.into())));
+    }
+
+    env
 }
 
 /// Applies `vars` and returns a guard that keeps them active until dropped.

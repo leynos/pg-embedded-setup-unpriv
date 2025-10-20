@@ -1798,6 +1798,7 @@ dependencies = [
  "rstest-bdd",
  "rstest-bdd-macros",
  "serde",
+ "serde_json",
  "temp-env",
  "tempfile",
  "thiserror 1.0.69",

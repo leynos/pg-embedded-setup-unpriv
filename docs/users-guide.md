@@ -124,11 +124,12 @@ still running as `root`, follow these steps:
 - Invoke `pg_embedded_setup_unpriv` before dropping privileges. This prepares
   file ownership, caches the binaries, and records the superuser password in a
   location accessible to `nobody`.
-- Enable the `privileged-tests` Cargo feature when depending on the library so
-  the `with_temp_euid` helper is available to orchestrate privilege changes in
-  end-to-end suites.
-- Inside the test, temporarily adopt the `nobody` UID (for example,
-  `pg_embedded_setup_unpriv::with_temp_euid`) prior to starting the database.
+- Export the `PG_EMBEDDED_WORKER` environment variable with the absolute path
+  to the `pg_worker` helper binary. The library invokes this helper when it
+  needs to execute PostgreSQL lifecycle commands as `nobody`.
+- Keep the test process running as `root`; the helper binary performs the
+  privilege drop before calling into `postgresql_embedded` so the main process
+  never changes UID mid-test.
 - Ensure the `PGPASSFILE` environment variable points to the file created in the
   runtime directory so subsequent Diesel or libpq connections can authenticate
   without interactive prompts. The
@@ -152,6 +153,9 @@ still running as `root`, follow these steps:
   `bootstrap_privileges::bootstrap_as_root`) do not trip the underlying Clap
   parser. Provide configuration through environment variables or config files
   when embedding the crate.
+- **Legacy `with_temp_euid` helper**: The helper now returns an error because
+  the library no longer mutates the process UID mid-test. Configure
+  `PG_EMBEDDED_WORKER` instead so the subprocess performs the privilege drop.
 
 ## Further reading
 

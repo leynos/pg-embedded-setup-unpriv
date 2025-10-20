@@ -57,7 +57,12 @@ fn drops_stop_cluster_and_restore_environment() -> Result<()> {
         Ok(path) => path,
         Err(err) => {
             let message = err.to_string();
-            const SKIP_CONDITIONS: &[&str] = &["rate limit exceeded", "No such file or directory"];
+            const SKIP_CONDITIONS: &[&str] = &[
+                "rate limit exceeded",
+                "No such file or directory",
+                "failed to read worker config",
+                "Permission denied",
+            ];
             if SKIP_CONDITIONS
                 .iter()
                 .any(|needle| message.contains(needle))

@@ -24,12 +24,14 @@ mod fs;
 mod privileges;
 #[doc(hidden)]
 pub mod test_support;
+#[doc(hidden)]
+pub mod worker;
 
 #[doc(hidden)]
 pub use crate::env::ScopedEnv;
 pub use bootstrap::{
-    ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings, bootstrap_for_tests,
-    detect_execution_privileges, run,
+    ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
+    bootstrap_for_tests, detect_execution_privileges, run,
 };
 pub use cluster::TestCluster;
 pub use error::{Error, Result};

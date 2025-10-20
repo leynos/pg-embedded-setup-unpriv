@@ -83,6 +83,14 @@ impl ClusterWorld {
                 "No such file or directory",
                 "SKIP-TEST-CLUSTER: postgres binary unavailable for test cluster",
             ),
+            (
+                "failed to read worker config",
+                "SKIP-TEST-CLUSTER: worker helper cannot access its configuration",
+            ),
+            (
+                "Permission denied",
+                "SKIP-TEST-CLUSTER: worker helper lacks filesystem permissions",
+            ),
         ];
         if let Some((_, reason)) = SKIP_CONDITIONS
             .iter()

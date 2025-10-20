@@ -24,11 +24,10 @@ ID:
   without reimplementing the detection logic.
 
 - Root execution uses `bootstrap_with_root`, a helper that prepares the
-  installation and data directories for the `nobody` account, drops process
-  identity via `with_temp_euid`, and runs `postgresql_embedded::setup()`
-  entirely as `nobody`. The helper deliberately re-applies ownership and
-  permissions on every invocation so two consecutive bootstraps remain
-  idempotent.
+  installation and data directories for the `nobody` account and delegates
+  lifecycle commands to the `pg_worker` subprocess. The helper deliberately
+  re-applies ownership and permissions on every invocation so two consecutive
+  bootstraps remain idempotent without mutating the caller’s process identity.
 
 - Unprivileged execution now exercises `bootstrap_unprivileged`, which sets up
   directories with the caller’s UID, clamps permissions to PostgreSQL-friendly
@@ -69,10 +68,10 @@ sequenceDiagram
     alt Unix and UID == 0
         Detect-->>Bootstrap: ExecutionPrivileges::Root
         Bootstrap->>RootPath: route to root path
-        RootPath->>RootPath: drop to nobody via PrivilegeDropGuard
+        RootPath->>RootPath: prepare dirs for nobody
         RootPath->>RootPath: ensure/chown dirs to nobody
         RootPath->>RootPath: set environment (PGPASSFILE, HOME, XDG)
-        RootPath->>PG: run setup as nobody
+        RootPath->>PG: spawn pg_worker subprocess as nobody
         RootPath-->>Bootstrap: result
     else Unix and UID != 0 or Non-Unix
         Detect-->>Bootstrap: ExecutionPrivileges::Unprivileged
