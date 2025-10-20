@@ -26,7 +26,6 @@ use postgresql_embedded::{PostgreSQL, Settings};
 use serde_json::to_writer;
 use std::future::Future;
 use std::io::Write;
-use std::pin::Pin;
 use std::process::Command;
 use std::time::Duration;
 use tempfile::NamedTempFile;
@@ -79,88 +78,29 @@ impl TestCluster {
             .context("failed to create Tokio runtime for TestCluster")
             .map_err(BootstrapError::from)?;
 
-        let postgres = PostgreSQL::new(bootstrap.settings.clone());
+        let mut postgres = PostgreSQL::new(bootstrap.settings.clone());
         let env_vars = bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
         let privileges = bootstrap.privileges;
 
-        let setup_bootstrap = bootstrap.clone();
-        let setup_env = env_vars.clone();
-        let postgres = match Self::with_privileges(
-            &runtime,
-            privileges,
-            move || {
-                let bootstrap = setup_bootstrap.clone();
-                let env_vars = setup_env.clone();
-                let mut postgres = postgres;
-                Box::pin(async move {
-                    match privileges {
-                        crate::ExecutionPrivileges::Unprivileged => {
-                            postgres
-                                .setup()
-                                .await
-                                .context("postgresql_embedded::setup() failed")
-                                .map_err(BootstrapError::from)?;
-                            Ok(postgres)
-                        }
-                        crate::ExecutionPrivileges::Root => {
-                            Self::run_root_operation(
-                                &bootstrap,
-                                &env_vars,
-                                WorkerOperation::Setup,
-                            )?;
-                            Ok(postgres)
+        for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
+            Self::with_privileges(
+                &runtime,
+                privileges,
+                &bootstrap,
+                &env_vars,
+                operation,
+                async {
+                    match operation {
+                        WorkerOperation::Setup => postgres.setup().await,
+                        WorkerOperation::Start => postgres.start().await,
+                        WorkerOperation::Stop => {
+                            unreachable!("Stop is not triggered during TestCluster::new")
                         }
                     }
-                })
-            },
-            "postgresql_embedded::setup() failed",
-        ) {
-            Ok(postgres) => postgres,
-            Err(err) => {
-                drop(env_guard);
-                return Err(err);
-            }
-        };
-
-        let start_bootstrap = bootstrap.clone();
-        let start_env = env_vars.clone();
-        let postgres = match Self::with_privileges(
-            &runtime,
-            privileges,
-            move || {
-                let bootstrap = start_bootstrap.clone();
-                let env_vars = start_env.clone();
-                let mut postgres = postgres;
-                Box::pin(async move {
-                    match privileges {
-                        crate::ExecutionPrivileges::Unprivileged => {
-                            postgres
-                                .start()
-                                .await
-                                .context("postgresql_embedded::start() failed")
-                                .map_err(BootstrapError::from)?;
-                            Ok(postgres)
-                        }
-                        crate::ExecutionPrivileges::Root => {
-                            Self::run_root_operation(
-                                &bootstrap,
-                                &env_vars,
-                                WorkerOperation::Start,
-                            )?;
-                            Ok(postgres)
-                        }
-                    }
-                })
-            },
-            "postgresql_embedded::start() failed",
-        ) {
-            Ok(postgres) => postgres,
-            Err(err) => {
-                drop(env_guard);
-                return Err(err);
-            }
-        };
+                },
+            )?;
+        }
 
         let managed_via_worker = matches!(privileges, crate::ExecutionPrivileges::Root);
         let postgres = if managed_via_worker {
@@ -178,63 +118,39 @@ impl TestCluster {
         })
     }
 
-    fn with_privileges<R, F>(
+    fn with_privileges<Fut>(
         runtime: &Runtime,
         mode: crate::ExecutionPrivileges,
-        operation: F,
-        ctx: &'static str,
-    ) -> BootstrapResult<R>
+        bootstrap: &TestBootstrapSettings,
+        env_vars: &[(String, Option<String>)],
+        operation: WorkerOperation,
+        in_process_op: Fut,
+    ) -> BootstrapResult<()>
     where
-        F: FnOnce() -> Pin<Box<dyn Future<Output = BootstrapResult<R>> + Send>>,
+        Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
         match mode {
-            crate::ExecutionPrivileges::Unprivileged => runtime.block_on(operation()),
+            crate::ExecutionPrivileges::Unprivileged => {
+                Self::block_in_process(runtime, in_process_op, operation.error_context())
+            }
             crate::ExecutionPrivileges::Root => {
-                Self::with_dropped_privileges(runtime, operation, ctx)
+                Self::run_root_operation(bootstrap, env_vars, operation)
             }
         }
     }
 
-    #[cfg(all(
-        unix,
-        any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "dragonfly",
-        ),
-    ))]
-    fn with_dropped_privileges<R, F>(
+    fn block_in_process<Fut>(
         runtime: &Runtime,
-        operation: F,
-        _ctx: &'static str,
-    ) -> BootstrapResult<R>
+        future: Fut,
+        ctx: &'static str,
+    ) -> BootstrapResult<()>
     where
-        F: FnOnce() -> Pin<Box<dyn Future<Output = BootstrapResult<R>> + Send>>,
+        Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
-        runtime.block_on(operation())
-    }
-
-    #[cfg(not(all(
-        unix,
-        any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "dragonfly",
-        ),
-    )))]
-    fn with_dropped_privileges<R, F>(
-        runtime: &Runtime,
-        operation: F,
-        _ctx: &'static str,
-    ) -> BootstrapResult<R>
-    where
-        F: FnOnce() -> Pin<Box<dyn Future<Output = BootstrapResult<R>> + Send>>,
-    {
-        runtime.block_on(operation())
+        runtime
+            .block_on(future)
+            .context(ctx)
+            .map_err(BootstrapError::from)
     }
 
     fn run_root_operation(
@@ -242,6 +158,17 @@ impl TestCluster {
         env_vars: &[(String, Option<String>)],
         operation: WorkerOperation,
     ) -> BootstrapResult<()> {
+        #[cfg(test)]
+        {
+            if let Some(hook) = run_root_operation_hook()
+                .lock()
+                .expect("run_root_operation_hook lock poisoned")
+                .clone()
+            {
+                return hook(bootstrap, env_vars, operation);
+            }
+        }
+
         match bootstrap.execution_mode {
             crate::ExecutionMode::InProcess => Err(BootstrapError::from(eyre!(
                 "ExecutionMode::InProcess cannot be used when running as root"
@@ -394,5 +321,157 @@ impl Drop for TestCluster {
             }
         }
         // `env_guard` drops after this block, restoring the environment.
+    }
+}
+
+#[cfg(test)]
+type RunRootOperationHook = std::sync::Arc<
+    dyn Fn(
+            &TestBootstrapSettings,
+            &[(String, Option<String>)],
+            WorkerOperation,
+        ) -> BootstrapResult<()>
+        + Send
+        + Sync,
+>;
+
+#[cfg(test)]
+static RUN_ROOT_OPERATION_HOOK: std::sync::OnceLock<
+    std::sync::Mutex<Option<RunRootOperationHook>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn run_root_operation_hook() -> &'static std::sync::Mutex<Option<RunRootOperationHook>> {
+    RUN_ROOT_OPERATION_HOOK.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+#[cfg(test)]
+struct HookGuard;
+
+#[cfg(test)]
+fn install_run_root_operation_hook<F>(hook: F) -> HookGuard
+where
+    F: Fn(
+            &TestBootstrapSettings,
+            &[(String, Option<String>)],
+            WorkerOperation,
+        ) -> BootstrapResult<()>
+        + Send
+        + Sync
+        + 'static,
+{
+    let slot = run_root_operation_hook();
+    {
+        let mut guard = slot.lock().expect("run_root_operation_hook lock poisoned");
+        assert!(guard.is_none(), "run_root_operation_hook already installed");
+        *guard = Some(std::sync::Arc::new(hook));
+    }
+    HookGuard
+}
+
+#[cfg(test)]
+impl Drop for HookGuard {
+    fn drop(&mut self) {
+        let slot = run_root_operation_hook();
+        let mut guard = slot.lock().expect("run_root_operation_hook lock poisoned");
+        guard.take();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use camino::Utf8PathBuf;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+
+    fn test_runtime() -> Runtime {
+        Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("create test runtime")
+    }
+
+    fn dummy_environment() -> TestBootstrapEnvironment {
+        TestBootstrapEnvironment {
+            home: Utf8PathBuf::from("/tmp/pg-home"),
+            xdg_cache_home: Utf8PathBuf::from("/tmp/pg-cache"),
+            xdg_runtime_dir: Utf8PathBuf::from("/tmp/pg-run"),
+            pgpass_file: Utf8PathBuf::from("/tmp/.pgpass"),
+            tz_dir: Some(Utf8PathBuf::from("/usr/share/zoneinfo")),
+            timezone: "UTC".into(),
+        }
+    }
+
+    fn dummy_settings(privileges: crate::ExecutionPrivileges) -> TestBootstrapSettings {
+        TestBootstrapSettings {
+            privileges,
+            execution_mode: crate::ExecutionMode::Subprocess,
+            settings: Settings::default(),
+            environment: dummy_environment(),
+            worker_binary: None,
+        }
+    }
+
+    #[test]
+    fn unprivileged_operations_run_in_process() {
+        let runtime = test_runtime();
+        let bootstrap = dummy_settings(crate::ExecutionPrivileges::Unprivileged);
+        let env_vars = bootstrap.environment.to_env();
+        let setup_calls = AtomicUsize::new(0);
+
+        for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
+            let call_counter = &setup_calls;
+            TestCluster::with_privileges(
+                &runtime,
+                crate::ExecutionPrivileges::Unprivileged,
+                &bootstrap,
+                &env_vars,
+                operation,
+                async move {
+                    call_counter.fetch_add(1, Ordering::SeqCst);
+                    Ok::<(), postgresql_embedded::Error>(())
+                },
+            )
+            .expect("in-process operation should succeed");
+        }
+
+        assert_eq!(setup_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn root_operations_delegate_to_worker() {
+        let runtime = test_runtime();
+        let bootstrap = dummy_settings(crate::ExecutionPrivileges::Root);
+        let env_vars = bootstrap.environment.to_env();
+        let worker_calls = Arc::new(AtomicUsize::new(0));
+        let in_process_invoked = Arc::new(AtomicBool::new(false));
+
+        let hook_calls = Arc::clone(&worker_calls);
+        let _guard = install_run_root_operation_hook(move |_, _, _| {
+            hook_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+
+        for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
+            let flag = Arc::clone(&in_process_invoked);
+            TestCluster::with_privileges(
+                &runtime,
+                crate::ExecutionPrivileges::Root,
+                &bootstrap,
+                &env_vars,
+                operation,
+                async move {
+                    flag.store(true, Ordering::SeqCst);
+                    Ok::<(), postgresql_embedded::Error>(())
+                },
+            )
+            .expect("worker operation should succeed");
+        }
+
+        assert_eq!(worker_calls.load(Ordering::SeqCst), 2);
+        assert!(!in_process_invoked.load(Ordering::SeqCst));
     }
 }
