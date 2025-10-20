@@ -171,7 +171,7 @@ fn when_cluster_created(world: &RefCell<ClusterWorld>) -> Result<()> {
     }
 }
 
-#[when("a TestCluster is created without a timezone database")]
+#[when("a TestCluster is created without a time zone database")]
 fn when_cluster_created_without_timezone(world: &RefCell<ClusterWorld>) -> Result<()> {
     let (result, missing_dir) = {
         let world_ref = world.borrow();

@@ -11,5 +11,5 @@ Feature: TestCluster lifecycle
 
   Scenario: Failing without a time zone database
     Given a cluster sandbox for tests
-    When a TestCluster is created without a timezone database
+    When a TestCluster is created without a time zone database
     Then the cluster creation reports a time zone error
