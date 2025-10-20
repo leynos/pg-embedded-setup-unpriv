@@ -75,119 +75,26 @@ impl TestCluster {
         let env_vars = bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
 
-        match bootstrap.privileges {
-            crate::ExecutionPrivileges::Unprivileged => {
-                let setup = runtime
-                    .block_on(async { postgres.setup().await })
-                    .context("postgresql_embedded::setup() failed")
-                    .map_err(BootstrapError::from);
-                if let Err(err) = setup {
-                    drop(env_guard);
-                    return Err(err);
-                }
-            }
-            crate::ExecutionPrivileges::Root => {
-                #[cfg(all(
-                    unix,
-                    any(
-                        target_os = "linux",
-                        target_os = "android",
-                        target_os = "freebsd",
-                        target_os = "openbsd",
-                        target_os = "dragonfly",
-                    ),
-                ))]
-                {
-                    let nobody_user = User::from_name("nobody")
-                        .context("failed to resolve user 'nobody'")
-                        .map_err(BootstrapError::from)?
-                        .ok_or_else(|| color_eyre::eyre::eyre!("user 'nobody' not found"))
-                        .map_err(BootstrapError::from)?;
-                    let guard =
-                        drop_process_privileges(&nobody_user).map_err(BootstrapError::from)?;
-                    let setup = runtime
-                        .block_on(async { postgres.setup().await })
-                        .context("postgresql_embedded::setup() failed")
-                        .map_err(BootstrapError::from);
-                    drop(guard);
-                    if let Err(err) = setup {
-                        drop(env_guard);
-                        return Err(err);
-                    }
-                }
-                #[cfg(not(all(
-                    unix,
-                    any(
-                        target_os = "linux",
-                        target_os = "android",
-                        target_os = "freebsd",
-                        target_os = "openbsd",
-                        target_os = "dragonfly",
-                    ),
-                )))]
-                {
-                    let setup = runtime
-                        .block_on(async { postgres.setup().await })
-                        .context("postgresql_embedded::setup() failed")
-                        .map_err(BootstrapError::from);
-                    if let Err(err) = setup {
-                        drop(env_guard);
-                        return Err(err);
-                    }
-                }
-            }
+        // Setup phase
+        let setup_result = Self::with_privileges(
+            &runtime,
+            &bootstrap.privileges,
+            || async { postgres.setup().await },
+            "postgresql_embedded::setup() failed",
+        );
+        if let Err(err) = setup_result {
+            drop(env_guard);
+            return Err(err);
         }
 
-        let start = match bootstrap.privileges {
-            crate::ExecutionPrivileges::Unprivileged => runtime
-                .block_on(async { postgres.start().await })
-                .context("postgresql_embedded::start() failed")
-                .map_err(BootstrapError::from),
-            crate::ExecutionPrivileges::Root => {
-                #[cfg(all(
-                    unix,
-                    any(
-                        target_os = "linux",
-                        target_os = "android",
-                        target_os = "freebsd",
-                        target_os = "openbsd",
-                        target_os = "dragonfly",
-                    ),
-                ))]
-                {
-                    let nobody_user = User::from_name("nobody")
-                        .context("failed to resolve user 'nobody'")
-                        .map_err(BootstrapError::from)?
-                        .ok_or_else(|| color_eyre::eyre::eyre!("user 'nobody' not found"))
-                        .map_err(BootstrapError::from)?;
-                    let guard =
-                        drop_process_privileges(&nobody_user).map_err(BootstrapError::from)?;
-                    let start = runtime
-                        .block_on(async { postgres.start().await })
-                        .context("postgresql_embedded::start() failed")
-                        .map_err(BootstrapError::from);
-                    drop(guard);
-                    start
-                }
-                #[cfg(not(all(
-                    unix,
-                    any(
-                        target_os = "linux",
-                        target_os = "android",
-                        target_os = "freebsd",
-                        target_os = "openbsd",
-                        target_os = "dragonfly",
-                    ),
-                )))]
-                {
-                    runtime
-                        .block_on(async { postgres.start().await })
-                        .context("postgresql_embedded::start() failed")
-                        .map_err(BootstrapError::from)
-                }
-            }
-        };
-        if let Err(err) = start {
+        // Start phase
+        let start_result = Self::with_privileges(
+            &runtime,
+            &bootstrap.privileges,
+            || async { postgres.start().await },
+            "postgresql_embedded::start() failed",
+        );
+        if let Err(err) = start_result {
             drop(env_guard);
             return Err(err);
         }
@@ -198,6 +105,86 @@ impl TestCluster {
             bootstrap,
             _env_guard: env_guard,
         })
+    }
+
+    fn with_privileges<F, Fut>(
+        runtime: &tokio::runtime::Runtime,
+        privileges: &crate::ExecutionPrivileges,
+        operation: F,
+        error_context: &'static str,
+    ) -> BootstrapResult<()>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), postgresql_embedded::Error>>,
+    {
+        match privileges {
+            crate::ExecutionPrivileges::Unprivileged => runtime
+                .block_on(operation())
+                .context(error_context)
+                .map_err(BootstrapError::from),
+            crate::ExecutionPrivileges::Root => {
+                Self::with_dropped_privileges(runtime, operation, error_context)
+            }
+        }
+    }
+
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    ))]
+    fn with_dropped_privileges<F, Fut>(
+        runtime: &tokio::runtime::Runtime,
+        operation: F,
+        error_context: &'static str,
+    ) -> BootstrapResult<()>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), postgresql_embedded::Error>>,
+    {
+        let nobody_user = User::from_name("nobody")
+            .context("failed to resolve user 'nobody'")
+            .map_err(BootstrapError::from)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("user 'nobody' not found"))
+            .map_err(BootstrapError::from)?;
+
+        let guard = drop_process_privileges(&nobody_user).map_err(BootstrapError::from)?;
+        let result = runtime
+            .block_on(operation())
+            .context(error_context)
+            .map_err(BootstrapError::from);
+        drop(guard);
+        result
+    }
+
+    #[cfg(not(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    )))]
+    fn with_dropped_privileges<F, Fut>(
+        runtime: &tokio::runtime::Runtime,
+        operation: F,
+        error_context: &'static str,
+    ) -> BootstrapResult<()>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), postgresql_embedded::Error>>,
+    {
+        runtime
+            .block_on(operation())
+            .context(error_context)
+            .map_err(BootstrapError::from)
     }
 
     /// Returns the prepared PostgreSQL settings for the running cluster.
