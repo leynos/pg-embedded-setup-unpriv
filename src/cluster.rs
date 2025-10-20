@@ -24,7 +24,9 @@ use crate::{TestBootstrapEnvironment, TestBootstrapSettings};
 use color_eyre::eyre::{Context, eyre};
 use postgresql_embedded::{PostgreSQL, Settings};
 use serde_json::to_writer;
+use std::future::Future;
 use std::io::Write;
+use std::pin::Pin;
 use std::process::Command;
 use std::time::Duration;
 use tempfile::NamedTempFile;
@@ -77,54 +79,162 @@ impl TestCluster {
             .context("failed to create Tokio runtime for TestCluster")
             .map_err(BootstrapError::from)?;
 
+        let postgres = PostgreSQL::new(bootstrap.settings.clone());
         let env_vars = bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
-        let mut cluster = Self {
-            runtime,
-            postgres: None,
-            bootstrap,
-            managed_via_worker: false,
-            _env_guard: env_guard,
+        let privileges = bootstrap.privileges;
+
+        let setup_bootstrap = bootstrap.clone();
+        let setup_env = env_vars.clone();
+        let postgres = match Self::with_privileges(
+            &runtime,
+            privileges,
+            move || {
+                let bootstrap = setup_bootstrap.clone();
+                let env_vars = setup_env.clone();
+                let mut postgres = postgres;
+                Box::pin(async move {
+                    match privileges {
+                        crate::ExecutionPrivileges::Unprivileged => {
+                            postgres
+                                .setup()
+                                .await
+                                .context("postgresql_embedded::setup() failed")
+                                .map_err(BootstrapError::from)?;
+                            Ok(postgres)
+                        }
+                        crate::ExecutionPrivileges::Root => {
+                            Self::run_root_operation(
+                                &bootstrap,
+                                &env_vars,
+                                WorkerOperation::Setup,
+                            )?;
+                            Ok(postgres)
+                        }
+                    }
+                })
+            },
+            "postgresql_embedded::setup() failed",
+        ) {
+            Ok(postgres) => postgres,
+            Err(err) => {
+                drop(env_guard);
+                return Err(err);
+            }
         };
 
-        match cluster.bootstrap.privileges {
-            crate::ExecutionPrivileges::Unprivileged => {
-                let mut postgres = PostgreSQL::new(cluster.bootstrap.settings.clone());
-                Self::block_in_process(
-                    &cluster.runtime,
-                    || async { postgres.setup().await },
-                    "postgresql_embedded::setup() failed",
-                )?;
-                Self::block_in_process(
-                    &cluster.runtime,
-                    || async { postgres.start().await },
-                    "postgresql_embedded::start() failed",
-                )?;
-                cluster.postgres = Some(postgres);
+        let start_bootstrap = bootstrap.clone();
+        let start_env = env_vars.clone();
+        let postgres = match Self::with_privileges(
+            &runtime,
+            privileges,
+            move || {
+                let bootstrap = start_bootstrap.clone();
+                let env_vars = start_env.clone();
+                let mut postgres = postgres;
+                Box::pin(async move {
+                    match privileges {
+                        crate::ExecutionPrivileges::Unprivileged => {
+                            postgres
+                                .start()
+                                .await
+                                .context("postgresql_embedded::start() failed")
+                                .map_err(BootstrapError::from)?;
+                            Ok(postgres)
+                        }
+                        crate::ExecutionPrivileges::Root => {
+                            Self::run_root_operation(
+                                &bootstrap,
+                                &env_vars,
+                                WorkerOperation::Start,
+                            )?;
+                            Ok(postgres)
+                        }
+                    }
+                })
+            },
+            "postgresql_embedded::start() failed",
+        ) {
+            Ok(postgres) => postgres,
+            Err(err) => {
+                drop(env_guard);
+                return Err(err);
             }
-            crate::ExecutionPrivileges::Root => {
-                Self::run_root_operation(&cluster.bootstrap, &env_vars, WorkerOperation::Setup)?;
-                Self::run_root_operation(&cluster.bootstrap, &env_vars, WorkerOperation::Start)?;
-                cluster.managed_via_worker = true;
-            }
-        }
+        };
 
-        Ok(cluster)
+        let managed_via_worker = matches!(privileges, crate::ExecutionPrivileges::Root);
+        let postgres = if managed_via_worker {
+            None
+        } else {
+            Some(postgres)
+        };
+
+        Ok(Self {
+            runtime,
+            postgres,
+            bootstrap,
+            managed_via_worker,
+            _env_guard: env_guard,
+        })
     }
 
-    fn block_in_process<F, Fut>(
+    fn with_privileges<R, F>(
+        runtime: &Runtime,
+        mode: crate::ExecutionPrivileges,
+        operation: F,
+        ctx: &'static str,
+    ) -> BootstrapResult<R>
+    where
+        F: FnOnce() -> Pin<Box<dyn Future<Output = BootstrapResult<R>> + Send>>,
+    {
+        match mode {
+            crate::ExecutionPrivileges::Unprivileged => runtime.block_on(operation()),
+            crate::ExecutionPrivileges::Root => {
+                Self::with_dropped_privileges(runtime, operation, ctx)
+            }
+        }
+    }
+
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    ))]
+    fn with_dropped_privileges<R, F>(
         runtime: &Runtime,
         operation: F,
-        error_context: &'static str,
-    ) -> BootstrapResult<()>
+        _ctx: &'static str,
+    ) -> BootstrapResult<R>
     where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<(), postgresql_embedded::Error>>,
+        F: FnOnce() -> Pin<Box<dyn Future<Output = BootstrapResult<R>> + Send>>,
     {
-        runtime
-            .block_on(operation())
-            .context(error_context)
-            .map_err(BootstrapError::from)
+        runtime.block_on(operation())
+    }
+
+    #[cfg(not(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    )))]
+    fn with_dropped_privileges<R, F>(
+        runtime: &Runtime,
+        operation: F,
+        _ctx: &'static str,
+    ) -> BootstrapResult<R>
+    where
+        F: FnOnce() -> Pin<Box<dyn Future<Output = BootstrapResult<R>> + Send>>,
+    {
+        runtime.block_on(operation())
     }
 
     fn run_root_operation(
