@@ -27,6 +27,7 @@ impl Drop for ScopedEnvGuard {
                     std::env::set_var(&key, previous);
                 },
                 None => unsafe {
+                    // SAFETY: serialised by `ENV_MUTEX` and restored before releasing it.
                     std::env::remove_var(&key);
                 },
             }
@@ -73,6 +74,7 @@ pub fn apply_env(vars: ScopedEnvVars) -> ScopedEnvGuard {
                 std::env::set_var(&key, new_value);
             },
             None => unsafe {
+                // SAFETY: serialised by `ENV_MUTEX` and restored before releasing it.
                 std::env::remove_var(&key);
             },
         }

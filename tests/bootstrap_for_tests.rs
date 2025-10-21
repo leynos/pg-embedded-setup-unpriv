@@ -20,9 +20,12 @@ mod env;
 mod env_snapshot;
 #[path = "support/sandbox.rs"]
 mod sandbox;
+#[path = "support/skip.rs"]
+mod skip;
 
 use env_snapshot::EnvSnapshot;
 use sandbox::TestSandbox;
+use skip::skip_message;
 
 #[derive(Debug)]
 struct BootstrapWorld {
@@ -90,21 +93,8 @@ impl BootstrapWorld {
                 Ok(())
             }
             Err(message) => {
-                const SKIP_CONDITIONS: &[(&str, &str)] = &[
-                    (
-                        "rate limit exceeded",
-                        "SKIP-BOOTSTRAP-FOR-TESTS: rate limit exceeded whilst downloading PostgreSQL",
-                    ),
-                    (
-                        "No such file or directory",
-                        "SKIP-BOOTSTRAP-FOR-TESTS: postgres binary unavailable for bootstrap",
-                    ),
-                ];
-                if let Some((_, reason)) = SKIP_CONDITIONS
-                    .iter()
-                    .find(|(needle, _)| message.contains(needle))
-                {
-                    self.mark_skip(format!("{reason}: {message}"));
+                if let Some(reason) = skip_message("SKIP-BOOTSTRAP-FOR-TESTS", &message, None) {
+                    self.mark_skip(reason);
                     Ok(())
                 } else {
                     self.record_error(message.clone());

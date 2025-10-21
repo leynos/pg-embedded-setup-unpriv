@@ -18,7 +18,7 @@ ID:
 
 ### Implementation update (2024-05-09)
 
-- Runtime detection now materialises as an `ExecutionPrivileges` enum. The enum
+- Runtime detection now materializes as an `ExecutionPrivileges` enum. The enum
   communicates whether the bootstrapper must drop privileges or can proceed
   in-place, allowing call sites and behavioural tests to assert the chosen path
   without reimplementing the detection logic.
@@ -32,7 +32,7 @@ ID:
 - Unprivileged execution now exercises `bootstrap_unprivileged`, which sets up
   directories with the caller’s UID, clamps permissions to PostgreSQL-friendly
   defaults (0755 runtime, 0700 data), and reuses the same environment
-  normalisation as the root flow. This guarantees identical layout regardless
+  normalization as the root flow. This guarantees identical layout regardless
   of privileges.
 
 - Behavioural tests implemented with `rstest-bdd` cover both flows. The
@@ -52,7 +52,7 @@ ID:
 - The bootstrap orchestration now follows the flow illustrated below. The
   sequence diagram highlights the privilege detection and the branching between
   the root and unprivileged bootstrap paths, including the privilege drop,
-  directory provisioning, and environment normalisation phases.
+  directory provisioning, and environment normalization phases.
 
 ```mermaid
 sequenceDiagram
@@ -86,7 +86,7 @@ sequenceDiagram
 ```
 
 - **If running as root on Linux:** the helper will perform the necessary
-  privilege drop to a safe user (such as `"nobody"`) before initialising
+  privilege drop to a safe user (such as `"nobody"`) before initializing
   PostgreSQL. This uses the existing logic to temporarily drop `EUID` and
   `EGID` to `"nobody"` for filesystem operations (see src/lib.rs) (see
   src/lib.rs). This ensures all Postgres files/directories are owned by a
@@ -114,8 +114,8 @@ all setup/teardown details:
 - **On creation/start:** it will configure and launch a PostgreSQL instance
   (using `postgresql_embedded`) appropriate to the environment. If running as
   root, `TestCluster` will internally drop privileges to `"nobody"` and
-  initialise the database directories using our current helper logic (see
-  docs/next-steps.md). If not root, it will directly initialise under the
+  initialize the database directories using our current helper logic (see
+  docs/next-steps.md). If not root, it will directly initialize under the
   current user. In either case, it calls the embedded Postgres **`.setup()` and
   `.start()`** routines (async or blocking) to actually download/init the
   database and launch the server process.
@@ -156,7 +156,7 @@ setup for tests (see docs/next-steps.md). This function will:
 - Internally handle the privilege drop and call our existing
   `pg_embedded_setup_unpriv::run()` logic to prepare directories if needed (see
   docs/next-steps.md). In root mode, this means creating/chowning the data and
-  installation directories to `"nobody"` and initialising the DB cluster files
+  installation directories to `"nobody"` and initializing the DB cluster files
   (essentially performing an `initdb` (see src/lib.rs). In unprivileged mode,
   this step can be bypassed or simplified since no chown is required.
 
@@ -237,7 +237,7 @@ explicitly configured). For example, we can generate a temp directory (in
 `/var/tmp/pg-embed-<uid>/...` or using `tempfile::tempdir`) for each test
 instance. The current default is to use `/var/tmp/pg-embed-<uid>/data` and
 `.../install` for a given UID(see src/lib.rs) – we may tweak this so that if
-multiple clusters are initialised in one run, they don’t all target the exact
+multiple clusters are initialized in one run, they don’t all target the exact
 same path. One approach is to include a random suffix or use the OS tempdir for
 isolation. This way, two tests running in parallel won’t conflict over the data
 directory or lock files. The **installation binaries cache** could still be
@@ -383,7 +383,7 @@ or the expected PG version).
 
 Initially, our focus is **Linux** for the root-dropping functionality. On
 Linux, running tests as root will trigger the privileged path (drop to
-“nobody”) so that Postgres can be initialised safely. On other Unix-like OSes
+“nobody”) so that Postgres can be initialized safely. On other Unix-like OSes
 (macOS, FreeBSD), we will not attempt any special privilege management –
 typically tests on those platforms run as normal user anyway. If someone did
 run as root on macOS, we might simply error out or treat it as unprivileged

@@ -4,6 +4,7 @@
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Context, Result, eyre};
 use pg_embedded_setup_unpriv::TestCluster;
+use rstest::rstest;
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs;
@@ -13,12 +14,18 @@ mod env;
 mod env_snapshot;
 #[path = "support/sandbox.rs"]
 mod sandbox;
+#[path = "support/serial.rs"]
+mod serial;
+#[path = "support/skip.rs"]
+mod skip;
 
 use env_snapshot::EnvSnapshot;
 use sandbox::TestSandbox;
+use serial::{ScenarioSerialGuard, serial_guard};
+use skip::skip_message;
 
-#[test]
-fn drops_stop_cluster_and_restore_environment() -> Result<()> {
+#[rstest]
+fn drops_stop_cluster_and_restore_environment(_serial_guard: ScenarioSerialGuard) -> Result<()> {
     let sandbox = TestSandbox::new("test-cluster-unit").context("create test cluster sandbox")?;
     sandbox.reset()?;
     let tz_override = sandbox.env_with_timezone_override(sandbox.install_dir());
@@ -57,17 +64,8 @@ fn drops_stop_cluster_and_restore_environment() -> Result<()> {
         Ok(path) => path,
         Err(err) => {
             let message = err.to_string();
-            const SKIP_CONDITIONS: &[&str] = &[
-                "rate limit exceeded",
-                "No such file or directory",
-                "failed to read worker config",
-                "Permission denied",
-            ];
-            if SKIP_CONDITIONS
-                .iter()
-                .any(|needle| message.contains(needle))
-            {
-                eprintln!("SKIP-TEST-CLUSTER: {message}");
+            if let Some(reason) = skip_message("SKIP-TEST-CLUSTER", &message, None) {
+                eprintln!("{reason}");
                 return Ok(());
             }
             return Err(err);

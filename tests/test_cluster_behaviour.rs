@@ -19,10 +19,13 @@ mod env_snapshot;
 mod sandbox;
 #[path = "support/serial.rs"]
 mod serial;
+#[path = "support/skip.rs"]
+mod skip;
 
 use env_snapshot::EnvSnapshot;
 use sandbox::TestSandbox;
 use serial::{ScenarioSerialGuard, serial_guard};
+use skip::skip_message;
 
 struct ClusterWorld {
     sandbox: TestSandbox,
@@ -74,33 +77,10 @@ impl ClusterWorld {
         let debug = format!("{err:?}");
         self.error = Some(message.clone());
         self.cluster = None;
-        const SKIP_CONDITIONS: &[(&str, &str)] = &[
-            (
-                "rate limit exceeded",
-                "SKIP-TEST-CLUSTER: rate limit exceeded whilst downloading PostgreSQL",
-            ),
-            (
-                "No such file or directory",
-                "SKIP-TEST-CLUSTER: postgres binary unavailable for test cluster",
-            ),
-            (
-                "failed to read worker config",
-                "SKIP-TEST-CLUSTER: worker helper cannot access its configuration",
-            ),
-            (
-                "Permission denied",
-                "SKIP-TEST-CLUSTER: worker helper lacks filesystem permissions",
-            ),
-        ];
-        if let Some((_, reason)) = SKIP_CONDITIONS
-            .iter()
-            .find(|(needle, _)| message.contains(needle) || debug.contains(needle))
-        {
-            self.mark_skip(format!("{reason}: {message}"));
-            Ok(())
-        } else {
-            Ok(())
+        if let Some(reason) = skip_message("SKIP-TEST-CLUSTER", &message, Some(&debug)) {
+            self.mark_skip(reason);
         }
+        Ok(())
     }
 
     fn data_dir(&self) -> Result<&Utf8PathBuf> {

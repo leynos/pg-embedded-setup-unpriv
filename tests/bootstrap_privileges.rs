@@ -19,12 +19,15 @@ mod cap_fs_bootstrap;
 mod env;
 #[path = "support/serial.rs"]
 mod serial;
+#[path = "support/skip.rs"]
+mod skip;
 
 use cap_fs_bootstrap::{remove_tree, set_permissions};
 use env::{build_env, with_scoped_env};
 use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
 use pg_embedded_setup_unpriv::test_support::metadata;
 use serial::{ScenarioSerialGuard, serial_guard};
+use skip::skip_message;
 
 #[derive(Debug)]
 struct BootstrapSandbox {
@@ -180,29 +183,8 @@ impl BootstrapSandbox {
             Ok(()) => Ok(()),
             Err(err) => {
                 let message = err.to_string();
-                const SKIP_CONDITIONS: &[(&str, &str)] = &[
-                    (
-                        "rate limit exceeded",
-                        "SKIP-BOOTSTRAP: rate limit exceeded whilst downloading PostgreSQL",
-                    ),
-                    (
-                        "setgroups failed",
-                        "SKIP-BOOTSTRAP: kernel refused to adjust supplementary groups",
-                    ),
-                    (
-                        "must start as root to drop privileges temporarily",
-                        "SKIP-BOOTSTRAP: root privileges unavailable for privileged bootstrap path",
-                    ),
-                    (
-                        "No such file or directory",
-                        "SKIP-BOOTSTRAP: postgres binary unavailable for privileged bootstrap",
-                    ),
-                ];
-                if let Some((_, reason)) = SKIP_CONDITIONS
-                    .iter()
-                    .find(|(needle, _)| message.contains(needle))
-                {
-                    self.mark_skipped(format!("{reason}: {message}"));
+                if let Some(reason) = skip_message("SKIP-BOOTSTRAP", &message, None) {
+                    self.mark_skipped(reason);
                     Ok(())
                 } else {
                     eprintln!("SKIP-BOOTSTRAP-FAILURE: {message}");
