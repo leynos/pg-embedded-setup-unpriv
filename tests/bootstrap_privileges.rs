@@ -8,7 +8,6 @@ use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::fs::MetadataExt;
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use nix::unistd::{Uid, geteuid};
-#[cfg(feature = "privileged-tests")]
 use pg_embedded_setup_unpriv::{ExecutionPrivileges, detect_execution_privileges, nobody_uid};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
