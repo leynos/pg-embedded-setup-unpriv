@@ -11,6 +11,7 @@ pub type ScopedEnvVars = Vec<(OsString, Option<OsString>)>;
 
 /// Guard that keeps the supplied environment variables active until dropped.
 #[derive(Debug)]
+#[must_use = "Hold the guard until the environment scope completes"]
 pub struct ScopedEnvGuard {
     saved: Vec<(OsString, Option<OsString>)>,
     #[expect(dead_code, reason = "Mutex guard keeps the lock held until drop")]

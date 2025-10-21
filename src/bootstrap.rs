@@ -3,18 +3,20 @@
 //! Provides [`bootstrap_for_tests`] so suites can retrieve structured settings and
 //! prepared environment variables without reimplementing bootstrap orchestration.
 use crate::PgEnvCfg;
+use crate::env::ScopedEnv;
 use crate::error::{BootstrapError, BootstrapResult};
 use crate::fs::{ensure_dir_exists, set_permissions};
 use crate::privileges::{
     default_paths_for, ensure_dir_for_user, ensure_tree_owned_by_user, make_data_dir_private,
 };
 use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::Context;
+use color_eyre::eyre::{Context, Report};
 #[cfg(unix)]
 use nix::unistd::{Uid, User, chown, geteuid};
-use postgresql_embedded::Settings;
+use postgresql_embedded::{PostgreSQL, Settings};
 use std::env;
 use std::path::PathBuf;
+use tokio::runtime::Runtime;
 
 /// Represents the privileges the process is running with when bootstrapping PostgreSQL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,6 +150,23 @@ struct SettingsPaths {
 struct PreparedBootstrap {
     settings: Settings,
     environment: TestBootstrapEnvironment,
+}
+
+/// Runs `postgresql_embedded::PostgreSQL::setup` with the provided environment.
+pub(crate) fn setup_with_env(
+    runtime: &Runtime,
+    env_vars: &[(String, Option<String>)],
+    settings: &Settings,
+) -> color_eyre::Result<()> {
+    let _env_guard = ScopedEnv::apply(env_vars);
+    let setup_settings = settings.clone();
+    runtime.block_on(async move {
+        let mut pg = PostgreSQL::new(setup_settings);
+        pg.setup()
+            .await
+            .wrap_err("postgresql_embedded::setup() failed")?;
+        Ok::<(), Report>(())
+    })
 }
 
 #[derive(Debug, Clone)]

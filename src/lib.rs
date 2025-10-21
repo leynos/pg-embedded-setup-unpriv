@@ -4,7 +4,6 @@
 //! The library owns the lifecycle for configuring paths, permissions, and
 //! process identity so the bundled PostgreSQL binaries can initialise safely
 //! under an unprivileged account.
-#![allow(non_snake_case)]
 
 mod bootstrap;
 mod cluster;
@@ -68,7 +67,6 @@ use crate::error::{ConfigError, ConfigResult};
 use camino::Utf8PathBuf;
 use std::ffi::OsString;
 
-#[allow(non_snake_case)]
 #[derive(Debug, Clone, Serialize, Deserialize, OrthoConfig, Default)]
 #[ortho_config(prefix = "PG")]
 pub struct PgEnvCfg {

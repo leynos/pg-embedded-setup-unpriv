@@ -7,6 +7,7 @@ use std::sync::{Mutex, MutexGuard};
 static SCENARIO_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 #[derive(Debug)]
+#[must_use = "Hold this guard for the duration of the serialised scenario"]
 pub struct ScenarioSerialGuard {
     _guard: MutexGuard<'static, ()>,
 }

@@ -16,11 +16,11 @@
 //! # }
 //! ```
 
-use crate::bootstrap_for_tests;
 use crate::env::ScopedEnv;
 use crate::error::{BootstrapError, BootstrapResult};
 use crate::worker::WorkerPayload;
 use crate::{TestBootstrapEnvironment, TestBootstrapSettings};
+use crate::{bootstrap::setup_with_env, bootstrap_for_tests};
 use color_eyre::eyre::{Context, eyre};
 use postgresql_embedded::{PostgreSQL, Settings};
 use serde_json::to_writer;
@@ -78,29 +78,36 @@ impl TestCluster {
             .context("failed to create Tokio runtime for TestCluster")
             .map_err(BootstrapError::from)?;
 
-        let mut postgres = PostgreSQL::new(bootstrap.settings.clone());
         let env_vars = bootstrap.environment.to_env();
-        let env_guard = ScopedEnv::apply(&env_vars);
         let privileges = bootstrap.privileges;
 
-        for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
+        if matches!(privileges, crate::ExecutionPrivileges::Unprivileged) {
+            setup_with_env(&runtime, &env_vars, &bootstrap.settings)
+                .map_err(BootstrapError::from)?;
+        }
+
+        let env_guard = ScopedEnv::apply(&env_vars);
+        let mut postgres = PostgreSQL::new(bootstrap.settings.clone());
+
+        if matches!(privileges, crate::ExecutionPrivileges::Root) {
             Self::with_privileges(
                 &runtime,
                 privileges,
                 &bootstrap,
                 &env_vars,
-                operation,
-                async {
-                    match operation {
-                        WorkerOperation::Setup => postgres.setup().await,
-                        WorkerOperation::Start => postgres.start().await,
-                        WorkerOperation::Stop => {
-                            unreachable!("Stop is not triggered during TestCluster::new")
-                        }
-                    }
-                },
+                WorkerOperation::Setup,
+                async { postgres.setup().await },
             )?;
         }
+
+        Self::with_privileges(
+            &runtime,
+            privileges,
+            &bootstrap,
+            &env_vars,
+            WorkerOperation::Start,
+            async { postgres.start().await },
+        )?;
 
         let managed_via_worker = matches!(privileges, crate::ExecutionPrivileges::Root);
         let postgres = if managed_via_worker {
