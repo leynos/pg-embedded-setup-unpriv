@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::ffi::OsStr;
 
 use camino::Utf8PathBuf;
-use color_eyre::eyre::{Context, Result, ensure, eyre};
+use color_eyre::eyre::{Context, Report, Result, ensure, eyre};
 use pg_embedded_setup_unpriv::{
     TestBootstrapSettings, bootstrap_for_tests, detect_execution_privileges,
 };
@@ -82,7 +82,7 @@ impl BootstrapWorld {
         self.env_expected = Some(snapshot);
     }
 
-    fn handle_outcome(&mut self, outcome: Result<TestBootstrapSettings, String>) -> Result<()> {
+    fn handle_outcome(&mut self, outcome: Result<TestBootstrapSettings, Report>) -> Result<()> {
         match outcome {
             Ok(settings) => {
                 self.record_settings(settings);
@@ -92,8 +92,12 @@ impl BootstrapWorld {
                 }
                 Ok(())
             }
-            Err(message) => {
-                if let Some(reason) = skip_message("SKIP-BOOTSTRAP-FOR-TESTS", &message, None) {
+            Err(err) => {
+                let message = err.to_string();
+                let debug = format!("{err:?}");
+                if let Some(reason) =
+                    skip_message("SKIP-BOOTSTRAP-FOR-TESTS", &message, Some(&debug))
+                {
                     self.mark_skip(reason);
                     Ok(())
                 } else {
@@ -156,7 +160,7 @@ fn when_bootstrap_for_tests(world: &RefCell<BootstrapWorld>) -> Result<()> {
     let env_vars = world.borrow().sandbox.env_without_timezone();
     let (outcome, before, snapshot) = world.borrow().sandbox.with_env(env_vars, || {
         let before = EnvSnapshot::capture();
-        let outcome = bootstrap_for_tests().map_err(|err| err.to_string());
+        let outcome = bootstrap_for_tests().map_err(Report::from);
         let snapshot = EnvSnapshot::capture();
         (outcome, before, snapshot)
     });

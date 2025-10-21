@@ -78,3 +78,23 @@ impl TestSandbox {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use color_eyre::eyre::Result;
+
+    #[test]
+    fn env_with_timezone_override_sets_tzdir() -> Result<()> {
+        let sandbox = TestSandbox::new("sandbox-tz-override")?;
+        let vars = sandbox.env_with_timezone_override(sandbox.install_dir());
+        assert!(
+            vars.iter().any(|(key, value)| {
+                key == "TZDIR" && value == &Some(OsString::from(sandbox.install_dir().as_str()))
+            }),
+            "expected TZDIR override to be present",
+        );
+        Ok(())
+    }
+}

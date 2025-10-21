@@ -29,12 +29,6 @@ fn drops_stop_cluster_and_restore_environment(serial_guard: ScenarioSerialGuard)
     let _ = &serial_guard;
     let sandbox = TestSandbox::new("test-cluster-unit").context("create test cluster sandbox")?;
     sandbox.reset()?;
-    let tz_override = sandbox.env_with_timezone_override(sandbox.install_dir());
-    assert!(
-        tz_override.iter().any(|(key, _)| key == "TZDIR"),
-        "timezone override should include TZDIR"
-    );
-
     let env_before = EnvSnapshot::capture();
     let result = sandbox.with_env(sandbox.env_without_timezone(), || {
         let before_cluster = EnvSnapshot::capture();
@@ -65,7 +59,8 @@ fn drops_stop_cluster_and_restore_environment(serial_guard: ScenarioSerialGuard)
         Ok(path) => path,
         Err(err) => {
             let message = err.to_string();
-            if let Some(reason) = skip_message("SKIP-TEST-CLUSTER", &message, None) {
+            let debug = format!("{err:?}");
+            if let Some(reason) = skip_message("SKIP-TEST-CLUSTER", &message, Some(&debug)) {
                 eprintln!("{reason}");
                 return Ok(());
             }

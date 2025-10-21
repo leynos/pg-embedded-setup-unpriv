@@ -183,7 +183,8 @@ impl BootstrapSandbox {
             Ok(()) => Ok(()),
             Err(err) => {
                 let message = err.to_string();
-                if let Some(reason) = skip_message("SKIP-BOOTSTRAP", &message, None) {
+                let debug = format!("{err:?}");
+                if let Some(reason) = skip_message("SKIP-BOOTSTRAP", &message, Some(&debug)) {
                     self.mark_skipped(reason);
                     Ok(())
                 } else {

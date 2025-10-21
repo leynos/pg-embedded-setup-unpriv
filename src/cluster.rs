@@ -27,7 +27,6 @@ use serde_json::to_writer;
 use std::future::Future;
 use std::io::Write;
 use std::process::Command;
-use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::runtime::{Builder, Runtime};
 use tokio::time;
@@ -303,12 +302,21 @@ impl WorkerOperation {
 
 impl Drop for TestCluster {
     fn drop(&mut self) {
+        let timeout = self.bootstrap.shutdown_timeout;
+        let timeout_secs = timeout.as_secs();
+        let settings = &self.bootstrap.settings;
+        let data_dir = settings.data_dir.display().to_string();
+        let version = settings.version.to_string();
+        let context = format!("version {version}, data_dir {data_dir}");
+
         if self.managed_via_worker {
             let env_vars = self.bootstrap.environment.to_env();
             if let Err(err) =
                 Self::run_root_operation(&self.bootstrap, &env_vars, WorkerOperation::Stop)
             {
-                eprintln!("SKIP-TEST-CLUSTER: failed to stop embedded postgres instance: {err}");
+                eprintln!(
+                    "SKIP-TEST-CLUSTER: failed to stop embedded postgres instance ({context}): {err}"
+                );
             }
             return;
         }
@@ -316,17 +324,17 @@ impl Drop for TestCluster {
         if let Some(postgres) = self.postgres.take() {
             let outcome = self
                 .runtime
-                .block_on(async { time::timeout(Duration::from_secs(15), postgres.stop()).await });
+                .block_on(async { time::timeout(timeout, postgres.stop()).await });
             match outcome {
                 Ok(Ok(())) => {}
                 Ok(Err(err)) => {
                     eprintln!(
-                        "SKIP-TEST-CLUSTER: failed to stop embedded postgres instance: {err}"
+                        "SKIP-TEST-CLUSTER: failed to stop embedded postgres instance ({context}): {err}"
                     );
                 }
                 Err(_) => {
                     eprintln!(
-                        "SKIP-TEST-CLUSTER: stop() timed out after 15s; proceeding with drop"
+                        "SKIP-TEST-CLUSTER: stop() timed out after {timeout_secs}s ({context}); proceeding with drop"
                     );
                 }
             }

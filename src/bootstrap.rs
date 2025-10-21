@@ -16,7 +16,10 @@ use nix::unistd::{Uid, User, chown, geteuid};
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::env;
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::runtime::Runtime;
+
+const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Represents the privileges the process is running with when bootstrapping PostgreSQL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +117,8 @@ pub struct TestBootstrapSettings {
     pub environment: TestBootstrapEnvironment,
     /// Optional path to the helper binary used for subprocess execution.
     pub worker_binary: Option<Utf8PathBuf>,
+    /// Grace period granted to PostgreSQL during drop before teardown proceeds regardless.
+    pub shutdown_timeout: Duration,
 }
 
 /// Determines the current execution privileges for the bootstrap sequence.
@@ -385,6 +390,7 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
         settings: prepared.settings,
         environment: prepared.environment,
         worker_binary,
+        shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
     })
 }
 

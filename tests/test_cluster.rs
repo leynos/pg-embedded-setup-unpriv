@@ -12,6 +12,8 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+#[cfg(not(feature = "cluster-unit-tests"))]
+use std::time::Duration;
 
 #[cfg(not(feature = "cluster-unit-tests"))]
 fn test_runtime() -> Runtime {
@@ -41,6 +43,7 @@ fn dummy_settings(privileges: crate::ExecutionPrivileges) -> TestBootstrapSettin
         settings: Settings::default(),
         environment: dummy_environment(),
         worker_binary: None,
+        shutdown_timeout: Duration::from_secs(15),
     }
 }
 
