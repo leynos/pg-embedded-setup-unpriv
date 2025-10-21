@@ -25,7 +25,8 @@ use serial::{ScenarioSerialGuard, serial_guard};
 use skip::skip_message;
 
 #[rstest]
-fn drops_stop_cluster_and_restore_environment(_serial_guard: ScenarioSerialGuard) -> Result<()> {
+fn drops_stop_cluster_and_restore_environment(serial_guard: ScenarioSerialGuard) -> Result<()> {
+    let _ = &serial_guard;
     let sandbox = TestSandbox::new("test-cluster-unit").context("create test cluster sandbox")?;
     sandbox.reset()?;
     let tz_override = sandbox.env_with_timezone_override(sandbox.install_dir());

@@ -1,3 +1,4 @@
+//! Test support for intercepting root worker operations during `TestCluster` flows.
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::{BootstrapResult, TestBootstrapSettings, WorkerOperation};

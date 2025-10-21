@@ -298,13 +298,15 @@ fn then_detected_root(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
 
 #[scenario(path = "tests/features/bootstrap_privileges.feature", index = 0)]
 fn bootstrap_as_unprivileged(
-    _serial_guard: ScenarioSerialGuard,
+    serial_guard: ScenarioSerialGuard,
     sandbox: RefCell<BootstrapSandbox>,
 ) {
+    let _ = &serial_guard;
     let _ = sandbox;
 }
 
 #[scenario(path = "tests/features/bootstrap_privileges.feature", index = 1)]
-fn bootstrap_as_root(_serial_guard: ScenarioSerialGuard, sandbox: RefCell<BootstrapSandbox>) {
+fn bootstrap_as_root(serial_guard: ScenarioSerialGuard, sandbox: RefCell<BootstrapSandbox>) {
+    let _ = &serial_guard;
     let _ = sandbox;
 }

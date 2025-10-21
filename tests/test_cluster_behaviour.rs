@@ -283,11 +283,16 @@ fn then_cluster_reports_timezone_error(world: &RefCell<ClusterWorld>) -> Result<
 }
 
 #[scenario(path = "tests/features/test_cluster.feature", index = 0)]
-fn scenario_cluster_lifecycle(_serial_guard: ScenarioSerialGuard, world: RefCell<ClusterWorld>) {}
+fn scenario_cluster_lifecycle(serial_guard: ScenarioSerialGuard, world: RefCell<ClusterWorld>) {
+    let _ = &serial_guard;
+    let _ = world;
+}
 
 #[scenario(path = "tests/features/test_cluster.feature", index = 1)]
 fn scenario_cluster_timezone_error(
-    _serial_guard: ScenarioSerialGuard,
+    serial_guard: ScenarioSerialGuard,
     world: RefCell<ClusterWorld>,
 ) {
+    let _ = &serial_guard;
+    let _ = world;
 }
