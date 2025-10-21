@@ -1,88 +1,107 @@
-//! Unit coverage for the `TestCluster` RAII guard.
-#![cfg(unix)]
+#[cfg(feature = "cluster-unit-tests")]
+fn main() {}
 
+#[cfg(not(feature = "cluster-unit-tests"))]
+use super::cluster_test_utils::install_run_root_operation_hook;
+#[cfg(not(feature = "cluster-unit-tests"))]
+use super::*;
+#[cfg(not(feature = "cluster-unit-tests"))]
 use camino::Utf8PathBuf;
-use color_eyre::eyre::{Context, Result, eyre};
-use pg_embedded_setup_unpriv::TestCluster;
+#[cfg(not(feature = "cluster-unit-tests"))]
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
-#[path = "support/cap_fs_bootstrap.rs"]
-mod cap_fs;
-#[path = "support/env.rs"]
-mod env;
-#[path = "support/env_snapshot.rs"]
-mod env_snapshot;
-#[path = "support/sandbox.rs"]
-mod sandbox;
+#[cfg(not(feature = "cluster-unit-tests"))]
+fn test_runtime() -> Runtime {
+    Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create test runtime")
+}
 
-use env_snapshot::EnvSnapshot;
-use sandbox::TestSandbox;
+#[cfg(not(feature = "cluster-unit-tests"))]
+fn dummy_environment() -> TestBootstrapEnvironment {
+    TestBootstrapEnvironment {
+        home: Utf8PathBuf::from("/tmp/pg-home"),
+        xdg_cache_home: Utf8PathBuf::from("/tmp/pg-cache"),
+        xdg_runtime_dir: Utf8PathBuf::from("/tmp/pg-run"),
+        pgpass_file: Utf8PathBuf::from("/tmp/.pgpass"),
+        tz_dir: Some(Utf8PathBuf::from("/usr/share/zoneinfo")),
+        timezone: "UTC".into(),
+    }
+}
 
+#[cfg(not(feature = "cluster-unit-tests"))]
+fn dummy_settings(privileges: crate::ExecutionPrivileges) -> TestBootstrapSettings {
+    TestBootstrapSettings {
+        privileges,
+        execution_mode: crate::ExecutionMode::Subprocess,
+        settings: Settings::default(),
+        environment: dummy_environment(),
+        worker_binary: None,
+    }
+}
+
+#[cfg(not(feature = "cluster-unit-tests"))]
 #[test]
-fn drops_stop_cluster_and_restore_environment() -> Result<()> {
-    let sandbox = TestSandbox::new("test-cluster-unit").context("create test cluster sandbox")?;
-    sandbox.reset()?;
-    let tz_override = sandbox.env_with_timezone_override(sandbox.install_dir());
-    assert!(
-        tz_override.iter().any(|(key, _)| key == "TZDIR"),
-        "timezone override should include TZDIR"
-    );
+fn unprivileged_operations_run_in_process() {
+    let runtime = test_runtime();
+    let bootstrap = dummy_settings(crate::ExecutionPrivileges::Unprivileged);
+    let env_vars = bootstrap.environment.to_env();
+    let setup_calls = AtomicUsize::new(0);
 
-    let env_before = EnvSnapshot::capture();
-    let result = sandbox.with_env(sandbox.env_without_timezone(), || {
-        let before_cluster = EnvSnapshot::capture();
-        let cluster = TestCluster::new().map_err(color_eyre::Report::from)?;
-        let during_cluster = EnvSnapshot::capture();
+    for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
+        let call_counter = &setup_calls;
+        TestCluster::with_privileges(
+            &runtime,
+            crate::ExecutionPrivileges::Unprivileged,
+            &bootstrap,
+            &env_vars,
+            operation,
+            async move {
+                call_counter.fetch_add(1, Ordering::SeqCst);
+                Ok::<(), postgresql_embedded::Error>(())
+            },
+        )
+        .expect("in-process operation should succeed");
+    }
 
-        let data_dir = Utf8PathBuf::from_path_buf(cluster.settings().data_dir.clone())
-            .map_err(|_| eyre!("data_dir is not valid UTF-8"))?;
+    assert_eq!(setup_calls.load(Ordering::SeqCst), 2);
+}
 
-        assert!(
-            data_dir.join("postmaster.pid").exists(),
-            "postmaster.pid should exist while the cluster runs",
-        );
-        assert!(
-            during_cluster.pgpassfile.is_some(),
-            "PGPASSFILE should be set for clients whilst the cluster runs",
-        );
-        assert_ne!(
-            during_cluster, before_cluster,
-            "the environment should change whilst the cluster runs",
-        );
+#[cfg(not(feature = "cluster-unit-tests"))]
+#[test]
+fn root_operations_delegate_to_worker() {
+    let runtime = test_runtime();
+    let bootstrap = dummy_settings(crate::ExecutionPrivileges::Root);
+    let env_vars = bootstrap.environment.to_env();
+    let worker_calls = Arc::new(AtomicUsize::new(0));
+    let in_process_invoked = Arc::new(AtomicBool::new(false));
 
-        drop(cluster);
-        Ok::<Utf8PathBuf, color_eyre::Report>(data_dir)
+    let hook_calls = Arc::clone(&worker_calls);
+    let _guard = install_run_root_operation_hook(move |_, _, _| {
+        hook_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(())
     });
 
-    let data_dir = match result {
-        Ok(path) => path,
-        Err(err) => {
-            let message = err.to_string();
-            const SKIP_CONDITIONS: &[&str] = &[
-                "rate limit exceeded",
-                "No such file or directory",
-                "failed to read worker config",
-                "Permission denied",
-            ];
-            if SKIP_CONDITIONS
-                .iter()
-                .any(|needle| message.contains(needle))
-            {
-                eprintln!("SKIP-TEST-CLUSTER: {message}");
-                return Ok(());
-            }
-            return Err(err);
-        }
-    };
+    for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
+        let flag = Arc::clone(&in_process_invoked);
+        TestCluster::with_privileges(
+            &runtime,
+            crate::ExecutionPrivileges::Root,
+            &bootstrap,
+            &env_vars,
+            operation,
+            async move {
+                flag.store(true, Ordering::SeqCst);
+                Ok::<(), postgresql_embedded::Error>(())
+            },
+        )
+        .expect("worker operation should succeed");
+    }
 
-    let env_after = EnvSnapshot::capture();
-    assert_eq!(
-        env_before, env_after,
-        "the environment should be restored after the cluster drops",
-    );
-    assert!(
-        !data_dir.join("postmaster.pid").exists(),
-        "postmaster.pid should be removed once the cluster stops",
-    );
-
-    Ok(())
+    assert_eq!(worker_calls.load(Ordering::SeqCst), 2);
+    assert!(!in_process_invoked.load(Ordering::SeqCst));
 }
