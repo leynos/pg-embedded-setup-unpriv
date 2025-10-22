@@ -367,7 +367,14 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
 
     #[cfg(unix)]
     let execution_mode = match privileges {
-        ExecutionPrivileges::Root => ExecutionMode::Subprocess,
+        ExecutionPrivileges::Root => {
+            if worker_binary.is_none() {
+                return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                    "PG_EMBEDDED_WORKER must be set when running with root privileges"
+                )));
+            }
+            ExecutionMode::Subprocess
+        }
         ExecutionPrivileges::Unprivileged => ExecutionMode::InProcess,
     };
 
