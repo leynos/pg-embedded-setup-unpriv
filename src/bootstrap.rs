@@ -343,6 +343,15 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
         })
         .transpose()?;
 
+    if let Some(worker) = worker_binary
+        .as_ref()
+        .filter(|path| !path.as_std_path().exists())
+    {
+        return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+            "PG_EMBEDDED_WORKER must reference an existing file: {worker}"
+        )));
+    }
+
     #[cfg(unix)]
     let prepared = {
         match (privileges, settings) {
