@@ -44,7 +44,9 @@ impl BootstrapSandbox {
         let tempdir_guard =
             CapabilityTempDir::new("bootstrap-sandbox").context("create sandbox tempdir")?;
         let base_path = tempdir_guard.path().to_owned();
-        set_permissions(tempdir_guard.path(), 0o777)?;
+        // The worker only needs traversal access; keep the directory
+        // read/execute for others to avoid world-writable sandboxes.
+        set_permissions(tempdir_guard.path(), 0o755)?;
 
         let install_dir = base_path.join("install");
         let data_dir = base_path.join("data");

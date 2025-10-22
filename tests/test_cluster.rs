@@ -1,3 +1,5 @@
+//! Unit tests covering TestCluster privilege dispatch behaviour.
+
 #[cfg(feature = "cluster-unit-tests")]
 fn main() {}
 
@@ -39,7 +41,10 @@ fn dummy_environment() -> TestBootstrapEnvironment {
 fn dummy_settings(privileges: crate::ExecutionPrivileges) -> TestBootstrapSettings {
     TestBootstrapSettings {
         privileges,
-        execution_mode: crate::ExecutionMode::Subprocess,
+        execution_mode: match privileges {
+            crate::ExecutionPrivileges::Unprivileged => crate::ExecutionMode::InProcess,
+            crate::ExecutionPrivileges::Root => crate::ExecutionMode::Subprocess,
+        },
         settings: Settings::default(),
         environment: dummy_environment(),
         worker_binary: None,

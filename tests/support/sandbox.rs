@@ -22,7 +22,9 @@ impl TestSandbox {
     pub fn new(prefix: &str) -> Result<Self> {
         let guard = CapabilityTempDir::new(prefix).context("create sandbox tempdir")?;
         let base_dir = guard.path().to_owned();
-        set_permissions(&base_dir, 0o777)?;
+        // Allow the postgres child processes to traverse and modify the tree
+        // whilst keeping the directory world-readable but not world-writable.
+        set_permissions(&base_dir, 0o755)?;
         let install_dir = base_dir.join("install");
         let data_dir = base_dir.join("data");
 
@@ -74,7 +76,7 @@ impl TestSandbox {
     pub fn reset(&self) -> Result<()> {
         remove_tree(self.install_dir())?;
         remove_tree(self.data_dir())?;
-        set_permissions(&self.base_dir, 0o777)?;
+        set_permissions(&self.base_dir, 0o755)?;
         Ok(())
     }
 }

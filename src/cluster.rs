@@ -16,11 +16,11 @@
 //! # }
 //! ```
 
+use crate::bootstrap_for_tests;
 use crate::env::ScopedEnv;
 use crate::error::{BootstrapError, BootstrapResult};
 use crate::worker::WorkerPayload;
 use crate::{TestBootstrapEnvironment, TestBootstrapSettings};
-use crate::{bootstrap::setup_with_env, bootstrap_for_tests};
 use color_eyre::eyre::{Context, eyre};
 use postgresql_embedded::{PostgreSQL, Settings};
 use serde_json::to_writer;
@@ -84,33 +84,36 @@ impl TestCluster {
         let env_vars = bootstrap.environment.to_env();
         let privileges = bootstrap.privileges;
 
-        if matches!(privileges, crate::ExecutionPrivileges::Unprivileged) {
-            setup_with_env(&runtime, &env_vars, &bootstrap.settings)
-                .map_err(BootstrapError::from)?;
-        }
-
         let env_guard = ScopedEnv::apply(&env_vars);
         let mut postgres = PostgreSQL::new(bootstrap.settings.clone());
 
-        if matches!(privileges, crate::ExecutionPrivileges::Root) {
-            Self::with_privileges(
-                &runtime,
-                privileges,
-                &bootstrap,
-                &env_vars,
-                WorkerOperation::Setup,
-                async { postgres.setup().await },
-            )?;
+        for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
+            match operation {
+                WorkerOperation::Setup => {
+                    Self::with_privileges(
+                        &runtime,
+                        privileges,
+                        &bootstrap,
+                        &env_vars,
+                        operation,
+                        async { postgres.setup().await },
+                    )?;
+                }
+                WorkerOperation::Start => {
+                    Self::with_privileges(
+                        &runtime,
+                        privileges,
+                        &bootstrap,
+                        &env_vars,
+                        operation,
+                        async { postgres.start().await },
+                    )?;
+                }
+                WorkerOperation::Stop => {
+                    unreachable!("stop() is only invoked during TestCluster::drop")
+                }
+            }
         }
-
-        Self::with_privileges(
-            &runtime,
-            privileges,
-            &bootstrap,
-            &env_vars,
-            WorkerOperation::Start,
-            async { postgres.start().await },
-        )?;
 
         let managed_via_worker = matches!(privileges, crate::ExecutionPrivileges::Root);
         let postgres = if managed_via_worker {
