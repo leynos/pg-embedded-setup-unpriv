@@ -2,6 +2,7 @@
 //!
 //! The helper mirrors `postgresql_embedded` lifecycle calls while allowing the
 //! caller to demote credentials before spawning the child process.
+#![cfg(unix)]
 
 use std::env;
 use std::ffi::OsString;
@@ -25,7 +26,9 @@ impl Operation {
             "setup" => Ok(Self::Setup),
             "start" => Ok(Self::Start),
             "stop" => Ok(Self::Stop),
-            other => Err(Report::msg(format!("unknown pg_worker operation: {other}"))),
+            other => Err(Report::msg(format!(
+                "unknown pg_worker operation '{other}'; valid operations are setup, start, and stop"
+            ))),
         }
     }
 }

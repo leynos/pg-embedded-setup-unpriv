@@ -2,6 +2,44 @@
 //!
 //! Provides UTF-8 safe snapshots of [`postgresql_embedded::Settings`] so the
 //! worker binary can restore settings and environment state received via IPC.
+//!
+//! # Examples
+//! ```no_run
+//! use pg_embedded_setup_unpriv::worker::{SettingsSnapshot, WorkerPayload};
+//! use postgresql_embedded::Settings;
+//! use std::error::Error;
+//! use std::time::Duration;
+//!
+//! fn main() -> Result<(), Box<dyn Error>> {
+//!     let mut settings = Settings::default();
+//!     settings.releases_url = "https://example.invalid/releases".into();
+//!     settings.installation_dir = "/var/lib/postgres/install".into();
+//!     settings.password_file = "/var/lib/postgres/.pgpass".into();
+//!     settings.data_dir = "/var/lib/postgres/data".into();
+//!     settings.host = "127.0.0.1".into();
+//!     settings.port = 54_321;
+//!     settings.username = "postgres".into();
+//!     settings.password = "secret".into();
+//!     settings.temporary = false;
+//!     settings.timeout = Some(Duration::from_secs(30));
+//!     settings.configuration.insert("log_min_messages".into(), "debug".into());
+//!     settings.trust_installation_dir = true;
+//!
+//!     let snapshot = SettingsSnapshot::try_from(&settings)?;
+//!     let restored_from_snapshot = snapshot.into_settings()?;
+//!     assert_eq!(restored_from_snapshot.host, settings.host);
+//!
+//!     let env = vec![("RUST_LOG".to_string(), Some("debug".to_string()))];
+//!     let payload = WorkerPayload::new(&settings, env)?;
+//!     let encoded = serde_json::to_string(&payload)?;
+//!     let decoded: WorkerPayload = serde_json::from_str(&encoded)?;
+//!     let restored = decoded.settings.into_settings()?;
+//!
+//!     assert_eq!(restored.host, settings.host);
+//!     assert_eq!(restored.port, settings.port);
+//!     Ok(())
+//! }
+//! ```
 use crate::error::BootstrapError;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Context, eyre};

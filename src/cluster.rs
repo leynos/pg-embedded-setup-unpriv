@@ -180,9 +180,11 @@ impl TestCluster {
         }
 
         match bootstrap.execution_mode {
-            crate::ExecutionMode::InProcess => Err(BootstrapError::from(eyre!(
-                "ExecutionMode::InProcess cannot be used when running as root"
-            ))),
+            crate::ExecutionMode::InProcess => Err(BootstrapError::from(eyre!(concat!(
+                "ExecutionMode::InProcess is unsafe for root because process-wide ",
+                "UID/GID changes race in multi-threaded tests; switch to ",
+                "ExecutionMode::Subprocess"
+            )))),
             crate::ExecutionMode::Subprocess => Self::spawn_worker(bootstrap, env_vars, operation),
         }
     }

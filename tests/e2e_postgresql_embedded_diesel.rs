@@ -2,10 +2,6 @@
 //! `pg-embedded-setup-unpriv` to bootstrap directories as root before
 //! downgrading to the `nobody` user for database operations.
 #![cfg(all(unix, feature = "privileged-tests"))]
-#![expect(
-    dead_code,
-    reason = "Legacy Diesel helpers are retained while subprocess coverage is suspended"
-)]
 
 use std::io::Write;
 use std::time::Duration;
@@ -160,9 +156,12 @@ fn run_e2e_test(config: &TestConfig) -> Result<()> {
         return Ok(());
     };
 
-    eprintln!("Skipping diesel e2e: temporary UID switching is no longer supported");
-    let _ = context; // keep diagnostics available if needed
-    Ok(())
+    if std::env::var_os("PG_EMBEDDED_WORKER").is_some() {
+        run_postgres_operations(config, &context)
+    } else {
+        eprintln!("Skipping diesel e2e: set PG_EMBEDDED_WORKER to exercise the worker path");
+        Ok(())
+    }
 }
 
 fn bootstrap_postgres_environment(config: &TestConfig) -> Result<Option<BootstrapContext>> {

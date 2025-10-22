@@ -1,4 +1,10 @@
 //! Internal helpers re-exported for integration tests.
+//!
+//! Besides filesystem convenience wrappers, this module exposes the
+//! `RUN_ROOT_OPERATION_HOOK` plumbing so behavioural tests can intercept and
+//! inspect privileged worker operations. [`install_run_root_operation_hook`]
+//! registers a closure for the duration of a [`HookGuard`], ensuring
+//! `TestCluster` calls are observable without leaking state across suites.
 use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::{
     ambient_authority,
