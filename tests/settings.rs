@@ -1,3 +1,5 @@
+//! Validates translating environment settings into PostgreSQL configuration.
+
 use camino::Utf8PathBuf;
 use std::error::Error as _;
 use std::path::PathBuf;

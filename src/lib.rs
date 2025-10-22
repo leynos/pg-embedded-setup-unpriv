@@ -67,17 +67,33 @@ use crate::error::{ConfigError, ConfigResult};
 use camino::Utf8PathBuf;
 use std::ffi::OsString;
 
+/// Captures PostgreSQL settings supplied via environment variables.
 #[derive(Debug, Clone, Serialize, Deserialize, OrthoConfig, Default)]
 #[ortho_config(prefix = "PG")]
+///
+/// # Examples
+/// ```
+/// use pg_embedded_setup_unpriv::PgEnvCfg;
+///
+/// let cfg = PgEnvCfg::default();
+/// assert!(cfg.port.is_none());
+/// ```
 pub struct PgEnvCfg {
-    /// e.g. "=16.4.0" or "^17"
+    /// Optional semver requirement that constrains the PostgreSQL version.
     pub version_req: Option<String>,
+    /// Port assigned to the embedded PostgreSQL server.
     pub port: Option<u16>,
+    /// Name of the administrative user created for the cluster.
     pub superuser: Option<String>,
+    /// Password provisioned for the administrative user.
     pub password: Option<String>,
+    /// Directory used for PostgreSQL data files when provided.
     pub data_dir: Option<Utf8PathBuf>,
+    /// Directory containing the PostgreSQL binaries when provided.
     pub runtime_dir: Option<Utf8PathBuf>,
+    /// Locale applied to `initdb` when specified.
     pub locale: Option<String>,
+    /// Encoding applied to `initdb` when specified.
     pub encoding: Option<String>,
 }
 

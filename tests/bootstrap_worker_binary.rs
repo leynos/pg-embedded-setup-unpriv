@@ -1,4 +1,8 @@
 #![cfg(unix)]
+//! Exercises failure paths when the worker binary is misconfigured.
+//!
+//! These checks ensure the bootstrapper validates helper paths eagerly so
+//! privileged orchestration does not defer errors to runtime.
 
 use std::ffi::{OsStr, OsString};
 

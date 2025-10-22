@@ -1,3 +1,8 @@
+//! Invokes PostgreSQL bootstrap operations inside a privileged worker process.
+//!
+//! The helper mirrors `postgresql_embedded` lifecycle calls while allowing the
+//! caller to demote credentials before spawning the child process.
+
 use std::env;
 use std::ffi::OsString;
 use std::fs;
