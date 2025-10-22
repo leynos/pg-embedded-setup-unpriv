@@ -88,9 +88,9 @@ sequenceDiagram
 - **If running as root on Linux:** the helper will perform the necessary
   privilege drop to a safe user (such as `"nobody"`) before initializing
   PostgreSQL. This uses the existing logic to temporarily drop `EUID` and
-  `EGID` to `"nobody"` for filesystem operations (see src/lib.rs) (see
-  src/lib.rs). This ensures all Postgres files/directories are owned by a
-  non-root user, since PostgreSQL will refuse to run as root.
+  `EGID` to `"nobody"` for filesystem operations (see src/lib.rs). This
+  ensures all Postgres files/directories are owned by a non-root user, since
+  PostgreSQL will refuse to run as root.
 
 - **If running as a normal user or on non-Linux platforms:** no privilege
   dropping is needed. The helper will simply use the `postgresql_embedded`
@@ -213,21 +213,21 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
 
 In practice, **`TestCluster::start()` can wrap `bootstrap_for_tests()`**
 internally. For example, `TestCluster::start()` would call
-`bootstrap_for_tests()` to do all the config+init work, then launch the
-Postgres server process and yield a `TestCluster` instance that holds the
-running server. The idea is to encapsulate all “boilerplate” (time zone env,
-password file handling, etc.) so that tests do not repeat those steps(see
-docs/next-steps.md). This makes starting a test database **trivial** –
+`bootstrap_for_tests()` to do all the configuration and initialisation work,
+then launch the Postgres server process and yield a `TestCluster` instance that
+holds the running server. The idea is to encapsulate all “boilerplate” (time
+zone env, password file handling, etc.) so that tests do not repeat those steps
+(see docs/next-steps.md). This makes starting a test database **trivial** –
 essentially one line in the test setup.
 
 ### Ephemeral ports and isolation
 
-To allow the same tests to run concurrently (especially under `nextest` which
+To allow the same tests to run concurrently (especially under `nextest`, which
 runs tests in parallel), our fixture should avoid fixed resources like static
 ports. We will configure the cluster to use **ephemeral ports by default**,
 unless a specific `PG_PORT` is given. The `postgresql_embedded` crate supports
-running on ephemeral ports(see postgresql-embedded README), so by setting the
-port to 0 in the Settings (or leaving it unspecified and letting the crate
+running on ephemeral ports (see postgresql-embedded README), so by setting the
+port to 0 in the settings (or leaving it unspecified and letting the crate
 choose), each `TestCluster` will get a free port assigned at runtime. The
 chosen port can be obtained from the returned settings or directly via the
 `PostgreSQL` handle after startup.
@@ -236,12 +236,12 @@ Similarly, we should ensure each cluster uses a unique data directory (if not
 explicitly configured). For example, we can generate a temp directory (in
 `/var/tmp/pg-embed-<uid>/...` or using `tempfile::tempdir`) for each test
 instance. The current default is to use `/var/tmp/pg-embed-<uid>/data` and
-`.../install` for a given UID(see src/lib.rs) – we may tweak this so that if
-multiple clusters are initialized in one run, they don’t all target the exact
+`.../install` for a given UID (see src/lib.rs) – we may tweak this so that if
+multiple clusters are initialised in one run, they do not all target the exact
 same path. One approach is to include a random suffix or use the OS tempdir for
-isolation. This way, two tests running in parallel won’t conflict over the data
-directory or lock files. The **installation binaries cache** could still be
-shared (so we don’t re-download Postgres multiple times), but the database
+isolation. This way, two tests running in parallel will not conflict over the
+data directory or lock files. The **installation binaries cache** could still
+be shared (so we do not re-download Postgres multiple times), but the database
 **data directory will be distinct per cluster**.
 
 ## Integration with test frameworks (sync and async tests)
@@ -249,16 +249,17 @@ shared (so we don’t re-download Postgres multiple times), but the database
 We will ensure the library works smoothly in both synchronous and asynchronous
 Rust tests:
 
-- **Synchronous tests (`cargo test`):** We can enable the `postgresql_embedded`
-  crate’s `"blocking"` feature to use its blocking API(see postgresql-embedded
-  README). This allows calling `PostgreSQL::setup()` and `start()` in a normal
+- **Synchronous tests (`cargo test`):** We can enable the
+  `postgresql_embedded` crate’s `"blocking"` feature to use its blocking API
+  (see postgresql-embedded README). This allows calling `PostgreSQL::setup()`
+  and `start()` in a normal
   #[test] function without needing an async runtime. For example,
   `TestCluster::start()` can internally call the blocking setup/start and
   return once the DB is running. Developers can then use Diesel or any blocking
   client directly.
 
-- **Asynchronous tests (tokio):** In async test contexts, we’ll use the async
-  API of the crate(see postgresql-embedded README). We might provide an
+- **Asynchronous tests (tokio):** In async test contexts, we will use the async
+  API of the crate (see postgresql-embedded README). We might provide an
   `async fn start_async() -> TestCluster` that awaits the `.setup().await` and
   `.start().await` internally. This yields a running cluster that async tests
   can interact with (e.g. using `sqlx` or other async DB clients).
@@ -288,12 +289,11 @@ async fn test_async_thing() {
 ```
 
 Under the hood, both will configure and launch Postgres appropriately (dropping
-privileges if root, etc.). The underlying crate supports both patterns, so
-we’ll leverage that(see postgresql-embedded README)(see postgresql-embedded
-README).
+privileges if root, etc.). The underlying crate supports both patterns, so we
+will leverage that (see postgresql-embedded README).
 
 - **rstest fixtures:** We plan to publish built-in *fixtures* for the rstest
-  framework(see docs/next-steps.md). For example, the library can expose:
+  framework (see docs/next-steps.md). For example, the library can expose:
 
 ```rust
 #[fixture]
@@ -311,7 +311,7 @@ and non-root cases identically (abstracted behind `TestCluster`).
 - **Parallel test runners:** Using `cargo nextest` (or even running
   `cargo test -- --test-threads=n`), multiple tests may run concurrently. We
   have addressed this by using ephemeral ports and separate data directories as
-  noted. We’ll also implement any necessary synchronization to avoid race
+  noted. We will also implement any necessary synchronisation to avoid race
   conditions on initial download (for example, one test could call
   `ensure_pg_binaries_cached()` at the start of the suite – see below). With
   these measures, our fixture will be **nextest-ready**, and tests can run in
@@ -323,27 +323,27 @@ To optimize performance and reliability in CI or rapid local testing, we will
 add a couple of helper functions:
 
 - **Binary Cache Preloading:** Provide an `ensure_pg_binaries_cached()`
-  function(see docs/next-steps.md) that pre-fetches the PostgreSQL binaries
+  function (see docs/next-steps.md) that pre-fetches the PostgreSQL binaries
   archive (using the configured version). This would essentially invoke the
   download logic of `postgresql_embedded` ahead of time. In a busy CI
   environment, this avoids each test run (or each parallel test) hitting the
   GitHub releases API and potentially running into rate limits. We can make
   this function automatically use a `GITHUB_TOKEN` from the environment to
-  authenticate and increase rate limits during the download(see
+  authenticate and increase rate limits during the download (see
   docs/next-steps.md). Developers could call this in a `build.rs` or a test
   setup hook (or we might integrate it into `bootstrap_for_tests` to run once).
   After caching, all test clusters can reuse the local archive, resulting in
   faster startup and a *flakeless* experience even with many tests.
 
 - **Prerequisite checks (tzdata, etc.):** The helper will detect common
-  environment issues and either fix or emit clear errors(see
+  environment issues and either fix or emit clear errors (see
   docs/next-steps.md). A primary example is the time zone data requirement – if
   the host is missing the `tzdata` package, PostgreSQL may fail to start with a
-  time zone error(see README.md). We can proactively check for the presence of
+  time zone error (see README.md). We can proactively check for the presence of
   the system time zone database (e.g. check if `/usr/share/zoneinfo` exists)
   and **guide the user to install it** if not. For instance, if not found, we
   can return an error like *“Time zone database not found (tzdata missing).
-  Please install tzdata (e.g. `apt-get install tzdata`) on this system.”*(see
+  Please install tzdata (e.g. `apt-get install tzdata`) on this system.” (see
   docs/next-steps.md). Similar checks could be done for other prerequisites
   (though tzdata is the main one encountered). By doing this, we prevent
   puzzling failures and make the developer experience smoother.
@@ -352,13 +352,13 @@ add a couple of helper functions:
   environment variables automatically. For example, if we need to set `TZDIR`
   or `TZ` environment for the embedded Postgres to find time zone info, or
   `PGPASSFILE` for the generated password file, the `bootstrap_for_tests()`
-  should handle that internally(see docs/next-steps.md). This encapsulates all
+  should handle that internally (see docs/next-steps.md). This encapsulates all
   those nitty-gritty details so tests don’t need to worry about them.
 
 ## Logging and visibility
 
 For a pleasant developer experience, we will add **logging instrumentation** to
-the helper’s operations(see docs/next-steps.md). Using the `tracing` crate, we
+the helper’s operations (see docs/next-steps.md). Using the `tracing` crate, we
 can emit debug/info logs for steps like:
 
 - Dropping privileges (e.g. “Dropping from root to nobody for Postgres setup”).
@@ -374,10 +374,10 @@ can emit debug/info logs for steps like:
 
 These logs (visible when tests are run with `RUST_LOG` configured) will help
 troubleshoot any issues in the setup process without the developer having to
-guess what the helper is doing(see docs/next-steps.md). By surfacing directory
-paths and config values in logs, users can verify that the auto-detection
-picked up the right settings (for example, confirming it used an ephemeral port
-or the expected PG version).
+guess what the helper is doing (see docs/next-steps.md). By surfacing directory
+paths and config values in logs, users can verify that the auto-detection picked
+up the right settings (for example, confirming it used an ephemeral port or the
+expected PG version).
 
 ## Platform support and limitations
 
@@ -393,7 +393,7 @@ helper – effectively the fixture will just call `PostgreSQL::setup()` and
 `start()` directly on those platforms.
 
 We are **leveraging the `postgresql-embedded` crate** as the core engine for
-cross-platform support(see postgresql-embedded README), so all OS-specific
+cross-platform support (see postgresql-embedded README), so all OS-specific
 nuances of downloading and running PostgreSQL are handled by that library. Our
 layer is an orchestration on top to handle permission and configuration in a
 test-friendly way. This means as `postgresql-embedded` gains features or
@@ -418,13 +418,13 @@ extremely easy and consistent:
 - **Integration with frameworks:** Using the provided rstest fixture or similar,
   tests can be written in a clean style without repetitive setup/teardown code.
   For example, a test function can simply accept a `test_cluster: TestCluster`
-  parameter(see docs/next-steps.md) and immediately proceed to execute queries
+  parameter (see docs/next-steps.md) and immediately proceed to execute queries
   against the database, relying on RAII for cleanup.
 
 - **Defaults with escape hatches:** By default, everything is auto-chosen
   (ports, temp dirs, latest PG version). If needed, developers can still
   override via env vars or config files (`pg.toml`, etc.) using the OrthoConfig
-  system(see README.md), but this is purely optional. In most cases “it just
+  system (see README.md), but this is purely optional. In most cases “it just
   works” with zero config.
 
 In conclusion, **pg-embedded-setup-unpriv** will evolve from a low-level
@@ -434,21 +434,21 @@ and prerequisites), we provide a **smooth, seamless developer experience** for
 Postgres integration testing. Developers can write tests once and run them
 anywhere with confidence that the embedded database will spin up and tear down
 correctly, whether under root in a container or as a normal user on a laptop.
-These changes align with the planned ergonomic improvements(see
+These changes align with the planned ergonomic improvements (see
 docs/next-steps.md) and will make PostgreSQL integration tests in Rust as
 effortless as using an in-memory database, but with full PostgreSQL fidelity.
 
 **Sources:**
 
 - pg_embedded_setup_unpriv – *Next Steps for Root-Oriented Postgres
-  Testing*(see docs/next-steps.md) (design goals for fixtures, RAII cluster,
+  Testing* (see docs/next-steps.md) (design goals for fixtures, RAII cluster,
   caching, etc.)
 
 - pg_embedded_setup_unpriv – *README (Usage and
-  prerequisites)*(see README.md)(see README.md) (need for root and tzdata for
+  prerequisites)* (see README.md) (need for root and tzdata for
   embedded Postgres)
 
 - theseus-rs/postgresql_embedded – *README (features and
-  examples)*(see postgresql-embedded README)(see postgresql-embedded README)
+  examples)* (see postgresql-embedded README)
   (capabilities of the underlying embedded Postgres crate, async vs blocking
   API, ephemeral ports support)

@@ -33,6 +33,10 @@ pub use bootstrap::{
     bootstrap_for_tests, detect_execution_privileges, run,
 };
 pub use cluster::TestCluster;
+#[doc(hidden)]
+pub use cluster::WorkerOperation;
+#[doc(hidden)]
+pub use error::BootstrapResult;
 pub use error::{Error, Result};
 #[cfg(feature = "privileged-tests")]
 #[cfg(all(

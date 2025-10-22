@@ -31,10 +31,6 @@ use tempfile::NamedTempFile;
 use tokio::runtime::{Builder, Runtime};
 use tokio::time;
 
-#[cfg(all(test, not(feature = "cluster-unit-tests")))]
-#[path = "../tests/support/cluster_test_utils.rs"]
-mod cluster_test_utils;
-
 #[cfg(all(
     unix,
     any(
@@ -64,7 +60,7 @@ pub struct TestCluster {
     runtime: Runtime,
     postgres: Option<PostgreSQL>,
     bootstrap: TestBootstrapSettings,
-    managed_via_worker: bool,
+    is_managed_via_worker: bool,
     _env_guard: ScopedEnv,
 }
 
@@ -115,8 +111,8 @@ impl TestCluster {
             }
         }
 
-        let managed_via_worker = matches!(privileges, crate::ExecutionPrivileges::Root);
-        let postgres = if managed_via_worker {
+        let is_managed_via_worker = matches!(privileges, crate::ExecutionPrivileges::Root);
+        let postgres = if is_managed_via_worker {
             None
         } else {
             Some(postgres)
@@ -126,12 +122,13 @@ impl TestCluster {
             runtime,
             postgres,
             bootstrap,
-            managed_via_worker,
+            is_managed_via_worker,
             _env_guard: env_guard,
         })
     }
 
-    fn with_privileges<Fut>(
+    #[doc(hidden)]
+    pub(crate) fn with_privileges<Fut>(
         runtime: &Runtime,
         mode: crate::ExecutionPrivileges,
         bootstrap: &TestBootstrapSettings,
@@ -171,9 +168,9 @@ impl TestCluster {
         env_vars: &[(String, Option<String>)],
         operation: WorkerOperation,
     ) -> BootstrapResult<()> {
-        #[cfg(all(test, not(feature = "cluster-unit-tests")))]
+        #[cfg(any(test, feature = "cluster-unit-tests"))]
         {
-            if let Some(hook) = cluster_test_utils::run_root_operation_hook()
+            if let Some(hook) = crate::test_support::run_root_operation_hook()
                 .lock()
                 .expect("run_root_operation_hook lock poisoned")
                 .clone()
@@ -206,7 +203,7 @@ impl TestCluster {
             .context("failed to create worker payload file")
             .map_err(BootstrapError::from)?;
         to_writer(&mut file, &payload)
-            .context("failed to serialise worker payload")
+            .context("failed to serialize worker payload")
             .map_err(BootstrapError::from)?;
         file.flush()
             .context("failed to flush worker payload")
@@ -278,8 +275,10 @@ impl TestCluster {
     }
 }
 
+#[doc(hidden)]
+/// Identifies worker lifecycle operations executed via the helper binary.
 #[derive(Clone, Copy)]
-enum WorkerOperation {
+pub enum WorkerOperation {
     Setup,
     Start,
     Stop,
@@ -312,7 +311,7 @@ impl Drop for TestCluster {
         let version = settings.version.to_string();
         let context = format!("version {version}, data_dir {data_dir}");
 
-        if self.managed_via_worker {
+        if self.is_managed_via_worker {
             let env_vars = self.bootstrap.environment.to_env();
             if let Err(err) =
                 Self::run_root_operation(&self.bootstrap, &env_vars, WorkerOperation::Stop)

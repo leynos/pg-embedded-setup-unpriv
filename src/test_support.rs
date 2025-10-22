@@ -5,11 +5,16 @@ use cap_std::{
     fs::{Dir, Metadata},
 };
 use color_eyre::eyre::{Context, Report, Result};
+use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::error::{BootstrapError, Error, PrivilegeError};
+use crate::cluster::{TestCluster, WorkerOperation};
+use crate::error::{BootstrapError, BootstrapResult, Error, PrivilegeError};
 use crate::fs;
+use crate::{ExecutionPrivileges, TestBootstrapSettings};
 
 pub fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
     fs::ambient_dir_and_path(path)
@@ -21,6 +26,80 @@ pub fn ensure_dir_exists(path: &Utf8Path) -> Result<()> {
 
 pub fn set_permissions(path: &Utf8Path, mode: u32) -> Result<()> {
     fs::set_permissions(path, mode)
+}
+
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+pub type RunRootOperationHook = Arc<
+    dyn Fn(
+            &TestBootstrapSettings,
+            &[(String, Option<String>)],
+            WorkerOperation,
+        ) -> BootstrapResult<()>
+        + Send
+        + Sync,
+>;
+
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+static RUN_ROOT_OPERATION_HOOK: OnceLock<Mutex<Option<RunRootOperationHook>>> = OnceLock::new();
+
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+pub fn run_root_operation_hook() -> &'static Mutex<Option<RunRootOperationHook>> {
+    RUN_ROOT_OPERATION_HOOK.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+pub struct HookGuard;
+
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+pub fn install_run_root_operation_hook<F>(hook: F) -> HookGuard
+where
+    F: Fn(
+            &TestBootstrapSettings,
+            &[(String, Option<String>)],
+            WorkerOperation,
+        ) -> BootstrapResult<()>
+        + Send
+        + Sync
+        + 'static,
+{
+    let slot = run_root_operation_hook();
+    {
+        let mut guard = slot.lock().expect("run_root_operation_hook lock poisoned");
+        assert!(guard.is_none(), "run_root_operation_hook already installed");
+        *guard = Some(Arc::new(hook));
+    }
+    HookGuard
+}
+
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+impl Drop for HookGuard {
+    fn drop(&mut self) {
+        let slot = run_root_operation_hook();
+        let mut guard = slot.lock().expect("run_root_operation_hook lock poisoned");
+        guard.take();
+    }
+}
+
+#[doc(hidden)]
+pub fn invoke_with_privileges<Fut>(
+    runtime: &tokio::runtime::Runtime,
+    privileges: ExecutionPrivileges,
+    bootstrap: &TestBootstrapSettings,
+    env_vars: &[(String, Option<String>)],
+    operation: WorkerOperation,
+    in_process_op: Fut,
+) -> BootstrapResult<()>
+where
+    Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
+{
+    TestCluster::with_privileges(
+        runtime,
+        privileges,
+        bootstrap,
+        env_vars,
+        operation,
+        in_process_op,
+    )
 }
 
 /// Retrieves metadata for the provided path using capability APIs.

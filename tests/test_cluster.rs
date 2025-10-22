@@ -1,23 +1,23 @@
+#![cfg(feature = "cluster-unit-tests")]
 //! Unit tests covering TestCluster privilege dispatch behaviour.
 
-#[cfg(feature = "cluster-unit-tests")]
-fn main() {}
-
-#[cfg(not(feature = "cluster-unit-tests"))]
-use super::cluster_test_utils::install_run_root_operation_hook;
-#[cfg(not(feature = "cluster-unit-tests"))]
-use super::*;
-#[cfg(not(feature = "cluster-unit-tests"))]
-use camino::Utf8PathBuf;
-#[cfg(not(feature = "cluster-unit-tests"))]
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
-#[cfg(not(feature = "cluster-unit-tests"))]
 use std::time::Duration;
 
-#[cfg(not(feature = "cluster-unit-tests"))]
+use camino::Utf8PathBuf;
+use pg_embedded_setup_unpriv::test_support::{
+    install_run_root_operation_hook, invoke_with_privileges,
+};
+use pg_embedded_setup_unpriv::{
+    ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
+    WorkerOperation,
+};
+use postgresql_embedded::Settings;
+use tokio::runtime::{Builder, Runtime};
+
 fn test_runtime() -> Runtime {
     Builder::new_current_thread()
         .enable_all()
@@ -25,7 +25,6 @@ fn test_runtime() -> Runtime {
         .expect("create test runtime")
 }
 
-#[cfg(not(feature = "cluster-unit-tests"))]
 fn dummy_environment() -> TestBootstrapEnvironment {
     TestBootstrapEnvironment {
         home: Utf8PathBuf::from("/tmp/pg-home"),
@@ -37,13 +36,12 @@ fn dummy_environment() -> TestBootstrapEnvironment {
     }
 }
 
-#[cfg(not(feature = "cluster-unit-tests"))]
-fn dummy_settings(privileges: crate::ExecutionPrivileges) -> TestBootstrapSettings {
+fn dummy_settings(privileges: ExecutionPrivileges) -> TestBootstrapSettings {
     TestBootstrapSettings {
         privileges,
         execution_mode: match privileges {
-            crate::ExecutionPrivileges::Unprivileged => crate::ExecutionMode::InProcess,
-            crate::ExecutionPrivileges::Root => crate::ExecutionMode::Subprocess,
+            ExecutionPrivileges::Unprivileged => ExecutionMode::InProcess,
+            ExecutionPrivileges::Root => ExecutionMode::Subprocess,
         },
         settings: Settings::default(),
         environment: dummy_environment(),
@@ -52,19 +50,18 @@ fn dummy_settings(privileges: crate::ExecutionPrivileges) -> TestBootstrapSettin
     }
 }
 
-#[cfg(not(feature = "cluster-unit-tests"))]
 #[test]
 fn unprivileged_operations_run_in_process() {
     let runtime = test_runtime();
-    let bootstrap = dummy_settings(crate::ExecutionPrivileges::Unprivileged);
+    let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
     let env_vars = bootstrap.environment.to_env();
     let setup_calls = AtomicUsize::new(0);
 
     for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
         let call_counter = &setup_calls;
-        TestCluster::with_privileges(
+        invoke_with_privileges(
             &runtime,
-            crate::ExecutionPrivileges::Unprivileged,
+            ExecutionPrivileges::Unprivileged,
             &bootstrap,
             &env_vars,
             operation,
@@ -79,11 +76,10 @@ fn unprivileged_operations_run_in_process() {
     assert_eq!(setup_calls.load(Ordering::SeqCst), 2);
 }
 
-#[cfg(not(feature = "cluster-unit-tests"))]
 #[test]
 fn root_operations_delegate_to_worker() {
     let runtime = test_runtime();
-    let bootstrap = dummy_settings(crate::ExecutionPrivileges::Root);
+    let bootstrap = dummy_settings(ExecutionPrivileges::Root);
     let env_vars = bootstrap.environment.to_env();
     let worker_calls = Arc::new(AtomicUsize::new(0));
     let in_process_invoked = Arc::new(AtomicBool::new(false));
@@ -96,9 +92,9 @@ fn root_operations_delegate_to_worker() {
 
     for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
         let flag = Arc::clone(&in_process_invoked);
-        TestCluster::with_privileges(
+        invoke_with_privileges(
             &runtime,
-            crate::ExecutionPrivileges::Root,
+            ExecutionPrivileges::Root,
             &bootstrap,
             &env_vars,
             operation,

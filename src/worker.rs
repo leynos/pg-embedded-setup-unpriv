@@ -1,3 +1,7 @@
+//! Serialization helpers for subprocess workers.
+//!
+//! Provides UTF-8 safe snapshots of [`postgresql_embedded::Settings`] so the
+//! worker binary can restore settings and environment state received via IPC.
 use crate::error::BootstrapError;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Context, eyre};
