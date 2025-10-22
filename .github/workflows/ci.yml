@@ -33,6 +33,8 @@ jobs:
         with:
           output-path: lcov.info
           format: lcov
+          features: dev-worker
+          with-default-features: "false"
       - name: Upload coverage data to CodeScene
         env:
           CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}
