@@ -9,7 +9,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 use color_eyre::eyre::Result;
-use pg_embedded_setup_unpriv::bootstrap_for_tests;
+use pg_embedded_setup_unpriv::{BootstrapErrorKind, bootstrap_for_tests};
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs;
@@ -38,10 +38,10 @@ fn bootstrap_fails_when_worker_binary_missing() -> Result<()> {
     let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
     let error = outcome
         .expect_err("bootstrap_for_tests should fail fast when the worker binary is missing");
-    let message = error.to_string();
-    assert!(
-        message.contains("failed to access PG_EMBEDDED_WORKER"),
-        "expected missing-worker error, got: {message}",
+    assert_eq!(
+        error.kind(),
+        BootstrapErrorKind::WorkerBinaryMissing,
+        "expected structured worker-missing error",
     );
 
     sandbox.reset()?;

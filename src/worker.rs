@@ -46,9 +46,10 @@ use color_eyre::eyre::{Context, eyre};
 use postgresql_embedded::Settings;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 /// Serialised representation of [`Settings`] for subprocess helpers.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SettingsSnapshot {
     releases_url: String,
     version: String,
@@ -123,7 +124,7 @@ impl TryFrom<&Settings> for SettingsSnapshot {
 }
 
 /// Payload exchanged with the worker subprocess.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct WorkerPayload {
     pub settings: SettingsSnapshot,
     pub environment: Vec<(String, Option<String>)>,
@@ -138,5 +139,34 @@ impl WorkerPayload {
             settings: SettingsSnapshot::try_from(settings)?,
             environment,
         })
+    }
+}
+
+impl fmt::Debug for SettingsSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SettingsSnapshot")
+            .field("releases_url", &self.releases_url)
+            .field("version", &self.version)
+            .field("installation_dir", &self.installation_dir)
+            .field("password_file", &self.password_file)
+            .field("data_dir", &self.data_dir)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .field("temporary", &self.temporary)
+            .field("timeout_secs", &self.timeout_secs)
+            .field("configuration", &self.configuration)
+            .field("trust_installation_dir", &self.trust_installation_dir)
+            .finish()
+    }
+}
+
+impl fmt::Debug for WorkerPayload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WorkerPayload")
+            .field("settings", &self.settings)
+            .field("environment", &self.environment)
+            .finish()
     }
 }

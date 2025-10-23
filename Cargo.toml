@@ -45,6 +45,7 @@ serde_json = "1"
 tempfile = "3"
 libc = "0.2"
 wait-timeout = "0.2"
+tracing = { version = "0.1", features = ["std"] }
 
 [features]
 toml = []

@@ -29,22 +29,60 @@ pub enum Error {
     Config(#[from] ConfigError),
 }
 
+/// Categorises bootstrap failures so callers can branch on structured errors.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub enum BootstrapErrorKind {
+    /// Represents errors without a more specific semantic meaning.
+    #[default]
+    Other,
+    /// Indicates the configured worker binary is missing from disk.
+    WorkerBinaryMissing,
+}
+
 /// Captures bootstrap-specific failures.
 #[derive(Debug, Error)]
-#[error(transparent)]
-pub struct BootstrapError(#[from] Report);
+#[error("{report}")]
+pub struct BootstrapError {
+    kind: BootstrapErrorKind,
+    #[source]
+    report: Report,
+}
+
+impl BootstrapError {
+    /// Constructs a new bootstrap error with the provided kind and diagnostic
+    /// report.
+    pub fn new(kind: BootstrapErrorKind, report: Report) -> Self {
+        Self { kind, report }
+    }
+
+    /// Returns the semantic category for this bootstrap failure.
+    pub fn kind(&self) -> BootstrapErrorKind {
+        self.kind
+    }
+
+    /// Extracts the underlying diagnostic report.
+    pub fn into_report(self) -> Report {
+        self.report
+    }
+}
+
+impl From<Report> for BootstrapError {
+    fn from(report: Report) -> Self {
+        Self::new(BootstrapErrorKind::Other, report)
+    }
+}
 
 impl From<PrivilegeError> for BootstrapError {
     fn from(err: PrivilegeError) -> Self {
         let PrivilegeError(report) = err;
-        Self(report)
+        Self::new(BootstrapErrorKind::Other, report)
     }
 }
 
 impl From<ConfigError> for BootstrapError {
     fn from(err: ConfigError) -> Self {
         let ConfigError(report) = err;
-        Self(report)
+        Self::new(BootstrapErrorKind::Other, report)
     }
 }
 

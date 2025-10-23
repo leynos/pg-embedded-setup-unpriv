@@ -3,7 +3,7 @@
 //! Provides [`bootstrap_for_tests`] so suites can retrieve structured settings and
 //! prepared environment variables without reimplementing bootstrap orchestration.
 use crate::PgEnvCfg;
-use crate::error::{BootstrapError, BootstrapResult};
+use crate::error::{BootstrapError, BootstrapErrorKind, BootstrapResult};
 use crate::fs::{ensure_dir_exists, set_permissions};
 use crate::privileges::{
     default_paths_for, ensure_dir_for_user, ensure_tree_owned_by_user, make_data_dir_private,
@@ -392,11 +392,22 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
         .transpose()?;
 
     if let Some(worker) = &worker_binary {
-        let metadata = fs::metadata(worker.as_std_path()).map_err(|err| {
-            BootstrapError::from(color_eyre::eyre::eyre!(
-                "failed to access PG_EMBEDDED_WORKER at {worker}: {err}"
-            ))
-        })?;
+        let metadata = match fs::metadata(worker.as_std_path()) {
+            Ok(metadata) => metadata,
+            Err(err) => {
+                if err.kind() == std::io::ErrorKind::NotFound {
+                    return Err(BootstrapError::new(
+                        BootstrapErrorKind::WorkerBinaryMissing,
+                        color_eyre::eyre::eyre!(
+                            "failed to access PG_EMBEDDED_WORKER at {worker}: {err}"
+                        ),
+                    ));
+                }
+                return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                    "failed to access PG_EMBEDDED_WORKER at {worker}: {err}"
+                )));
+            }
+        };
 
         if !metadata.is_file() {
             return Err(BootstrapError::from(color_eyre::eyre::eyre!(

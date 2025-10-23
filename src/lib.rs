@@ -37,7 +37,7 @@ pub use cluster::TestCluster;
 pub use cluster::WorkerOperation;
 #[doc(hidden)]
 pub use error::BootstrapResult;
-pub use error::{Error, Result};
+pub use error::{BootstrapError, BootstrapErrorKind, Error, Result};
 #[cfg(feature = "privileged-tests")]
 #[cfg(all(
     unix,

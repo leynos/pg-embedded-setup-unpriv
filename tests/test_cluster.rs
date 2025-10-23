@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use camino::Utf8PathBuf;
 use pg_embedded_setup_unpriv::test_support::{
-    RunRootOperationHookInstallError, install_run_root_operation_hook, invoke_with_privileges,
+    RunRootOperationHookInstallError, drain_hook_install_logs, install_run_root_operation_hook,
+    invoke_with_privileges,
 };
 use pg_embedded_setup_unpriv::{
     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
@@ -118,6 +119,7 @@ fn root_operations_delegate_to_worker() {
 
 #[test]
 fn installing_hook_twice_returns_error() {
+    let _ = drain_hook_install_logs();
     let guard = install_run_root_operation_hook(|_, _, _| Ok(()))
         .expect("initial hook installation succeeds");
 
@@ -126,12 +128,19 @@ fn installing_hook_twice_returns_error() {
         Err(err) => err,
     };
     assert_eq!(err, RunRootOperationHookInstallError::AlreadyInstalled);
+    let logs = drain_hook_install_logs();
+    assert!(
+        logs.iter()
+            .any(|entry| entry.contains("run_root_operation_hook already installed")),
+        "expected contention log entry, got {logs:?}",
+    );
 
     drop(guard);
 
     let guard =
         install_run_root_operation_hook(|_, _, _| Ok(())).expect("hook installs after guard drop");
     drop(guard);
+    let _ = drain_hook_install_logs();
 }
 
 #[cfg(feature = "privileged-tests")]

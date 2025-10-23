@@ -80,9 +80,8 @@ fn with_temp_euid_changes_uid() -> color_eyre::Result<()> {
 
     let outcome = invoke_deprecated_with_temp_euid();
     let err = outcome.expect_err("with_temp_euid should now reject privilege swaps");
-    let privilege_err = match err {
-        pg_embedded_setup_unpriv::Error::Privilege(inner) => inner,
-        other => panic!("expected privilege error, received {other:?}"),
+    let pg_embedded_setup_unpriv::Error::Privilege(privilege_err) = err else {
+        panic!("expected privilege error variant");
     };
     let source_message = privilege_err
         .source()

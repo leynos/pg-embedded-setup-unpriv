@@ -13,9 +13,13 @@ use cap_std::{
 use color_eyre::eyre::{Context, Report, Result};
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use std::future::Future;
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(any(test, feature = "cluster-unit-tests"))]
@@ -26,6 +30,8 @@ use crate::error::{BootstrapError, Error, PrivilegeError};
 use crate::fs;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use crate::{ExecutionPrivileges, TestBootstrapSettings};
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+use tracing::debug_span;
 
 /// Opens the ambient directory containing `path` and returns its relative component.
 ///
@@ -113,6 +119,25 @@ pub enum RunRootOperationHookInstallError {
 static RUN_ROOT_OPERATION_HOOK: OnceLock<Mutex<Option<RunRootOperationHook>>> = OnceLock::new();
 
 #[cfg(any(test, feature = "cluster-unit-tests"))]
+static RUN_ROOT_OPERATION_HOOK_LOGS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+fn hook_install_logs() -> &'static Mutex<Vec<String>> {
+    RUN_ROOT_OPERATION_HOOK_LOGS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[doc(hidden)]
+/// Clears and returns the buffered run-root-operation hook installation
+/// logs.
+pub fn drain_hook_install_logs() -> Vec<String> {
+    let mut guard = hook_install_logs()
+        .lock()
+        .expect("run_root_operation_hook log mutex poisoned");
+    mem::take(&mut *guard)
+}
+
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 #[doc(hidden)]
 /// Retrieves the optional run-root-operation hook for inspection or mutation.
 ///
@@ -176,10 +201,29 @@ where
         + Sync
         + 'static,
 {
+    let current_thread = thread::current();
+    let thread_name = current_thread.name().unwrap_or("unnamed");
+    let thread_id = format!("{:?}", current_thread.id());
+    let thread_label = format!("{thread_name} ({thread_id})");
+    let span = debug_span!(
+        "install_run_root_operation_hook",
+        thread.name = thread_name,
+        thread.id = %thread_id
+    );
+    let _entered = span.enter();
+
     let slot = run_root_operation_hook();
     {
         let mut guard = slot.lock().expect("run_root_operation_hook lock poisoned");
         if guard.is_some() {
+            let message =
+                format!("run_root_operation_hook already installed by thread {thread_label}");
+            hook_install_logs()
+                .lock()
+                .expect("run_root_operation_hook log mutex poisoned")
+                .push(message.clone());
+            #[cfg(test)]
+            eprintln!("{message}");
             return Err(RunRootOperationHookInstallError::AlreadyInstalled);
         }
         *guard = Some(Arc::new(hook));
@@ -231,6 +275,8 @@ pub fn metadata(path: &Utf8Path) -> std::io::Result<Metadata> {
 }
 
 /// Converts a bootstrap error report into the library's public [`Error`] type.
+/// This helper exists for test scaffolding and should not be used in published
+/// APIs.
 ///
 /// # Examples
 /// ```
@@ -246,6 +292,8 @@ pub fn bootstrap_error(err: Report) -> Error {
 }
 
 /// Converts a privilege-related report into the library's public [`Error`] type.
+/// This helper exists for test scaffolding and should not be used in published
+/// APIs.
 ///
 /// # Examples
 /// ```
