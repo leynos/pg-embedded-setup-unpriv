@@ -2,7 +2,7 @@
 //!
 //! The helper mirrors `postgresql_embedded` lifecycle calls while allowing the
 //! caller to demote credentials before spawning the child process.
-#![cfg(all(unix, feature = "privileged-tests"))]
+#![cfg(unix)]
 
 use std::env;
 use std::ffi::OsString;
