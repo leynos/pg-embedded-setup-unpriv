@@ -185,7 +185,37 @@ impl TestCluster {
                 "UID/GID changes race in multi-threaded tests; switch to ",
                 "ExecutionMode::Subprocess"
             )))),
-            crate::ExecutionMode::Subprocess => Self::spawn_worker(bootstrap, env_vars, operation),
+            crate::ExecutionMode::Subprocess => {
+                #[cfg(all(
+                    unix,
+                    any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "freebsd",
+                        target_os = "openbsd",
+                        target_os = "dragonfly",
+                    ),
+                ))]
+                {
+                    Self::spawn_worker(bootstrap, env_vars, operation)
+                }
+
+                #[cfg(not(all(
+                    unix,
+                    any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "freebsd",
+                        target_os = "openbsd",
+                        target_os = "dragonfly",
+                    ),
+                )))]
+                {
+                    Err(BootstrapError::from(eyre!(
+                        "ExecutionMode::Subprocess requires Unix privilege dropping support",
+                    )))
+                }
+            }
         }
     }
 
@@ -234,6 +264,16 @@ impl TestCluster {
                 .ok_or_else(|| BootstrapError::from(eyre!("user 'nobody' not found")))?;
             command.uid(user.uid.as_raw());
             command.gid(user.gid.as_raw());
+            unsafe {
+                command.pre_exec(|| {
+                    let result = libc::setgroups(0, std::ptr::null());
+                    if result != 0 {
+                        Err(std::io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                });
+            }
         }
 
         command.stdout(std::process::Stdio::piped());

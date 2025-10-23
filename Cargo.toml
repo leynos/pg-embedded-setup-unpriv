@@ -38,6 +38,7 @@ camino = { version = "1.2", features = ["serde1"] }
 thiserror = "1"
 serde_json = "1"
 tempfile = "3"
+libc = "0.2"
 
 [features]
 toml = []

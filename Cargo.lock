@@ -1790,6 +1790,7 @@ dependencies = [
  "diesel",
  "figment",
  "figment-json5",
+ "libc",
  "nix",
  "once_cell",
  "ortho_config",

@@ -11,15 +11,20 @@ use cap_std::{
     fs::{Dir, Metadata},
 };
 use color_eyre::eyre::{Context, Report, Result};
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 use crate::cluster::{TestCluster, WorkerOperation};
-use crate::error::{BootstrapError, BootstrapResult, Error, PrivilegeError};
+use crate::error::{BootstrapError, Error, PrivilegeError};
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+use crate::error::BootstrapResult;
 use crate::fs;
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 use crate::{ExecutionPrivileges, TestBootstrapSettings};
 
 pub fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
