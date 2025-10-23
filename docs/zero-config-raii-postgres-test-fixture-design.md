@@ -213,7 +213,7 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
 
 In practice, **`TestCluster::start()` can wrap `bootstrap_for_tests()`**
 internally. For example, `TestCluster::start()` would call
-`bootstrap_for_tests()` to do all the configuration and initialisation work,
+`bootstrap_for_tests()` to do all the configuration and initialization work,
 then launch the Postgres server process and yield a `TestCluster` instance that
 holds the running server. The idea is to encapsulate all “boilerplate” (time
 zone env, password file handling, etc.) so that tests do not repeat those steps

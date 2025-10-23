@@ -88,7 +88,8 @@ fn root_operations_delegate_to_worker() {
     let _guard = install_run_root_operation_hook(move |_, _, _| {
         hook_calls.fetch_add(1, Ordering::SeqCst);
         Ok(())
-    });
+    })
+    .expect("install run_root_operation_hook");
 
     for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
         let flag = Arc::clone(&in_process_invoked);

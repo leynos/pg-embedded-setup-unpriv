@@ -35,6 +35,7 @@ pub fn set_permissions(path: &Utf8Path, mode: u32) -> Result<()> {
 }
 
 #[cfg(any(test, feature = "cluster-unit-tests"))]
+#[doc(hidden)]
 pub type RunRootOperationHook = Arc<
     dyn Fn(
             &TestBootstrapSettings,
@@ -49,6 +50,7 @@ pub type RunRootOperationHook = Arc<
 static RUN_ROOT_OPERATION_HOOK: OnceLock<Mutex<Option<RunRootOperationHook>>> = OnceLock::new();
 
 #[cfg(any(test, feature = "cluster-unit-tests"))]
+#[doc(hidden)]
 pub fn run_root_operation_hook() -> &'static Mutex<Option<RunRootOperationHook>> {
     RUN_ROOT_OPERATION_HOOK.get_or_init(|| Mutex::new(None))
 }
@@ -57,7 +59,7 @@ pub fn run_root_operation_hook() -> &'static Mutex<Option<RunRootOperationHook>>
 pub struct HookGuard;
 
 #[cfg(any(test, feature = "cluster-unit-tests"))]
-pub fn install_run_root_operation_hook<F>(hook: F) -> HookGuard
+pub fn install_run_root_operation_hook<F>(hook: F) -> BootstrapResult<HookGuard>
 where
     F: Fn(
             &TestBootstrapSettings,
@@ -71,10 +73,14 @@ where
     let slot = run_root_operation_hook();
     {
         let mut guard = slot.lock().expect("run_root_operation_hook lock poisoned");
-        assert!(guard.is_none(), "run_root_operation_hook already installed");
+        if guard.is_some() {
+            return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                "run_root_operation_hook already installed"
+            )));
+        }
         *guard = Some(Arc::new(hook));
     }
-    HookGuard
+    Ok(HookGuard)
 }
 
 #[cfg(any(test, feature = "cluster-unit-tests"))]
@@ -86,6 +92,7 @@ impl Drop for HookGuard {
     }
 }
 
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 #[doc(hidden)]
 pub fn invoke_with_privileges<Fut>(
     runtime: &tokio::runtime::Runtime,

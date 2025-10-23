@@ -35,7 +35,7 @@ fn bootstrap_fails_when_worker_binary_missing() -> Result<()> {
         "expected time zone helper to remove the TZ variable",
     );
 
-    let mut env_vars = sandbox.base_env();
+    let mut env_vars = tz_free_env;
     env_vars.push((
         OsString::from("PG_EMBEDDED_WORKER"),
         Some(OsString::from(missing_worker.as_str())),
