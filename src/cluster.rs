@@ -41,7 +41,7 @@ use tokio::time;
         target_os = "dragonfly",
     ),
 ))]
-use nix::unistd::User;
+use nix::unistd::{Gid, Uid, User, chown};
 #[cfg(all(
     unix,
     any(
@@ -270,6 +270,14 @@ impl TestCluster {
                 .ok_or_else(|| BootstrapError::from(eyre!("user 'nobody' not found")))?;
             let uid = user.uid.as_raw();
             let gid = user.gid.as_raw();
+
+            chown(
+                &path_buf,
+                Some(Uid::from_raw(uid)),
+                Some(Gid::from_raw(gid)),
+            )
+            .context("failed to chown worker payload to nobody")
+            .map_err(BootstrapError::from)?;
 
             unsafe {
                 // SAFETY: The closure executes immediately before exec while the process still
