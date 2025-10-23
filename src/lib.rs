@@ -4,9 +4,10 @@
 //! The library owns the lifecycle for configuring paths, permissions, and
 //! process identity so the bundled PostgreSQL binaries can initialise safely
 //! under an unprivileged account.
-#![allow(non_snake_case)]
 
 mod bootstrap;
+mod cluster;
+mod env;
 mod error;
 mod fs;
 #[cfg(all(
@@ -22,11 +23,20 @@ mod fs;
 mod privileges;
 #[doc(hidden)]
 pub mod test_support;
+#[doc(hidden)]
+pub mod worker;
 
+#[doc(hidden)]
+pub use crate::env::ScopedEnv;
 pub use bootstrap::{
-    ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings, bootstrap_for_tests,
-    detect_execution_privileges, run,
+    ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
+    bootstrap_for_tests, detect_execution_privileges, run,
 };
+pub use cluster::TestCluster;
+#[doc(hidden)]
+pub use cluster::WorkerOperation;
+#[doc(hidden)]
+pub use error::BootstrapResult;
 pub use error::{Error, Result};
 #[cfg(feature = "privileged-tests")]
 #[cfg(all(
@@ -61,18 +71,33 @@ use crate::error::{ConfigError, ConfigResult};
 use camino::Utf8PathBuf;
 use std::ffi::OsString;
 
-#[allow(non_snake_case)]
+/// Captures PostgreSQL settings supplied via environment variables.
 #[derive(Debug, Clone, Serialize, Deserialize, OrthoConfig, Default)]
 #[ortho_config(prefix = "PG")]
+///
+/// # Examples
+/// ```
+/// use pg_embedded_setup_unpriv::PgEnvCfg;
+///
+/// let cfg = PgEnvCfg::default();
+/// assert!(cfg.port.is_none());
+/// ```
 pub struct PgEnvCfg {
-    /// e.g. "=16.4.0" or "^17"
+    /// Optional semver requirement that constrains the PostgreSQL version.
     pub version_req: Option<String>,
+    /// Port assigned to the embedded PostgreSQL server.
     pub port: Option<u16>,
+    /// Name of the administrative user created for the cluster.
     pub superuser: Option<String>,
+    /// Password provisioned for the administrative user.
     pub password: Option<String>,
+    /// Directory used for PostgreSQL data files when provided.
     pub data_dir: Option<Utf8PathBuf>,
+    /// Directory containing the PostgreSQL binaries when provided.
     pub runtime_dir: Option<Utf8PathBuf>,
+    /// Locale applied to `initdb` when specified.
     pub locale: Option<String>,
+    /// Encoding applied to `initdb` when specified.
     pub encoding: Option<String>,
 }
 

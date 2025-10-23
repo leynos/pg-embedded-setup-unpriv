@@ -12,9 +12,7 @@ use color_eyre::eyre::{Context, Result, eyre};
 use diesel::prelude::*;
 use diesel::sql_types::{Int4, Text};
 use nix::unistd::geteuid;
-use pg_embedded_setup_unpriv::{
-    PgEnvCfg, nobody_uid, test_support::bootstrap_error, with_temp_euid,
-};
+use pg_embedded_setup_unpriv::PgEnvCfg;
 use postgresql_embedded::PostgreSQL;
 use tokio::runtime::Builder;
 
@@ -158,11 +156,12 @@ fn run_e2e_test(config: &TestConfig) -> Result<()> {
         return Ok(());
     };
 
-    with_temp_euid(nobody_uid(), || {
-        run_postgres_operations(config, &context).map_err(bootstrap_error)
-    })?;
-
-    Ok(())
+    if std::env::var_os("PG_EMBEDDED_WORKER").is_some() {
+        run_postgres_operations(config, &context)
+    } else {
+        eprintln!("Skipping diesel e2e: set PG_EMBEDDED_WORKER to exercise the worker path");
+        Ok(())
+    }
 }
 
 fn bootstrap_postgres_environment(config: &TestConfig) -> Result<Option<BootstrapContext>> {

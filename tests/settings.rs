@@ -1,18 +1,16 @@
+//! Validates translating environment settings into PostgreSQL configuration.
+
 use camino::Utf8PathBuf;
+use std::error::Error;
 use std::path::PathBuf;
 
-use color_eyre::eyre::Context;
+use nix::unistd::geteuid;
 #[cfg(feature = "privileged-tests")]
-use color_eyre::eyre::eyre;
-use nix::unistd::{User, geteuid};
-#[cfg(feature = "privileged-tests")]
-use nix::unistd::{getgid, getuid};
+use pg_embedded_setup_unpriv::with_temp_euid;
 use pg_embedded_setup_unpriv::{
     ExecutionPrivileges, PgEnvCfg, detect_execution_privileges, make_data_dir_private,
     make_dir_accessible, nobody_uid,
 };
-#[cfg(feature = "privileged-tests")]
-use pg_embedded_setup_unpriv::{test_support::privilege_error, with_temp_euid};
 use postgresql_embedded::VersionReq;
 use rstest::rstest;
 
@@ -72,23 +70,16 @@ fn with_temp_euid_changes_uid() -> color_eyre::Result<()> {
         return Ok(());
     }
 
-    let original_euid = geteuid();
-    let original_uid = getuid();
-
-    with_temp_euid(nobody_uid(), || {
-        assert_eq!(geteuid(), nobody_uid());
-        assert_eq!(getuid(), nobody_uid());
-        let nobody = User::from_uid(nobody_uid())
-            .context("User::from_uid failed")
-            .map_err(privilege_error)?
-            .ok_or_else(|| privilege_error(eyre!("nobody user should exist")))?;
-        assert_eq!(getgid(), nobody.gid);
-        Ok(())
-    })
-    .map_err(|err| eyre!(err))?;
-
-    assert_eq!(geteuid(), original_euid);
-    assert_eq!(getuid(), original_uid);
+    let outcome = with_temp_euid(nobody_uid(), || Ok(()));
+    let err = outcome.expect_err("with_temp_euid should now reject privilege swaps");
+    let source_message = err
+        .source()
+        .map(std::string::ToString::to_string)
+        .unwrap_or_else(|| err.to_string());
+    assert!(
+        source_message.contains("with_temp_euid is no longer supported"),
+        "unexpected error message: {source_message}"
+    );
     Ok(())
 }
 
@@ -112,6 +103,8 @@ mod dir_accessible_tests {
     use cap_std::fs::{MetadataExt, PermissionsExt};
 
     use cap_fs::{CapabilityTempDir, metadata};
+    use color_eyre::eyre::Context;
+    use nix::unistd::User;
 
     #[rstest]
     fn make_dir_accessible_allows_nobody() -> color_eyre::Result<()> {
@@ -176,14 +169,11 @@ fn detect_execution_privileges_tracks_effective_uid() -> color_eyre::Result<()> 
 
     assert_eq!(detect_execution_privileges(), ExecutionPrivileges::Root);
     #[cfg(feature = "privileged-tests")]
-    with_temp_euid(nobody_uid(), || {
-        assert_eq!(
-            detect_execution_privileges(),
-            ExecutionPrivileges::Unprivileged
-        );
-        Ok(())
-    })
-    .map_err(|err| eyre!(err))?;
+    {
+        let err = with_temp_euid(nobody_uid(), || Ok(()))
+            .expect_err("with_temp_euid should now reject privilege swaps");
+        eprintln!("skipping privilege swap: {err}");
+    }
 
     #[cfg(not(feature = "privileged-tests"))]
     {

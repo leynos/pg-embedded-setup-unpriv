@@ -17,81 +17,8 @@ use cap_std::{
     fs::{Dir, DirEntry},
 };
 use color_eyre::eyre::{Context, eyre};
-use nix::unistd::{
-    Gid, Uid, User, chown, geteuid, getgroups, getresgid, getresuid, setgroups, setresgid,
-    setresuid,
-};
+use nix::unistd::{Uid, User, chown};
 use std::io::ErrorKind;
-
-/// Captures the process identity before dropping privileges so we can safely restore it.
-pub(crate) struct PrivilegeDropGuard {
-    ruid: Uid,
-    euid: Uid,
-    suid: Uid,
-    rgid: Gid,
-    egid: Gid,
-    sgid: Gid,
-    supplementary: Vec<Gid>,
-}
-
-impl Drop for PrivilegeDropGuard {
-    fn drop(&mut self) {
-        self.restore_best_effort();
-    }
-}
-
-impl PrivilegeDropGuard {
-    fn restore_best_effort(&self) {
-        // Best-effort restoration; errors during drop should not panic.
-        let _ = setgroups(&self.supplementary);
-        let _ = setresgid(self.rgid, self.egid, self.sgid);
-        let _ = setresuid(self.ruid, self.euid, self.suid);
-    }
-}
-
-pub(crate) fn drop_process_privileges(user: &User) -> PrivilegeResult<PrivilegeDropGuard> {
-    if !geteuid().is_root() {
-        return Err(PrivilegeError::from(eyre!(
-            "must start as root to drop privileges temporarily"
-        )));
-    }
-
-    let uid_set = getresuid().context("getresuid failed")?;
-    let gid_set = getresgid().context("getresgid failed")?;
-    let ruid = uid_set.real;
-    let euid = uid_set.effective;
-    let suid = uid_set.saved;
-    let rgid = gid_set.real;
-    let egid = gid_set.effective;
-    let sgid = gid_set.saved;
-    let supplementary = getgroups().context("getgroups failed")?;
-
-    let guard = PrivilegeDropGuard {
-        ruid,
-        euid,
-        suid,
-        rgid,
-        egid,
-        sgid,
-        supplementary,
-    };
-
-    // Reduce supplementary groups first so subsequent permission checks do not
-    // inherit ambient capabilities from the original uid.
-    setgroups(&[user.gid]).context("setgroups failed")?;
-    if let Err(err) = setresgid(user.gid, user.gid, guard.sgid) {
-        guard.restore_best_effort();
-        let report = eyre!(err).wrap_err("setresgid failed");
-        return Err(PrivilegeError::from(report));
-    }
-    if let Err(err) = setresuid(user.uid, user.uid, guard.suid) {
-        guard.restore_best_effort();
-        let report = eyre!(err).wrap_err("setresuid failed");
-        return Err(PrivilegeError::from(report));
-    }
-
-    Ok(guard)
-}
 
 pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
     dir: P,
@@ -265,17 +192,13 @@ pub fn default_paths_for(uid: Uid) -> (Utf8PathBuf, Utf8PathBuf) {
 /// # }
 /// ```
 #[cfg(feature = "privileged-tests")]
-pub fn with_temp_euid<F, R>(target: Uid, body: F) -> crate::Result<R>
+pub fn with_temp_euid<F, R>(target: Uid, _body: F) -> crate::Result<R>
 where
     F: FnOnce() -> crate::Result<R>,
 {
-    let user = User::from_uid(target)
-        .context("User::from_uid failed")
-        .map_err(PrivilegeError::from)?
-        .ok_or_else(|| color_eyre::eyre::eyre!("no passwd entry for uid {}", target))
-        .map_err(PrivilegeError::from)?;
-    let guard = drop_process_privileges(&user)?;
-    let result = body()?;
-    drop(guard);
-    Ok(result)
+    let _ = target;
+    Err(PrivilegeError::from(eyre!(
+        "with_temp_euid is no longer supported because process-wide UID switching is unsafe"
+    ))
+    .into())
 }

@@ -8,8 +8,6 @@ use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::fs::MetadataExt;
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use nix::unistd::{Uid, geteuid};
-#[cfg(feature = "privileged-tests")]
-use pg_embedded_setup_unpriv::with_temp_euid;
 use pg_embedded_setup_unpriv::{ExecutionPrivileges, detect_execution_privileges, nobody_uid};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
@@ -18,11 +16,17 @@ use rstest_bdd_macros::{given, scenario, then, when};
 mod cap_fs_bootstrap;
 #[path = "support/env.rs"]
 mod env;
+#[path = "support/serial.rs"]
+mod serial;
+#[path = "support/skip.rs"]
+mod skip;
 
 use cap_fs_bootstrap::{remove_tree, set_permissions};
 use env::{build_env, with_scoped_env};
 use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
 use pg_embedded_setup_unpriv::test_support::metadata;
+use serial::{ScenarioSerialGuard, serial_guard};
+use skip::skip_message;
 
 #[derive(Debug)]
 struct BootstrapSandbox {
@@ -40,7 +44,9 @@ impl BootstrapSandbox {
         let tempdir_guard =
             CapabilityTempDir::new("bootstrap-sandbox").context("create sandbox tempdir")?;
         let base_path = tempdir_guard.path().to_owned();
-        set_permissions(tempdir_guard.path(), 0o777)?;
+        // The worker only needs traversal access; keep the directory
+        // read/execute for others to avoid world-writable sandboxes.
+        set_permissions(tempdir_guard.path(), 0o755)?;
 
         let install_dir = base_path.join("install");
         let data_dir = base_path.join("data");
@@ -178,27 +184,12 @@ impl BootstrapSandbox {
             Ok(()) => Ok(()),
             Err(err) => {
                 let message = err.to_string();
-                const SKIP_CONDITIONS: &[(&str, &str)] = &[
-                    (
-                        "rate limit exceeded",
-                        "SKIP-BOOTSTRAP: rate limit exceeded whilst downloading PostgreSQL",
-                    ),
-                    (
-                        "setgroups failed",
-                        "SKIP-BOOTSTRAP: kernel refused to adjust supplementary groups",
-                    ),
-                    (
-                        "must start as root to drop privileges temporarily",
-                        "SKIP-BOOTSTRAP: root privileges unavailable for privileged bootstrap path",
-                    ),
-                ];
-                if let Some((_, reason)) = SKIP_CONDITIONS
-                    .iter()
-                    .find(|(needle, _)| message.contains(needle))
-                {
-                    self.mark_skipped(format!("{reason}: {message}"));
+                let debug = format!("{err:?}");
+                if let Some(reason) = skip_message("SKIP-BOOTSTRAP", &message, Some(&debug)) {
+                    self.mark_skipped(reason);
                     Ok(())
                 } else {
+                    eprintln!("SKIP-BOOTSTRAP-FAILURE: {message}");
                     Err(err.into())
                 }
             }
@@ -209,16 +200,10 @@ impl BootstrapSandbox {
 #[cfg(feature = "privileged-tests")]
 fn run_bootstrap_with_temp_drop(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
     sandbox.borrow_mut().set_expected_owner(nobody_uid());
-    let privileges = with_temp_euid(nobody_uid(), || {
-        Ok::<ExecutionPrivileges, pg_embedded_setup_unpriv::Error>(detect_execution_privileges())
-    })
-    .map_err(|err| eyre!(err))?;
-    sandbox.borrow_mut().record_privileges(privileges);
-    let outcome = with_temp_euid(nobody_uid(), || {
-        let sandbox_ref = sandbox.borrow();
-        sandbox_ref.run_bootstrap()
-    });
-    sandbox.borrow_mut().handle_outcome(outcome)
+    sandbox
+        .borrow_mut()
+        .mark_skipped("SKIP-BOOTSTRAP: temporary UID switching is no longer supported");
+    Ok(())
 }
 
 #[cfg(not(feature = "privileged-tests"))]
@@ -314,11 +299,16 @@ fn then_detected_root(sandbox: &RefCell<BootstrapSandbox>) -> Result<()> {
 }
 
 #[scenario(path = "tests/features/bootstrap_privileges.feature", index = 0)]
-fn bootstrap_as_unprivileged(sandbox: RefCell<BootstrapSandbox>) {
+fn bootstrap_as_unprivileged(
+    serial_guard: ScenarioSerialGuard,
+    sandbox: RefCell<BootstrapSandbox>,
+) {
+    let _ = &serial_guard;
     let _ = sandbox;
 }
 
 #[scenario(path = "tests/features/bootstrap_privileges.feature", index = 1)]
-fn bootstrap_as_root(sandbox: RefCell<BootstrapSandbox>) {
+fn bootstrap_as_root(serial_guard: ScenarioSerialGuard, sandbox: RefCell<BootstrapSandbox>) {
+    let _ = &serial_guard;
     let _ = sandbox;
 }

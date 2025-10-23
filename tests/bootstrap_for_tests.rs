@@ -2,13 +2,12 @@
 #![cfg(unix)]
 
 use std::cell::RefCell;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 
-use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::{Context, Result, ensure, eyre};
+use camino::Utf8PathBuf;
+use color_eyre::eyre::{Context, Report, Result, ensure, eyre};
 use pg_embedded_setup_unpriv::{
-    TestBootstrapEnvironment, TestBootstrapSettings, bootstrap_for_tests,
-    detect_execution_privileges,
+    TestBootstrapSettings, bootstrap_for_tests, detect_execution_privileges,
 };
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
@@ -17,117 +16,20 @@ use rstest_bdd_macros::{given, scenario, then, when};
 mod cap_fs;
 #[path = "support/env.rs"]
 mod env;
+#[path = "support/env_snapshot.rs"]
+mod env_snapshot;
+#[path = "support/sandbox.rs"]
+mod sandbox;
+#[path = "support/skip.rs"]
+mod skip;
 
-use cap_fs::{remove_tree, set_permissions};
-use env::{ScopedEnvVars, build_env, with_scoped_env};
-use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
-
-#[derive(Debug)]
-struct TestBootstrapSandbox {
-    _guard: CapabilityTempDir,
-    base_dir: Utf8PathBuf,
-    install_dir: Utf8PathBuf,
-    data_dir: Utf8PathBuf,
-}
-
-impl TestBootstrapSandbox {
-    fn new() -> Result<Self> {
-        let guard = CapabilityTempDir::new("bootstrap-tests")
-            .context("create bootstrap sandbox tempdir")?;
-        let base_dir = guard.path().to_owned();
-        set_permissions(&base_dir, 0o777)?;
-        let install_dir = base_dir.join("install");
-        let data_dir = base_dir.join("data");
-
-        Ok(Self {
-            _guard: guard,
-            base_dir,
-            install_dir,
-            data_dir,
-        })
-    }
-
-    fn install_dir(&self) -> &Utf8Path {
-        &self.install_dir
-    }
-
-    fn data_dir(&self) -> &Utf8Path {
-        &self.data_dir
-    }
-
-    fn base_env(&self) -> ScopedEnvVars {
-        build_env([
-            ("PG_RUNTIME_DIR", self.install_dir.as_str()),
-            ("PG_DATA_DIR", self.data_dir.as_str()),
-            ("PG_SUPERUSER", "postgres"),
-            ("PG_PASSWORD", "postgres"),
-        ])
-    }
-
-    fn env_without_timezone(&self) -> ScopedEnvVars {
-        let mut vars = self.base_env();
-        vars.push((OsString::from("TZDIR"), None));
-        vars.push((OsString::from("TZ"), None));
-        vars
-    }
-
-    fn env_with_timezone_override(&self, tz_dir: &Utf8Path) -> ScopedEnvVars {
-        let mut vars = self.base_env();
-        vars.push((
-            OsString::from("TZDIR"),
-            Some(OsString::from(tz_dir.as_str())),
-        ));
-        vars
-    }
-
-    fn with_env<R>(&self, vars: ScopedEnvVars, body: impl FnOnce() -> R) -> R {
-        with_scoped_env(vars, body)
-    }
-
-    fn reset(&self) -> Result<()> {
-        remove_tree(self.install_dir())?;
-        remove_tree(self.data_dir())?;
-        set_permissions(&self.base_dir, 0o777)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct EnvSnapshot {
-    pgpassfile: Option<OsString>,
-    tzdir: Option<OsString>,
-    timezone: Option<OsString>,
-}
-
-impl EnvSnapshot {
-    fn capture() -> Self {
-        Self {
-            pgpassfile: std::env::var_os("PGPASSFILE"),
-            tzdir: std::env::var_os("TZDIR"),
-            timezone: std::env::var_os("TZ"),
-        }
-    }
-
-    fn from_environment(environment: &TestBootstrapEnvironment) -> Self {
-        environment
-            .to_env()
-            .into_iter()
-            .fold(Self::default(), |mut snapshot, (key, value)| {
-                let value = OsString::from(value);
-                match key.as_str() {
-                    "PGPASSFILE" => snapshot.pgpassfile = Some(value),
-                    "TZDIR" => snapshot.tzdir = Some(value),
-                    "TZ" => snapshot.timezone = Some(value),
-                    _ => {}
-                }
-                snapshot
-            })
-    }
-}
+use env_snapshot::EnvSnapshot;
+use sandbox::TestSandbox;
+use skip::skip_message;
 
 #[derive(Debug)]
 struct BootstrapWorld {
-    sandbox: TestBootstrapSandbox,
+    sandbox: TestSandbox,
     settings: Option<TestBootstrapSettings>,
     error: Option<String>,
     skip_reason: Option<String>,
@@ -139,7 +41,7 @@ struct BootstrapWorld {
 impl BootstrapWorld {
     fn new() -> Result<Self> {
         Ok(Self {
-            sandbox: TestBootstrapSandbox::new().context("create bootstrap sandbox")?,
+            sandbox: TestSandbox::new("bootstrap-tests").context("create bootstrap sandbox")?,
             settings: None,
             error: None,
             skip_reason: None,
@@ -180,7 +82,7 @@ impl BootstrapWorld {
         self.env_expected = Some(snapshot);
     }
 
-    fn handle_outcome(&mut self, outcome: Result<TestBootstrapSettings, String>) -> Result<()> {
+    fn handle_outcome(&mut self, outcome: Result<TestBootstrapSettings, Report>) -> Result<()> {
         match outcome {
             Ok(settings) => {
                 self.record_settings(settings);
@@ -190,16 +92,13 @@ impl BootstrapWorld {
                 }
                 Ok(())
             }
-            Err(message) => {
-                const SKIP_CONDITIONS: &[(&str, &str)] = &[(
-                    "rate limit exceeded",
-                    "SKIP-BOOTSTRAP-FOR-TESTS: rate limit exceeded whilst downloading PostgreSQL",
-                )];
-                if let Some((_, reason)) = SKIP_CONDITIONS
-                    .iter()
-                    .find(|(needle, _)| message.contains(needle))
+            Err(err) => {
+                let message = err.to_string();
+                let debug = format!("{err:?}");
+                if let Some(reason) =
+                    skip_message("SKIP-BOOTSTRAP-FOR-TESTS", &message, Some(&debug))
                 {
-                    self.mark_skip(format!("{reason}: {message}"));
+                    self.mark_skip(reason);
                     Ok(())
                 } else {
                     self.record_error(message.clone());
@@ -261,7 +160,7 @@ fn when_bootstrap_for_tests(world: &RefCell<BootstrapWorld>) -> Result<()> {
     let env_vars = world.borrow().sandbox.env_without_timezone();
     let (outcome, before, snapshot) = world.borrow().sandbox.with_env(env_vars, || {
         let before = EnvSnapshot::capture();
-        let outcome = bootstrap_for_tests().map_err(|err| err.to_string());
+        let outcome = bootstrap_for_tests().map_err(Report::from);
         let snapshot = EnvSnapshot::capture();
         (outcome, before, snapshot)
     });
@@ -284,19 +183,19 @@ fn then_returns_settings(world: &RefCell<BootstrapWorld>) -> Result<()> {
         .map_err(|_| eyre!("data_dir is not valid UTF-8"))?;
 
     ensure!(
-        install_dir == world_ref.sandbox.install_dir,
+        install_dir == world_ref.sandbox.install_dir(),
         "expected install dir {} but observed {}",
-        world_ref.sandbox.install_dir,
+        world_ref.sandbox.install_dir(),
         install_dir
     );
     ensure!(
-        data_dir == world_ref.sandbox.data_dir,
+        data_dir == world_ref.sandbox.data_dir(),
         "expected data dir {} but observed {}",
-        world_ref.sandbox.data_dir,
+        world_ref.sandbox.data_dir(),
         data_dir
     );
     ensure!(
-        settings.environment.pgpass_file == world_ref.sandbox.install_dir.join(".pgpass"),
+        settings.environment.pgpass_file == world_ref.sandbox.install_dir().join(".pgpass"),
         "expected pgpass location to reside under install dir"
     );
     let expected_privileges = detect_execution_privileges();
@@ -322,7 +221,7 @@ fn then_prepares_env(world: &RefCell<BootstrapWorld>) -> Result<()> {
     let before = world_ref.env_before()?;
 
     ensure!(
-        env_settings.home == world_ref.sandbox.install_dir,
+        env_settings.home == world_ref.sandbox.install_dir(),
         "HOME should match the install directory"
     );
     ensure!(
@@ -378,7 +277,7 @@ fn then_prepares_env(world: &RefCell<BootstrapWorld>) -> Result<()> {
 
 #[when("bootstrap_for_tests runs with a missing time zone database")]
 fn when_bootstrap_missing_timezone(world: &RefCell<BootstrapWorld>) -> Result<()> {
-    let missing = world.borrow().sandbox.install_dir.join("missing-tzdir");
+    let missing = world.borrow().sandbox.install_dir().join("missing-tzdir");
     let env_vars = world.borrow().sandbox.env_with_timezone_override(&missing);
     let outcome = world.borrow().sandbox.with_env(env_vars, || {
         bootstrap_for_tests().map_err(|err| err.to_string())
