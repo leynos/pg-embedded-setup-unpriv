@@ -1,6 +1,7 @@
 //! Validates translating environment settings into PostgreSQL configuration.
 
 use camino::Utf8PathBuf;
+#[cfg(feature = "privileged-tests")]
 use std::error::Error;
 use std::path::PathBuf;
 
