@@ -49,6 +49,10 @@ pub use error::{Error, Result};
         target_os = "dragonfly",
     ),
 ))]
+#[expect(
+    deprecated,
+    reason = "with_temp_euid() remains exported for backward compatibility whilst deprecated"
+)]
 pub use privileges::with_temp_euid;
 #[cfg(all(
     unix,

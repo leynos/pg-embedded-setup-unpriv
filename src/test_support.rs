@@ -36,7 +36,10 @@ use crate::{ExecutionPrivileges, TestBootstrapSettings};
 /// # use pg_embedded_setup_unpriv::test_support::ambient_dir_and_path;
 /// # fn main() -> Result<()> {
 /// let (_dir, relative) = ambient_dir_and_path(Utf8Path::new("."))?;
-/// assert!(relative.as_str().is_empty());
+/// assert_eq!(relative.as_str(), ".");
+///
+/// let (_root, root_rel) = ambient_dir_and_path(Utf8Path::new("/"))?;
+/// assert!(root_rel.as_str().is_empty());
 /// # Ok(())
 /// # }
 /// ```

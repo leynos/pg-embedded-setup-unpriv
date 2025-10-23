@@ -1,4 +1,10 @@
 //! Serialisation guard shared by behavioural test suites.
+//!
+//! Acquire this guard **before** calling environment helpers such as
+//! [`crate::test_support::with_scoped_env`] to maintain the lock-ordering
+//! contract used throughout the integration scenarios (scenario mutex, then
+//! environment mutex). Following this order prevents deadlocks when multiple
+//! suites mutate process-wide state.
 
 use once_cell::sync::Lazy;
 use rstest::fixture;
@@ -42,4 +48,17 @@ pub fn serial_guard() -> ScenarioSerialGuard {
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
     ScenarioSerialGuard { _guard: guard }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serial_guard_is_not_reentrant() {
+        let guard = serial_guard();
+        assert!(SCENARIO_MUTEX.try_lock().is_err());
+        drop(guard);
+        assert!(SCENARIO_MUTEX.try_lock().is_ok());
+    }
 }

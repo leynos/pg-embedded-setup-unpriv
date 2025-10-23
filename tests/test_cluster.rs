@@ -1,4 +1,4 @@
-#![cfg(feature = "cluster-unit-tests")]
+#![cfg(all(unix, feature = "cluster-unit-tests"))]
 //! Unit tests covering TestCluster privilege dispatch behaviour.
 
 use std::sync::{
@@ -66,14 +66,14 @@ fn unprivileged_operations_run_in_process() {
             &env_vars,
             operation,
             async move {
-                call_counter.fetch_add(1, Ordering::SeqCst);
+                call_counter.fetch_add(1, Ordering::Relaxed);
                 Ok::<(), postgresql_embedded::Error>(())
             },
         )
         .expect("in-process operation should succeed");
     }
 
-    assert_eq!(setup_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(setup_calls.load(Ordering::Relaxed), 2);
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn root_operations_delegate_to_worker() {
 
     let hook_calls = Arc::clone(&worker_calls);
     let _guard = install_run_root_operation_hook(move |_, _, _| {
-        hook_calls.fetch_add(1, Ordering::SeqCst);
+        hook_calls.fetch_add(1, Ordering::Relaxed);
         Ok(())
     })
     .expect("install run_root_operation_hook");
@@ -100,15 +100,15 @@ fn root_operations_delegate_to_worker() {
             &env_vars,
             operation,
             async move {
-                flag.store(true, Ordering::SeqCst);
+                flag.store(true, Ordering::Relaxed);
                 Ok::<(), postgresql_embedded::Error>(())
             },
         )
         .expect("worker operation should succeed");
     }
 
-    assert_eq!(worker_calls.load(Ordering::SeqCst), 2);
-    assert!(!in_process_invoked.load(Ordering::SeqCst));
+    assert_eq!(worker_calls.load(Ordering::Relaxed), 2);
+    assert!(!in_process_invoked.load(Ordering::Relaxed));
 }
 
 #[test]

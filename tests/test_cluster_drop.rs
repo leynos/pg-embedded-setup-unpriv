@@ -73,9 +73,17 @@ fn drops_stop_cluster_and_restore_environment(serial_guard: ScenarioSerialGuard)
         env_before, env_after,
         "the environment should be restored after the cluster drops",
     );
+    use std::{thread, time::Duration};
+    let pid = data_dir.join("postmaster.pid");
+    for _ in 0..50 {
+        if !pid.exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
     assert!(
-        !data_dir.join("postmaster.pid").exists(),
-        "postmaster.pid should be removed once the cluster stops",
+        !pid.exists(),
+        "postmaster.pid should be removed once the cluster stops"
     );
 
     Ok(())

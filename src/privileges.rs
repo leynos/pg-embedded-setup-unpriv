@@ -171,34 +171,28 @@ pub fn default_paths_for(uid: Uid) -> (Utf8PathBuf, Utf8PathBuf) {
     (base.join("install"), base.join("data"))
 }
 
-/// Temporarily switches the process effective user ID for test scenarios.
+/// DEPRECATED: process-wide UID switching is unsafe and unsupported.
 ///
-/// # Safety
-/// This function mutates the entire process identity. Callers must ensure no
-/// other threads perform privileged operations while the guard is active.
-/// Prefer invoking this helper in single-threaded test binaries only.
-///
-/// The example returns `PrivilegeResult` to reinforce that callers should
-/// propagate privilege failures through the domain error surface.
+/// Use the worker-based privileged path instead of relying on temporary
+/// effective UID changes.
 ///
 /// # Examples
-/// ```
+/// ```no_run
 /// # use nix::unistd::Uid;
 /// use pg_embedded_setup_unpriv::with_temp_euid;
-///
-/// # fn demo(uid: Uid) -> pg_embedded_setup_unpriv::error::PrivilegeResult<()> {
-/// with_temp_euid(uid, || Ok(()))?;
-/// # Ok(())
+/// # fn demo(uid: Uid) {
+/// let _ = with_temp_euid::<_, ()>(uid, || Ok(()));
 /// # }
 /// ```
 #[cfg(feature = "privileged-tests")]
+#[deprecated(note = "with_temp_euid() is unsupported; use the worker-based privileged path")]
 pub fn with_temp_euid<F, R>(target: Uid, _body: F) -> crate::Result<R>
 where
     F: FnOnce() -> crate::Result<R>,
 {
     let _ = target;
     Err(PrivilegeError::from(eyre!(
-        "with_temp_euid is no longer supported because process-wide UID switching is unsafe"
+        "with_temp_euid() is unsupported; use the worker-based privileged path"
     ))
     .into())
 }
