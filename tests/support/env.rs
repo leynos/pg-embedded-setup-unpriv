@@ -55,16 +55,31 @@ where
         return env;
     }
 
-    if let Some(worker) = option_env!("CARGO_BIN_EXE_pg_worker") {
-        env.push((OsString::from("PG_EMBEDDED_WORKER"), Some(worker.into())));
+    if let Some(worker) = std::env::var_os("CARGO_BIN_EXE_pg_worker").or_else(locate_worker_binary)
+    {
+        env.push((OsString::from("PG_EMBEDDED_WORKER"), Some(worker)));
     }
 
     env
 }
 
+fn locate_worker_binary() -> Option<OsString> {
+    let exe = std::env::current_exe().ok()?;
+    let deps_dir = exe.parent()?;
+    let target_dir = deps_dir.parent()?;
+    let worker_path = target_dir.join("pg_worker");
+    worker_path.exists().then(|| worker_path.into_os_string())
+}
+
 /// Applies `vars` and returns a guard that keeps them active until dropped.
+///
+/// The guard acquires a global, non-re-entrant mutex. Nesting [`apply_env`] or
+/// mixing it with [`with_scoped_env`] within the same thread will deadlock
+/// because the outer guard retains the mutex until it is dropped.
 pub fn apply_env(vars: ScopedEnvVars) -> ScopedEnvGuard {
-    let lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+    let lock = ENV_MUTEX
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let mut saved = Vec::with_capacity(vars.len());
     for (key, value) in vars.into_iter() {
         let previous = std::env::var_os(&key);
@@ -95,8 +110,6 @@ pub fn with_scoped_env<R>(
     vars: impl IntoIterator<Item = (OsString, Option<OsString>)>,
     body: impl FnOnce() -> R,
 ) -> R {
-    let guard = apply_env(vars.into_iter().collect());
-    let result = body();
-    drop(guard);
-    result
+    let _guard = apply_env(vars.into_iter().collect());
+    body()
 }

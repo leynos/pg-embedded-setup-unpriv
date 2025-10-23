@@ -10,6 +10,9 @@ use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
 use super::cap_fs::{remove_tree, set_permissions};
 use super::env::{ScopedEnvVars, build_env, with_scoped_env};
 
+/// Provides a capability-backed directory tree for behavioural PostgreSQL
+/// tests. Each sandbox supplies dedicated installation and data directories so
+/// scenarios remain isolated.
 #[derive(Debug)]
 pub struct TestSandbox {
     _guard: CapabilityTempDir,
@@ -19,6 +22,13 @@ pub struct TestSandbox {
 }
 
 impl TestSandbox {
+    /// Creates a new sandbox rooted under the capability-aware temporary
+    /// directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the sandbox directory or its capability handles
+    /// cannot be created.
     pub fn new(prefix: &str) -> Result<Self> {
         let guard = CapabilityTempDir::new(prefix).context("create sandbox tempdir")?;
         let base_dir = guard.path().to_owned();
@@ -36,14 +46,18 @@ impl TestSandbox {
         })
     }
 
+    /// Returns the installation directory assigned to the sandbox.
     pub fn install_dir(&self) -> &Utf8Path {
         &self.install_dir
     }
 
+    /// Returns the PostgreSQL data directory assigned to the sandbox.
     pub fn data_dir(&self) -> &Utf8Path {
         &self.data_dir
     }
 
+    /// Provides the base environment variables required for PostgreSQL to run
+    /// within the sandbox.
     pub fn base_env(&self) -> ScopedEnvVars {
         build_env([
             ("PG_RUNTIME_DIR", self.install_dir.as_str()),
@@ -53,6 +67,8 @@ impl TestSandbox {
         ])
     }
 
+    /// Derives the base environment with `TZ` and `TZDIR` removed so tests can
+    /// exercise missing time zone data scenarios.
     pub fn env_without_timezone(&self) -> ScopedEnvVars {
         let mut vars = self.base_env();
         vars.push((OsString::from("TZDIR"), None));
@@ -60,6 +76,7 @@ impl TestSandbox {
         vars
     }
 
+    /// Returns the base environment augmented with a custom `TZDIR` override.
     pub fn env_with_timezone_override(&self, tz_dir: &Utf8Path) -> ScopedEnvVars {
         let mut vars = self.base_env();
         vars.push((
@@ -69,10 +86,13 @@ impl TestSandbox {
         vars
     }
 
+    /// Runs `body` with the supplied environment scoped to the sandbox.
     pub fn with_env<R>(&self, vars: ScopedEnvVars, body: impl FnOnce() -> R) -> R {
         with_scoped_env(vars, body)
     }
 
+    /// Deletes sandbox directories and re-applies restrictive permissions so
+    /// subsequent scenarios start from a clean state.
     pub fn reset(&self) -> Result<()> {
         remove_tree(self.install_dir())?;
         remove_tree(self.data_dir())?;

@@ -1,5 +1,38 @@
 //! Invokes PostgreSQL bootstrap operations inside a privileged worker process.
 //!
+//! Usage:
+//!
+//! ```text
+//! pg_worker <operation> <config-path>
+//! ```
+//!
+//! The `operation` must be `setup`, `start`, or `stop`. The JSON payload at
+//! `config-path` must serialise a [`WorkerPayload`] containing PostgreSQL
+//! settings and environment overrides. A representative payload is:
+//!
+//! ```json
+//! {
+//!   "environment": {
+//!     "PG_SUPERUSER": "postgres",
+//!     "TZ": null
+//!   },
+//!   "settings": {
+//!     "version": "=16.4.0",
+//!     "port": 15433,
+//!     "username": "postgres",
+//!     "password": "postgres",
+//!     "data_dir": "/tmp/data",
+//!     "installation_dir": "/tmp/install",
+//!     "temporary": false,
+//!     "timeout_secs": 30,
+//!     "configuration": {
+//!       "lc_messages": "C"
+//!     },
+//!     "trust_installation_dir": true
+//!   }
+//! }
+//! ```
+//!
 //! The helper mirrors `postgresql_embedded` lifecycle calls while allowing the
 //! caller to demote credentials before spawning the child process.
 #![cfg(unix)]
@@ -35,7 +68,10 @@ impl Operation {
 
 fn main() -> Result<()> {
     color_eyre::install()?;
-    let mut args = env::args_os();
+    run_worker(env::args_os())
+}
+
+fn run_worker(mut args: impl Iterator<Item = OsString>) -> Result<()> {
     let _program = args.next();
     let op = args
         .next()
@@ -45,6 +81,11 @@ fn main() -> Result<()> {
         .next()
         .map(PathBuf::from)
         .ok_or_else(|| Report::msg("missing config path argument"))?;
+    if let Some(extra) = args.next() {
+        return Err(Report::msg(format!(
+            "unexpected extra argument: {extra:?}; expected only operation and config path"
+        )));
+    }
 
     let config_bytes = fs::read(&config_path).wrap_err("failed to read worker config")?;
     let payload: WorkerPayload =
@@ -90,4 +131,24 @@ fn main() -> Result<()> {
         }
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_extra_argument() {
+        let args = vec![
+            OsString::from("pg_worker"),
+            OsString::from("setup"),
+            OsString::from("/tmp/config.json"),
+            OsString::from("unexpected"),
+        ];
+        let err = run_worker(args.into_iter()).expect_err("extra argument must fail");
+        assert!(
+            err.to_string().contains("unexpected extra argument"),
+            "unexpected error: {err}"
+        );
+    }
 }
