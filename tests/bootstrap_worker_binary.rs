@@ -5,6 +5,8 @@
 //! privileged orchestration does not defer errors to runtime.
 
 use std::ffi::{OsStr, OsString};
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 
 use color_eyre::eyre::Result;
 use pg_embedded_setup_unpriv::bootstrap_for_tests;
@@ -38,8 +40,61 @@ fn bootstrap_fails_when_worker_binary_missing() -> Result<()> {
         .expect_err("bootstrap_for_tests should fail fast when the worker binary is missing");
     let message = error.to_string();
     assert!(
-        message.contains("must reference an existing file"),
+        message.contains("failed to access PG_EMBEDDED_WORKER"),
         "expected missing-worker error, got: {message}",
+    );
+
+    sandbox.reset()?;
+
+    Ok(())
+}
+
+#[test]
+fn bootstrap_fails_when_worker_path_is_directory() -> Result<()> {
+    let sandbox = TestSandbox::new("worker-path-directory")?;
+    fs::create_dir_all(sandbox.install_dir().as_std_path())?;
+
+    let mut env_vars = sandbox.env_without_timezone();
+    env_vars.push((
+        OsString::from("PG_EMBEDDED_WORKER"),
+        Some(OsString::from(sandbox.install_dir().as_str())),
+    ));
+
+    let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
+    let err = outcome.expect_err("bootstrap_for_tests should reject directory worker paths");
+    let message = err.to_string();
+    assert!(
+        message.contains("must reference a regular file"),
+        "expected regular-file error, got: {message}",
+    );
+
+    sandbox.reset()?;
+
+    Ok(())
+}
+
+#[test]
+fn bootstrap_fails_when_worker_binary_not_executable() -> Result<()> {
+    let sandbox = TestSandbox::new("worker-path-non-executable")?;
+    fs::create_dir_all(sandbox.install_dir().as_std_path())?;
+    let worker_path = sandbox.install_dir().join("pg_worker_stub");
+    fs::write(worker_path.as_std_path(), b"#!/bin/sh\nexit 0\n")?;
+    let mut perms = fs::metadata(worker_path.as_std_path())?.permissions();
+    perms.set_mode(0o600);
+    fs::set_permissions(worker_path.as_std_path(), perms)?;
+
+    let mut env_vars = sandbox.env_without_timezone();
+    env_vars.push((
+        OsString::from("PG_EMBEDDED_WORKER"),
+        Some(OsString::from(worker_path.as_str())),
+    ));
+
+    let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
+    let err = outcome.expect_err("bootstrap_for_tests should reject non-executable workers");
+    let message = err.to_string();
+    assert!(
+        message.contains("must be executable"),
+        "expected non-executable error, got: {message}",
     );
 
     sandbox.reset()?;

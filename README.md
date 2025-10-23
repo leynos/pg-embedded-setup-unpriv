@@ -26,6 +26,9 @@ from `postgresql_embedded::Settings::default()` are used.
 - `PG_RUNTIME_DIR` – Directory for the downloaded distribution and binaries.
 - `PG_LOCALE` – Locale passed to `initdb`.
 - `PG_ENCODING` – Cluster encoding (for example `UTF8`).
+- `PG_SHUTDOWN_TIMEOUT_SECS` – Optional number of seconds to wait for
+  PostgreSQL to stop during teardown. Defaults to `15` seconds and accepts
+  values between `1` and `600`.
 
 You may also provide these values through a configuration file named `pg.toml`,
 `pg.yaml`, or `pg.json5` (depending on enabled features) located in any path

@@ -16,6 +16,11 @@ name = "pg_worker"
 path = "tests/support/pg_worker.rs"
 required-features = ["dev-worker"]
 
+[[bin]]
+name = "pg_worker_hang"
+path = "tests/support/pg_worker_hang.rs"
+required-features = ["dev-worker"]
+
 [[test]]
 name = "test_cluster"
 path = "tests/test_cluster.rs"
@@ -39,6 +44,7 @@ thiserror = "1"
 serde_json = "1"
 tempfile = "3"
 libc = "0.2"
+wait-timeout = "0.2"
 
 [features]
 toml = []

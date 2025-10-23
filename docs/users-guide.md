@@ -2,10 +2,11 @@
 
 The `pg_embedded_setup_unpriv` binary prepares a PostgreSQL installation and
 data directory regardless of whether it starts with `root` privileges. When the
-process runs as `root` it automatically drops to `nobody` before invoking
-`postgresql_embedded`; when launched as an unprivileged user it keeps the
-current identity and provisions directories with the caller’s UID. This guide
-explains how to configure the tool and integrate it into automated test flows.
+process runs as `root` it stages directories for `nobody` and delegates
+PostgreSQL lifecycle commands to the worker helper, which executes as the
+sandbox user. Unprivileged invocations keep the current identity and provision
+directories with the caller’s UID. This guide explains how to configure the tool
+and integrate it into automated test flows.
 
 ## Prerequisites
 
@@ -31,13 +32,18 @@ explains how to configure the tool and integrate it into automated test flows.
    export PG_PASSWORD="postgres_pass"
    ```
 
+   Optionally set `PG_SHUTDOWN_TIMEOUT_SECS` to override the 15-second drop
+   budget. The helper accepts values between `1` and `600` seconds and reports
+   an error when the override falls outside that range or cannot be parsed.
+
 3. Run the helper (`cargo run --release --bin pg_embedded_setup_unpriv`). The
    command downloads the specified PostgreSQL release, ensures the directories
    exist, applies PostgreSQL-compatible permissions (0755 for runtime, 0700 for
    data), and initialises the cluster with the provided credentials.
-   Invocations that begin as `root` drop to `nobody` before bootstrapping and
-   repeat the ownership fix-ups on every call so running the tool twice remains
-   idempotent.
+   Invocations that begin as `root` prepare directories for `nobody` and execute
+   lifecycle commands through the worker helper so the privileged operations run
+   entirely under the sandbox user. Ownership fix-ups occur on every call so
+   running the tool twice remains idempotent.
 
 4. Pass the resulting paths and credentials to your tests. If you use
    `postgresql_embedded` directly after the setup step, it can reuse the staged
@@ -121,15 +127,15 @@ drop, demonstrating that no orphaned processes remain.
 When authoring end-to-end tests that exercise PostgreSQL while the harness is
 still running as `root`, follow these steps:
 
-- Invoke `pg_embedded_setup_unpriv` before dropping privileges. This prepares
-  file ownership, caches the binaries, and records the superuser password in a
-  location accessible to `nobody`.
+- Invoke `pg_embedded_setup_unpriv` before handing control to less-privileged
+  workers. This prepares file ownership, caches the binaries, and records the
+  superuser password in a location accessible to `nobody`.
 - Export the `PG_EMBEDDED_WORKER` environment variable with the absolute path
   to the `pg_worker` helper binary. The library invokes this helper when it
   needs to execute PostgreSQL lifecycle commands as `nobody`.
-- Keep the test process running as `root`; the helper binary performs the
-  privilege drop before calling into `postgresql_embedded` so the main process
-  never changes UID mid-test.
+- Keep the test process running as `root`; the helper binary demotes itself
+  before calling into `postgresql_embedded` so the main process never changes
+  UID mid-test.
 - Ensure the `PGPASSFILE` environment variable points to the file created in the
   runtime directory so subsequent Diesel or libpq connections can authenticate
   without interactive prompts. The

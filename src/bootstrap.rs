@@ -13,11 +13,18 @@ use color_eyre::eyre::Context;
 #[cfg(unix)]
 use nix::unistd::{Uid, User, chown, geteuid};
 use postgresql_embedded::Settings;
-use std::env;
+use std::env::{self, VarError};
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::Duration;
 
+const DEFAULT_SETUP_TIMEOUT: Duration = Duration::from_secs(180);
+const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(60);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_SHUTDOWN_TIMEOUT_SECS: u64 = 600;
+const SHUTDOWN_TIMEOUT_ENV: &str = "PG_SHUTDOWN_TIMEOUT_SECS";
 
 /// Represents the privileges the process is running with when bootstrapping PostgreSQL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +109,43 @@ impl TestBootstrapEnvironment {
     }
 }
 
+fn shutdown_timeout_from_env() -> BootstrapResult<Duration> {
+    match env::var(SHUTDOWN_TIMEOUT_ENV) {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                    "{SHUTDOWN_TIMEOUT_ENV} must not be empty"
+                )));
+            }
+
+            let seconds: u64 = trimmed.parse().map_err(|err| {
+                BootstrapError::from(color_eyre::eyre::eyre!(
+                    "failed to parse {SHUTDOWN_TIMEOUT_ENV}: {err}"
+                ))
+            })?;
+
+            if seconds == 0 {
+                return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                    "{SHUTDOWN_TIMEOUT_ENV} must be at least 1 second"
+                )));
+            }
+
+            if seconds > MAX_SHUTDOWN_TIMEOUT_SECS {
+                return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                    "{SHUTDOWN_TIMEOUT_ENV} must be {MAX_SHUTDOWN_TIMEOUT_SECS} seconds or less"
+                )));
+            }
+
+            Ok(Duration::from_secs(seconds))
+        }
+        Err(VarError::NotPresent) => Ok(DEFAULT_SHUTDOWN_TIMEOUT),
+        Err(VarError::NotUnicode(_)) => Err(BootstrapError::from(color_eyre::eyre::eyre!(
+            "{SHUTDOWN_TIMEOUT_ENV} must contain a valid UTF-8 value"
+        ))),
+    }
+}
+
 /// Structured settings returned from [`bootstrap_for_tests`].
 #[derive(Debug, Clone)]
 pub struct TestBootstrapSettings {
@@ -115,6 +159,10 @@ pub struct TestBootstrapSettings {
     pub environment: TestBootstrapEnvironment,
     /// Optional path to the helper binary used for subprocess execution.
     pub worker_binary: Option<Utf8PathBuf>,
+    /// Maximum time to allow the worker to complete the setup phase.
+    pub setup_timeout: Duration,
+    /// Maximum time to allow the worker to complete the start phase.
+    pub start_timeout: Duration,
     /// Grace period granted to PostgreSQL during drop before teardown proceeds regardless.
     pub shutdown_timeout: Duration,
 }
@@ -343,14 +391,30 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
         })
         .transpose()?;
 
-    if let Some(worker) = worker_binary
-        .as_ref()
-        .filter(|path| !path.as_std_path().exists())
-    {
-        return Err(BootstrapError::from(color_eyre::eyre::eyre!(
-            "PG_EMBEDDED_WORKER must reference an existing file: {worker}"
-        )));
+    if let Some(worker) = &worker_binary {
+        let metadata = fs::metadata(worker.as_std_path()).map_err(|err| {
+            BootstrapError::from(color_eyre::eyre::eyre!(
+                "failed to access PG_EMBEDDED_WORKER at {worker}: {err}"
+            ))
+        })?;
+
+        if !metadata.is_file() {
+            return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                "PG_EMBEDDED_WORKER must reference a regular file: {worker}"
+            )));
+        }
+
+        #[cfg(unix)]
+        {
+            if metadata.permissions().mode() & 0o111 == 0 {
+                return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                    "PG_EMBEDDED_WORKER must be executable: {worker}"
+                )));
+            }
+        }
     }
+
+    let shutdown_timeout = shutdown_timeout_from_env()?;
 
     #[cfg(unix)]
     let prepared = {
@@ -387,7 +451,9 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
         settings: prepared.settings,
         environment: prepared.environment,
         worker_binary,
-        shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
+        setup_timeout: DEFAULT_SETUP_TIMEOUT,
+        start_timeout: DEFAULT_START_TIMEOUT,
+        shutdown_timeout,
     })
 }
 

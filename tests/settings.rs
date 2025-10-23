@@ -80,10 +80,14 @@ fn with_temp_euid_changes_uid() -> color_eyre::Result<()> {
 
     let outcome = invoke_deprecated_with_temp_euid();
     let err = outcome.expect_err("with_temp_euid should now reject privilege swaps");
-    let source_message = err
+    let privilege_err = match err {
+        pg_embedded_setup_unpriv::Error::Privilege(inner) => inner,
+        other => panic!("expected privilege error, received {other:?}"),
+    };
+    let source_message = privilege_err
         .source()
         .map(std::string::ToString::to_string)
-        .unwrap_or_else(|| err.to_string());
+        .unwrap_or_else(|| privilege_err.to_string());
     assert!(
         source_message
             .contains("with_temp_euid() is unsupported; use the worker-based privileged path"),

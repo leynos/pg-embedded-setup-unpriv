@@ -25,11 +25,13 @@ use color_eyre::eyre::{Context, eyre};
 use postgresql_embedded::{PostgreSQL, Settings};
 use serde_json::to_writer;
 use std::future::Future;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::process::Command;
+use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::runtime::{Builder, Runtime};
 use tokio::time;
+use wait_timeout::ChildExt;
 
 #[cfg(all(
     unix,
@@ -301,15 +303,49 @@ impl TestCluster {
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
 
-        let output = command
-            .output()
-            .context("failed to execute pg_worker")
+        let timeout = operation.timeout(bootstrap);
+        let mut child = command
+            .spawn()
+            .context("failed to spawn pg_worker")
+            .map_err(BootstrapError::from)?;
+
+        let wait_result = child
+            .wait_timeout(timeout)
+            .context("failed to wait for pg_worker")
+            .map_err(BootstrapError::from)?;
+        let timed_out = wait_result.is_none();
+
+        if timed_out {
+            match child.kill() {
+                Err(err) if err.kind() != ErrorKind::InvalidInput => {
+                    return Err(BootstrapError::from(eyre!(
+                        "failed to terminate pg_worker after {}s: {err}",
+                        timeout.as_secs(),
+                    )));
+                }
+                _ => {}
+            }
+        }
+
+        let output = child
+            .wait_with_output()
+            .context("failed to collect pg_worker output")
             .map_err(BootstrapError::from)?;
 
         temp_path
             .close()
             .context("failed to clean up worker payload file")
             .map_err(BootstrapError::from)?;
+
+        if timed_out {
+            return Err(BootstrapError::from(eyre!(
+                "{} timed out after {}s\nstdout: {}\nstderr: {}",
+                operation.error_context(),
+                timeout.as_secs(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
 
         if output.status.success() {
             Ok(())
@@ -362,6 +398,14 @@ impl WorkerOperation {
             Self::Setup => "postgresql_embedded::setup() failed",
             Self::Start => "postgresql_embedded::start() failed",
             Self::Stop => "postgresql_embedded::stop() failed",
+        }
+    }
+
+    fn timeout(self, bootstrap: &TestBootstrapSettings) -> Duration {
+        match self {
+            Self::Setup => bootstrap.setup_timeout,
+            Self::Start => bootstrap.start_timeout,
+            Self::Stop => bootstrap.shutdown_timeout,
         }
     }
 }

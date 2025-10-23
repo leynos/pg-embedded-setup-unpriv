@@ -85,12 +85,11 @@ sequenceDiagram
     Bootstrap-->>Caller: Result<()>
 ```
 
-- **If running as root on Linux:** the helper will perform the necessary
-  privilege drop to a safe user (such as `"nobody"`) before initializing
-  PostgreSQL. This uses the existing logic to temporarily drop `EUID` and
-  `EGID` to `"nobody"` for filesystem operations (see src/lib.rs). This
-  ensures all Postgres files/directories are owned by a non-root user, since
-  PostgreSQL will refuse to run as root.
+- **If running as root on Linux:** the helper prepares directories that are
+  owned by the sandbox user (currently `"nobody"`) and delegates every
+  privileged filesystem task to the `pg_worker` subprocess. The worker starts
+  with reduced credentials from the first instruction, so no temporary
+  process-wide UID or GID swapping is required in the parent.
 
 - **If running as a normal user or on non-Linux platforms:** no privilege
   dropping is needed. The helper will simply use the `postgresql_embedded`
@@ -111,14 +110,12 @@ We will introduce a `TestCluster` RAII struct that encapsulates an embedded
 Postgres instance’s lifecycle (see docs/next-steps.md). This struct will hide
 all setup/teardown details:
 
-- **On creation/start:** it will configure and launch a PostgreSQL instance
-  (using `postgresql_embedded`) appropriate to the environment. If running as
-  root, `TestCluster` will internally drop privileges to `"nobody"` and
-  initialize the database directories using our current helper logic (see
-  docs/next-steps.md). If not root, it will directly initialize under the
-  current user. In either case, it calls the embedded Postgres **`.setup()` and
-  `.start()`** routines (async or blocking) to actually download/init the
-  database and launch the server process.
+- **On creation/start:** it configures and launches a PostgreSQL instance using
+  `postgresql_embedded`. Root executions dispatch setup and start to the
+  `pg_worker` helper, which runs with the sandbox credentials and touches the
+  prepared directories on behalf of the parent. Unprivileged executions keep
+  everything in-process. In both cases the cluster lifecycle still flows
+  through the embedded crate’s `.setup()` and `.start()` routines.
 
 - **On drop:** `TestCluster` will implement `Drop` to automatically **stop the
   database and clean up**. Upon going out of scope (e.g. end of a test), it
@@ -153,12 +150,13 @@ setup for tests (see docs/next-steps.md). This function will:
   (using ortho_config), applying any overrides like `PG_VERSION_REQ`,
   `PG_PORT`, etc., but **the developer need not set anything** for defaults.
 
-- Internally handle the privilege drop and call our existing
-  `pg_embedded_setup_unpriv::run()` logic to prepare directories if needed (see
-  docs/next-steps.md). In root mode, this means creating/chowning the data and
-  installation directories to `"nobody"` and initializing the DB cluster files
-  (essentially performing an `initdb` (see src/lib.rs). In unprivileged mode,
-  this step can be bypassed or simplified since no chown is required.
+- Internally prepare the directories and configuration with the correct owner
+  and permissions, then invoke either the in-process bootstrap or the
+  subprocess-based worker. When root privileges are detected, the helper
+  creates, chmods, and chowns the installation and data directories for
+  `"nobody"`, writes the worker payload, and asks the worker to perform the
+  remaining privileged calls. Unprivileged callers stay within the current
+  process because no identity switch is necessary.
 
 - Return the resulting configuration (e.g. a `PgSettings` or our own struct) and
   paths that were used (see docs/next-steps.md). This gives visibility into
@@ -288,8 +286,9 @@ async fn test_async_thing() {
 }
 ```
 
-Under the hood, both will configure and launch Postgres appropriately (dropping
-privileges if root, etc.). The underlying crate supports both patterns, so we
+Under the hood, both will configure and launch Postgres appropriately,
+delegating to the worker helper when root privileges are detected so lifecycle
+commands run as `nobody`. The underlying crate supports both patterns, so we
 will leverage that (see postgresql-embedded README).
 
 - **rstest fixtures:** We plan to publish built-in *fixtures* for the rstest

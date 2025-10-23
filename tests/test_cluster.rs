@@ -18,6 +18,9 @@ use pg_embedded_setup_unpriv::{
 use postgresql_embedded::Settings;
 use tokio::runtime::{Builder, Runtime};
 
+#[cfg(feature = "privileged-tests")]
+use nix::unistd::geteuid;
+
 fn test_runtime() -> Runtime {
     Builder::new_current_thread()
         .enable_all()
@@ -46,6 +49,8 @@ fn dummy_settings(privileges: ExecutionPrivileges) -> TestBootstrapSettings {
         settings: Settings::default(),
         environment: dummy_environment(),
         worker_binary: None,
+        setup_timeout: Duration::from_secs(180),
+        start_timeout: Duration::from_secs(60),
         shutdown_timeout: Duration::from_secs(15),
     }
 }
@@ -127,4 +132,40 @@ fn installing_hook_twice_returns_error() {
     let guard =
         install_run_root_operation_hook(|_, _, _| Ok(())).expect("hook installs after guard drop");
     drop(guard);
+}
+
+#[cfg(feature = "privileged-tests")]
+#[test]
+fn worker_setup_times_out_when_helper_hangs() {
+    let Some(worker_path) = option_env!("CARGO_BIN_EXE_pg_worker_hang") else {
+        eprintln!("skipping worker timeout test: hanging worker binary not available");
+        return;
+    };
+
+    if !geteuid().is_root() {
+        eprintln!("skipping worker timeout test: requires root privileges");
+        return;
+    }
+
+    let runtime = test_runtime();
+    let mut bootstrap = dummy_settings(ExecutionPrivileges::Root);
+    bootstrap.worker_binary = Some(Utf8PathBuf::from(worker_path));
+    bootstrap.setup_timeout = Duration::from_secs(1);
+    bootstrap.start_timeout = Duration::from_secs(1);
+
+    let env_vars = bootstrap.environment.to_env();
+    let result = invoke_with_privileges(
+        &runtime,
+        ExecutionPrivileges::Root,
+        &bootstrap,
+        &env_vars,
+        WorkerOperation::Setup,
+        async { Ok::<(), postgresql_embedded::Error>(()) },
+    );
+    let err = result.expect_err("expected hanging worker to time out");
+    let message = err.to_string();
+    assert!(
+        message.contains("timed out"),
+        "expected timeout error, got: {message}",
+    );
 }
