@@ -60,6 +60,14 @@ impl ClusterWorld {
         self.skip_reason.is_some()
     }
 
+    fn ensure_not_skipped(&self) -> Result<()> {
+        if self.is_skipped() {
+            Err(eyre!("scenario skipped"))
+        } else {
+            Ok(())
+        }
+    }
+
     fn record_cluster(&mut self, cluster: TestCluster, before: EnvSnapshot) -> Result<()> {
         let during = EnvSnapshot::capture();
         let data_dir = Utf8PathBuf::from_path_buf(cluster.settings().data_dir.clone())
@@ -83,45 +91,35 @@ impl ClusterWorld {
     }
 
     fn data_dir(&self) -> Result<&Utf8PathBuf> {
-        if self.is_skipped() {
-            return Err(eyre!("scenario skipped"));
-        }
+        self.ensure_not_skipped()?;
         self.data_dir
             .as_ref()
             .ok_or_else(|| eyre!("cluster did not record a data directory"))
     }
 
     fn cluster(&self) -> Result<&TestCluster> {
-        if self.is_skipped() {
-            return Err(eyre!("scenario skipped"));
-        }
+        self.ensure_not_skipped()?;
         self.cluster
             .as_ref()
             .ok_or_else(|| eyre!("TestCluster was not created"))
     }
 
     fn env_before(&self) -> Result<&EnvSnapshot> {
-        if self.is_skipped() {
-            return Err(eyre!("scenario skipped"));
-        }
+        self.ensure_not_skipped()?;
         self.env_before
             .as_ref()
             .ok_or_else(|| eyre!("environment snapshot before cluster missing"))
     }
 
     fn env_during(&self) -> Result<&EnvSnapshot> {
-        if self.is_skipped() {
-            return Err(eyre!("scenario skipped"));
-        }
+        self.ensure_not_skipped()?;
         self.env_during
             .as_ref()
             .ok_or_else(|| eyre!("environment snapshot during cluster missing"))
     }
 
     fn error(&self) -> Result<&str> {
-        if self.is_skipped() {
-            return Err(eyre!("scenario skipped"));
-        }
+        self.ensure_not_skipped()?;
         self.error
             .as_deref()
             .ok_or_else(|| eyre!("cluster creation succeeded unexpectedly"))
