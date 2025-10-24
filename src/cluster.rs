@@ -241,8 +241,7 @@ impl TestCluster {
             worker,
             settings: &bootstrap.settings,
             env_vars,
-            command: operation.as_str(),
-            error_context: operation.error_context(),
+            operation,
             timeout: operation.timeout(bootstrap),
         };
 
