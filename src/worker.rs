@@ -166,7 +166,39 @@ impl fmt::Debug for WorkerPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WorkerPayload")
             .field("settings", &self.settings)
-            .field("environment", &self.environment)
+            .field("environment", &RedactedEnvironment(&self.environment))
             .finish()
+    }
+}
+
+struct RedactedEnvironment<'a>(&'a [(String, Option<String>)]);
+
+impl fmt::Debug for RedactedEnvironment<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut entries = f.debug_list();
+
+        for (key, value) in self.0 {
+            entries.entry(&RedactedEnvironmentEntry {
+                key,
+                has_value: value.is_some(),
+            });
+        }
+
+        entries.finish()
+    }
+}
+
+struct RedactedEnvironmentEntry<'a> {
+    key: &'a str,
+    has_value: bool,
+}
+
+impl fmt::Debug for RedactedEnvironmentEntry<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.has_value {
+            write!(f, "{}=<redacted>", self.key)
+        } else {
+            write!(f, "{}=<unset>", self.key)
+        }
     }
 }
