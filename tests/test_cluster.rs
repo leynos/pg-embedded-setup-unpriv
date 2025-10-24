@@ -1,5 +1,5 @@
 #![cfg(all(unix, feature = "cluster-unit-tests"))]
-//! Unit tests covering TestCluster privilege dispatch behaviour.
+//! Unit tests covering `TestCluster` privilege dispatch behaviour.
 
 use std::sync::{
     Arc,
@@ -8,13 +8,14 @@ use std::sync::{
 use std::time::Duration;
 
 use camino::Utf8PathBuf;
+use color_eyre::eyre::{Result, ensure, eyre};
 use pg_embedded_setup_unpriv::test_support::{
     RunRootOperationHookInstallError, drain_hook_install_logs, install_run_root_operation_hook,
     invoke_with_privileges,
 };
 use pg_embedded_setup_unpriv::{
-    ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
-    WorkerOperation,
+    ExecutionMode, ExecutionPrivileges, PrivilegedOperationContext, TestBootstrapEnvironment,
+    TestBootstrapSettings, WorkerOperation,
 };
 use postgresql_embedded::Settings;
 use tokio::runtime::{Builder, Runtime};
@@ -22,11 +23,11 @@ use tokio::runtime::{Builder, Runtime};
 #[cfg(feature = "privileged-tests")]
 use nix::unistd::geteuid;
 
-fn test_runtime() -> Runtime {
+fn test_runtime() -> Result<Runtime> {
     Builder::new_current_thread()
         .enable_all()
         .build()
-        .expect("create test runtime")
+        .map_err(|err| eyre!(err))
 }
 
 fn dummy_environment() -> TestBootstrapEnvironment {
@@ -57,36 +58,35 @@ fn dummy_settings(privileges: ExecutionPrivileges) -> TestBootstrapSettings {
 }
 
 #[test]
-fn unprivileged_operations_run_in_process() {
-    let runtime = test_runtime();
+fn unprivileged_operations_run_in_process() -> Result<()> {
+    let runtime = test_runtime()?;
     let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
     let env_vars = bootstrap.environment.to_env();
+    let ctx = PrivilegedOperationContext::new(&runtime, &bootstrap, &env_vars);
     let setup_calls = AtomicUsize::new(0);
 
     for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
         let call_counter = &setup_calls;
-        invoke_with_privileges(
-            &runtime,
-            ExecutionPrivileges::Unprivileged,
-            &bootstrap,
-            &env_vars,
-            operation,
-            async move {
-                call_counter.fetch_add(1, Ordering::Relaxed);
-                Ok::<(), postgresql_embedded::Error>(())
-            },
-        )
-        .expect("in-process operation should succeed");
+        invoke_with_privileges(&ctx, operation, async move {
+            call_counter.fetch_add(1, Ordering::Relaxed);
+            Ok::<(), postgresql_embedded::Error>(())
+        })
+        .map_err(|err| eyre!(err))?;
     }
 
-    assert_eq!(setup_calls.load(Ordering::Relaxed), 2);
+    ensure!(
+        setup_calls.load(Ordering::Relaxed) == 2,
+        "expected setup and start operations to run in-process",
+    );
+    Ok(())
 }
 
 #[test]
-fn root_operations_delegate_to_worker() {
-    let runtime = test_runtime();
+fn root_operations_delegate_to_worker() -> Result<()> {
+    let runtime = test_runtime()?;
     let bootstrap = dummy_settings(ExecutionPrivileges::Root);
     let env_vars = bootstrap.environment.to_env();
+    let ctx = PrivilegedOperationContext::new(&runtime, &bootstrap, &env_vars);
     let worker_calls = Arc::new(AtomicUsize::new(0));
     let in_process_invoked = Arc::new(AtomicBool::new(false));
 
@@ -95,86 +95,101 @@ fn root_operations_delegate_to_worker() {
         hook_calls.fetch_add(1, Ordering::Relaxed);
         Ok(())
     })
-    .expect("install run_root_operation_hook");
+    .map_err(|err| eyre!(err))?;
 
     for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
         let flag = Arc::clone(&in_process_invoked);
-        invoke_with_privileges(
-            &runtime,
-            ExecutionPrivileges::Root,
-            &bootstrap,
-            &env_vars,
-            operation,
-            async move {
-                flag.store(true, Ordering::Relaxed);
-                Ok::<(), postgresql_embedded::Error>(())
-            },
-        )
-        .expect("worker operation should succeed");
+        invoke_with_privileges(&ctx, operation, async move {
+            flag.store(true, Ordering::Relaxed);
+            Ok::<(), postgresql_embedded::Error>(())
+        })
+        .map_err(|err| eyre!(err))?;
     }
 
-    assert_eq!(worker_calls.load(Ordering::Relaxed), 2);
-    assert!(!in_process_invoked.load(Ordering::Relaxed));
+    ensure!(
+        worker_calls.load(Ordering::Relaxed) == 2,
+        "expected both worker operations to execute",
+    );
+    ensure!(
+        !in_process_invoked.load(Ordering::Relaxed),
+        "in-process path should not run when privileges drop to the worker",
+    );
+    Ok(())
 }
 
 #[test]
-fn installing_hook_twice_returns_error() {
-    let _ = drain_hook_install_logs();
-    let guard = install_run_root_operation_hook(|_, _, _| Ok(()))
-        .expect("initial hook installation succeeds");
+fn installing_hook_twice_returns_error() -> Result<()> {
+    drop(drain_hook_install_logs());
+    let initial_guard = install_run_root_operation_hook(|_, _, _| Ok(()))
+        .map_err(|install_err| eyre!(install_err))?;
 
-    let err = match install_run_root_operation_hook(|_, _, _| Ok(())) {
-        Ok(_) => panic!("second installation should fail"),
-        Err(err) => err,
+    let Err(err) = install_run_root_operation_hook(|_, _, _| Ok(())) else {
+        return Err(eyre!("second installation should fail"));
     };
-    assert_eq!(err, RunRootOperationHookInstallError::AlreadyInstalled);
+    ensure!(
+        err == RunRootOperationHookInstallError::AlreadyInstalled,
+        "unexpected install outcome: {err:?}",
+    );
     let logs = drain_hook_install_logs();
-    assert!(
+    ensure!(
         logs.iter()
             .any(|entry| entry.contains("run_root_operation_hook already installed")),
         "expected contention log entry, got {logs:?}",
     );
 
-    drop(guard);
+    drop(initial_guard);
 
-    let guard =
-        install_run_root_operation_hook(|_, _, _| Ok(())).expect("hook installs after guard drop");
-    drop(guard);
-    let _ = drain_hook_install_logs();
+    let reinstalled_guard = install_run_root_operation_hook(|_, _, _| Ok(()))
+        .map_err(|install_err| eyre!(install_err))?;
+    drop(reinstalled_guard);
+    drop(drain_hook_install_logs());
+    Ok(())
 }
 
 #[cfg(feature = "privileged-tests")]
 #[test]
-fn worker_setup_times_out_when_helper_hangs() {
-    let Some(worker_path) = option_env!("CARGO_BIN_EXE_pg_worker_hang") else {
-        eprintln!("skipping worker timeout test: hanging worker binary not available");
-        return;
+fn worker_setup_times_out_when_helper_hangs() -> Result<()> {
+    let Some(worker_path) = hanging_worker_binary() else {
+        return Ok(());
     };
 
     if !geteuid().is_root() {
-        eprintln!("skipping worker timeout test: requires root privileges");
-        return;
+        tracing::warn!("skipping worker timeout test: requires root privileges");
+        return Ok(());
     }
 
-    let runtime = test_runtime();
+    run_hanging_worker_timeout_test(Utf8PathBuf::from(worker_path))
+}
+
+#[cfg(feature = "privileged-tests")]
+fn hanging_worker_binary() -> Option<&'static str> {
+    let path = option_env!("CARGO_BIN_EXE_pg_worker_hang");
+    if path.is_none() {
+        tracing::warn!("skipping worker timeout test: hanging worker binary not available");
+    }
+    path
+}
+
+#[cfg(feature = "privileged-tests")]
+fn run_hanging_worker_timeout_test(worker_path: Utf8PathBuf) -> Result<()> {
+    let runtime = test_runtime()?;
     let mut bootstrap = dummy_settings(ExecutionPrivileges::Root);
-    bootstrap.worker_binary = Some(Utf8PathBuf::from(worker_path));
+    bootstrap.worker_binary = Some(worker_path);
     bootstrap.setup_timeout = Duration::from_secs(1);
     bootstrap.start_timeout = Duration::from_secs(1);
 
     let env_vars = bootstrap.environment.to_env();
-    let result = invoke_with_privileges(
-        &runtime,
-        ExecutionPrivileges::Root,
-        &bootstrap,
-        &env_vars,
-        WorkerOperation::Setup,
-        async { Ok::<(), postgresql_embedded::Error>(()) },
-    );
-    let err = result.expect_err("expected hanging worker to time out");
+    let ctx = PrivilegedOperationContext::new(&runtime, &bootstrap, &env_vars);
+    let result = invoke_with_privileges(&ctx, WorkerOperation::Setup, async {
+        Ok::<(), postgresql_embedded::Error>(())
+    });
+    let Err(err) = result else {
+        return Err(eyre!("expected hanging worker to time out"));
+    };
     let message = err.to_string();
-    assert!(
+    ensure!(
         message.contains("timed out"),
         "expected timeout error, got: {message}",
     );
+    Ok(())
 }

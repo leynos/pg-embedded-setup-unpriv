@@ -29,6 +29,6 @@ pub fn remove_tree(path: &Utf8Path) -> Result<()> {
     match dir.remove_dir_all(relative.as_std_path()) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).with_context(|| format!("remove {}", path)),
+        Err(err) => Err(err).with_context(|| format!("remove {path}")),
     }
 }

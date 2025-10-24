@@ -1,4 +1,4 @@
-//! Bootstraps embedded PostgreSQL while adapting to the caller's privileges.
+//! Bootstraps embedded `PostgreSQL` while adapting to the caller's privileges.
 //!
 //! Provides [`bootstrap_for_tests`] so suites can retrieve structured settings and
 //! prepared environment variables without reimplementing bootstrap orchestration.
@@ -26,7 +26,7 @@ const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_SHUTDOWN_TIMEOUT_SECS: u64 = 600;
 const SHUTDOWN_TIMEOUT_ENV: &str = "PG_SHUTDOWN_TIMEOUT_SECS";
 
-/// Represents the privileges the process is running with when bootstrapping PostgreSQL.
+/// Represents the privileges the process is running with when bootstrapping `PostgreSQL`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionPrivileges {
     /// The process owns `root` privileges and must drop to `nobody` for filesystem work.
@@ -35,7 +35,7 @@ pub enum ExecutionPrivileges {
     Unprivileged,
 }
 
-/// Selects how PostgreSQL lifecycle commands run when privileged execution is required.
+/// Selects how `PostgreSQL` lifecycle commands run when privileged execution is required.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
     /// Execute lifecycle commands directly within the current process.
@@ -57,11 +57,11 @@ struct XdgDirs {
 /// Captures the environment variables prepared for test executions.
 #[derive(Debug, Clone)]
 pub struct TestBootstrapEnvironment {
-    /// Effective home directory for the PostgreSQL user during the tests.
+    /// Effective home directory for the `PostgreSQL` user during the tests.
     pub home: Utf8PathBuf,
-    /// Directory used for cached PostgreSQL artefacts.
+    /// Directory used for cached `PostgreSQL` artefacts.
     pub xdg_cache_home: Utf8PathBuf,
-    /// Directory used for PostgreSQL runtime state, such as sockets.
+    /// Directory used for `PostgreSQL` runtime state, such as sockets.
     pub xdg_runtime_dir: Utf8PathBuf,
     /// Location of the generated `.pgpass` file.
     pub pgpass_file: Utf8PathBuf,
@@ -84,6 +84,7 @@ impl TestBootstrapEnvironment {
     }
 
     /// Returns the prepared environment variables as key/value pairs.
+    #[must_use]
     pub fn to_env(&self) -> Vec<(String, Option<String>)> {
         let mut env = vec![
             ("HOME".into(), Some(self.home.as_str().into())),
@@ -146,14 +147,109 @@ fn shutdown_timeout_from_env() -> BootstrapResult<Duration> {
     }
 }
 
+fn worker_binary_from_env() -> BootstrapResult<Option<Utf8PathBuf>> {
+    let Some(raw) = env::var_os("PG_EMBEDDED_WORKER") else {
+        return Ok(None);
+    };
+
+    let path = Utf8PathBuf::from_path_buf(PathBuf::from(raw)).map_err(|_| {
+        BootstrapError::from(color_eyre::eyre::eyre!(
+            "PG_EMBEDDED_WORKER must contain a valid UTF-8 path"
+        ))
+    })?;
+
+    validate_worker_binary(&path)?;
+    Ok(Some(path))
+}
+
+fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {
+    let metadata = fs::metadata(path.as_std_path()).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            return BootstrapError::new(
+                BootstrapErrorKind::WorkerBinaryMissing,
+                color_eyre::eyre::eyre!("failed to access PG_EMBEDDED_WORKER at {path}: {err}"),
+            );
+        }
+
+        BootstrapError::from(color_eyre::eyre::eyre!(
+            "failed to access PG_EMBEDDED_WORKER at {path}: {err}"
+        ))
+    })?;
+
+    if !metadata.is_file() {
+        return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+            "PG_EMBEDDED_WORKER must reference a regular file: {path}"
+        )));
+    }
+
+    #[cfg(unix)]
+    {
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                "PG_EMBEDDED_WORKER must be executable: {path}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn prepare_bootstrap(
+    privileges: ExecutionPrivileges,
+    settings: Settings,
+    cfg: &PgEnvCfg,
+) -> BootstrapResult<PreparedBootstrap> {
+    #[cfg(unix)]
+    {
+        match privileges {
+            ExecutionPrivileges::Root => bootstrap_with_root(settings, cfg),
+            ExecutionPrivileges::Unprivileged => bootstrap_unprivileged(settings, cfg),
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = privileges;
+        bootstrap_unprivileged(settings, cfg)
+    }
+}
+
+fn determine_execution_mode(
+    privileges: ExecutionPrivileges,
+    worker_binary: Option<&Utf8PathBuf>,
+) -> BootstrapResult<ExecutionMode> {
+    #[cfg(unix)]
+    {
+        match privileges {
+            ExecutionPrivileges::Root => {
+                if worker_binary.is_none() {
+                    Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                        "PG_EMBEDDED_WORKER must be set when running with root privileges"
+                    )))
+                } else {
+                    Ok(ExecutionMode::Subprocess)
+                }
+            }
+            ExecutionPrivileges::Unprivileged => Ok(ExecutionMode::InProcess),
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = worker_binary;
+        let _ = privileges;
+        Ok(ExecutionMode::InProcess)
+    }
+}
+
 /// Structured settings returned from [`bootstrap_for_tests`].
 #[derive(Debug, Clone)]
 pub struct TestBootstrapSettings {
     /// Privilege level detected for the current process.
     pub privileges: ExecutionPrivileges,
-    /// Strategy for executing PostgreSQL lifecycle commands.
+    /// Strategy for executing `PostgreSQL` lifecycle commands.
     pub execution_mode: ExecutionMode,
-    /// PostgreSQL configuration prepared for the embedded instance.
+    /// `PostgreSQL` configuration prepared for the embedded instance.
     pub settings: Settings,
     /// Environment variables required to exercise the embedded instance.
     pub environment: TestBootstrapEnvironment,
@@ -163,7 +259,7 @@ pub struct TestBootstrapSettings {
     pub setup_timeout: Duration,
     /// Maximum time to allow the worker to complete the start phase.
     pub start_timeout: Duration,
-    /// Grace period granted to PostgreSQL during drop before teardown proceeds regardless.
+    /// Grace period granted to `PostgreSQL` during drop before teardown proceeds regardless.
     pub shutdown_timeout: Duration,
 }
 
@@ -173,6 +269,7 @@ pub struct TestBootstrapSettings {
 /// non-Unix platforms – follow the unprivileged flow. The detection itself is deliberately
 /// lightweight: a simple effective-UID probe avoids shelling out and keeps start-up fast while
 /// remaining easy to exercise inside integration tests that run the subprocess-based bootstrap.
+#[must_use]
 pub fn detect_execution_privileges() -> ExecutionPrivileges {
     #[cfg(unix)]
     {
@@ -278,7 +375,7 @@ fn prepare_timezone_env() -> BootstrapResult<TimezoneEnv> {
 
     let timezone = match env::var("TZ") {
         Ok(value) if !value.trim().is_empty() => value,
-        Ok(_) | Err(std::env::VarError::NotPresent) => DEFAULT_TIMEZONE.to_string(),
+        Ok(_) | Err(std::env::VarError::NotPresent) => DEFAULT_TIMEZONE.to_owned(),
         Err(std::env::VarError::NotUnicode(_)) => {
             return Err(color_eyre::eyre::eyre!("TZ must be valid UTF-8").into());
         }
@@ -320,10 +417,10 @@ fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
     }
 }
 
-/// Bootstraps an embedded PostgreSQL instance, branching between root and unprivileged flows.
+/// Bootstraps an embedded `PostgreSQL` instance, branching between root and unprivileged flows.
 ///
 /// The bootstrap honours the following environment variables when present:
-/// - `PG_RUNTIME_DIR`: Overrides the PostgreSQL installation directory.
+/// - `PG_RUNTIME_DIR`: Overrides the `PostgreSQL` installation directory.
 /// - `PG_DATA_DIR`: Overrides the data directory used for initialisation.
 /// - `PG_SUPERUSER`: Sets the superuser account name.
 /// - `PG_PASSWORD`: Supplies the superuser password.
@@ -345,12 +442,16 @@ fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
 ///     Ok(())
 /// }
 /// ```
+///
+/// # Errors
+/// Returns an error when bootstrap preparation fails or when subprocess orchestration
+/// cannot be configured.
 pub fn run() -> crate::Result<()> {
     orchestrate_bootstrap()?;
     Ok(())
 }
 
-/// Bootstraps PostgreSQL for integration tests and surfaces the prepared settings.
+/// Bootstraps `PostgreSQL` for integration tests and surfaces the prepared settings.
 ///
 /// # Examples
 /// ```no_run
@@ -368,93 +469,26 @@ pub fn run() -> crate::Result<()> {
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Errors
+/// Returns an error when bootstrap preparation fails or when subprocess orchestration
+/// cannot be configured.
 pub fn bootstrap_for_tests() -> BootstrapResult<TestBootstrapSettings> {
     orchestrate_bootstrap()
 }
 
 fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
-    // `color_eyre::install()` is idempotent for logging but returns an error if invoked twice.
-    // Behavioural tests exercise consecutive bootstraps, so ignore the duplicate registration.
-    let _ = color_eyre::install();
+    if let Err(err) = color_eyre::install() {
+        tracing::debug!("color_eyre already installed: {err}");
+    }
 
     let privileges = detect_execution_privileges();
     let cfg = PgEnvCfg::load().context("failed to load configuration via OrthoConfig")?;
     let settings = cfg.to_settings()?;
-
-    let worker_binary = env::var_os("PG_EMBEDDED_WORKER")
-        .map(|raw| {
-            Utf8PathBuf::from_path_buf(PathBuf::from(raw)).map_err(|_| {
-                BootstrapError::from(color_eyre::eyre::eyre!(
-                    "PG_EMBEDDED_WORKER must contain a valid UTF-8 path"
-                ))
-            })
-        })
-        .transpose()?;
-
-    if let Some(worker) = &worker_binary {
-        let metadata = match fs::metadata(worker.as_std_path()) {
-            Ok(metadata) => metadata,
-            Err(err) => {
-                if err.kind() == std::io::ErrorKind::NotFound {
-                    return Err(BootstrapError::new(
-                        BootstrapErrorKind::WorkerBinaryMissing,
-                        color_eyre::eyre::eyre!(
-                            "failed to access PG_EMBEDDED_WORKER at {worker}: {err}"
-                        ),
-                    ));
-                }
-                return Err(BootstrapError::from(color_eyre::eyre::eyre!(
-                    "failed to access PG_EMBEDDED_WORKER at {worker}: {err}"
-                )));
-            }
-        };
-
-        if !metadata.is_file() {
-            return Err(BootstrapError::from(color_eyre::eyre::eyre!(
-                "PG_EMBEDDED_WORKER must reference a regular file: {worker}"
-            )));
-        }
-
-        #[cfg(unix)]
-        {
-            if metadata.permissions().mode() & 0o111 == 0 {
-                return Err(BootstrapError::from(color_eyre::eyre::eyre!(
-                    "PG_EMBEDDED_WORKER must be executable: {worker}"
-                )));
-            }
-        }
-    }
-
+    let worker_binary = worker_binary_from_env()?;
     let shutdown_timeout = shutdown_timeout_from_env()?;
-
-    #[cfg(unix)]
-    let prepared = {
-        match (privileges, settings) {
-            (ExecutionPrivileges::Root, settings) => bootstrap_with_root(settings, &cfg)?,
-            (ExecutionPrivileges::Unprivileged, settings) => {
-                bootstrap_unprivileged(settings, &cfg)?
-            }
-        }
-    };
-
-    #[cfg(not(unix))]
-    let prepared = bootstrap_unprivileged(settings, &cfg)?;
-
-    #[cfg(unix)]
-    let execution_mode = match privileges {
-        ExecutionPrivileges::Root => {
-            if worker_binary.is_none() {
-                return Err(BootstrapError::from(color_eyre::eyre::eyre!(
-                    "PG_EMBEDDED_WORKER must be set when running with root privileges"
-                )));
-            }
-            ExecutionMode::Subprocess
-        }
-        ExecutionPrivileges::Unprivileged => ExecutionMode::InProcess,
-    };
-
-    #[cfg(not(unix))]
-    let execution_mode = ExecutionMode::InProcess;
+    let prepared = prepare_bootstrap(privileges, settings, &cfg)?;
+    let execution_mode = determine_execution_mode(privileges, worker_binary.as_ref())?;
 
     Ok(TestBootstrapSettings {
         privileges,

@@ -51,12 +51,12 @@ impl ClusterWorld {
     }
 
     fn mark_skip(&mut self, reason: impl Into<String>) {
-        let reason = reason.into();
-        eprintln!("{reason}");
-        self.skip_reason = Some(reason);
+        let message = reason.into();
+        tracing::warn!("{message}");
+        self.skip_reason = Some(message);
     }
 
-    fn is_skipped(&self) -> bool {
+    const fn is_skipped(&self) -> bool {
         self.skip_reason.is_some()
     }
 
@@ -72,7 +72,7 @@ impl ClusterWorld {
         Ok(())
     }
 
-    fn record_error(&mut self, err: impl std::fmt::Display + std::fmt::Debug) -> Result<()> {
+    fn record_error(&mut self, err: impl std::fmt::Display + std::fmt::Debug) {
         let message = err.to_string();
         let debug = format!("{err:?}");
         self.error = Some(message.clone());
@@ -80,7 +80,6 @@ impl ClusterWorld {
         if let Some(reason) = skip_message("SKIP-TEST-CLUSTER", &message, Some(&debug)) {
             self.mark_skip(reason);
         }
-        Ok(())
     }
 
     fn data_dir(&self) -> Result<&Utf8PathBuf> {
@@ -135,34 +134,47 @@ impl Drop for ClusterWorld {
     }
 }
 
+type ClusterWorldFixture = Result<RefCell<ClusterWorld>>;
+
+fn borrow_world(world: &ClusterWorldFixture) -> Result<&RefCell<ClusterWorld>> {
+    world
+        .as_ref()
+        .map_err(|err| eyre!(format!("cluster fixture construction failed: {err}")))
+}
+
 #[fixture]
-fn world() -> RefCell<ClusterWorld> {
-    RefCell::new(ClusterWorld::new().expect("create cluster world"))
+fn world() -> ClusterWorldFixture {
+    Ok(RefCell::new(ClusterWorld::new()?))
 }
 
 #[given("a cluster sandbox for tests")]
-fn given_cluster_sandbox(world: &RefCell<ClusterWorld>) -> Result<()> {
-    world.borrow().sandbox.reset()
+fn given_cluster_sandbox(world: &ClusterWorldFixture) -> Result<()> {
+    borrow_world(world)?.borrow().sandbox.reset()
 }
 
 #[when("a TestCluster is created")]
-fn when_cluster_created(world: &RefCell<ClusterWorld>) -> Result<()> {
+fn when_cluster_created(world: &ClusterWorldFixture) -> Result<()> {
+    let world_cell = borrow_world(world)?;
     let before = EnvSnapshot::capture();
     let result = {
-        let world_ref = world.borrow();
+        let world_ref = world_cell.borrow();
         let vars = world_ref.sandbox.env_without_timezone();
         world_ref.sandbox.with_env(vars, TestCluster::new)
     };
     match result {
-        Ok(cluster) => world.borrow_mut().record_cluster(cluster, before),
-        Err(err) => world.borrow_mut().record_error(err),
+        Ok(cluster) => world_cell.borrow_mut().record_cluster(cluster, before),
+        Err(err) => {
+            world_cell.borrow_mut().record_error(err);
+            Ok(())
+        }
     }
 }
 
 #[when("a TestCluster is created without a time zone database")]
-fn when_cluster_created_without_timezone(world: &RefCell<ClusterWorld>) -> Result<()> {
+fn when_cluster_created_without_timezone(world: &ClusterWorldFixture) -> Result<()> {
+    let world_cell = borrow_world(world)?;
     let (result, missing_dir) = {
-        let world_ref = world.borrow();
+        let world_ref = world_cell.borrow();
         let missing_dir = world_ref.sandbox.install_dir().join("missing-tz");
         (
             world_ref.sandbox.with_env(
@@ -175,18 +187,21 @@ fn when_cluster_created_without_timezone(world: &RefCell<ClusterWorld>) -> Resul
     match result {
         Ok(cluster) => {
             drop(cluster);
-            world.borrow_mut().record_error(eyre!(
-                "expected cluster creation to fail with missing time zone dir {}",
-                missing_dir
-            ))
+            world_cell.borrow_mut().record_error(eyre!(
+                "expected cluster creation to fail with missing time zone dir {missing_dir}"
+            ));
+            Ok(())
         }
-        Err(err) => world.borrow_mut().record_error(err),
+        Err(err) => {
+            world_cell.borrow_mut().record_error(err);
+            Ok(())
+        }
     }
 }
 
 #[then("the cluster reports sandbox-aligned settings")]
-fn then_cluster_reports_settings(world: &RefCell<ClusterWorld>) -> Result<()> {
-    let world_ref = world.borrow();
+fn then_cluster_reports_settings(world: &ClusterWorldFixture) -> Result<()> {
+    let world_ref = borrow_world(world)?.borrow();
     if world_ref.is_skipped() {
         return Ok(());
     }
@@ -219,8 +234,8 @@ fn then_cluster_reports_settings(world: &RefCell<ClusterWorld>) -> Result<()> {
 }
 
 #[then("the environment remains applied whilst the cluster runs")]
-fn then_environment_applied(world: &RefCell<ClusterWorld>) -> Result<()> {
-    let world_ref = world.borrow();
+fn then_environment_applied(world: &ClusterWorldFixture) -> Result<()> {
+    let world_ref = borrow_world(world)?.borrow();
     if world_ref.is_skipped() {
         return Ok(());
     }
@@ -245,8 +260,8 @@ fn then_environment_applied(world: &RefCell<ClusterWorld>) -> Result<()> {
 }
 
 #[then("the cluster stops automatically on drop")]
-fn then_cluster_stops(world: &RefCell<ClusterWorld>) -> Result<()> {
-    let mut world_mut = world.borrow_mut();
+fn then_cluster_stops(world: &ClusterWorldFixture) -> Result<()> {
+    let mut world_mut = borrow_world(world)?.borrow_mut();
     if world_mut.is_skipped() {
         return Ok(());
     }
@@ -269,8 +284,8 @@ fn then_cluster_stops(world: &RefCell<ClusterWorld>) -> Result<()> {
 }
 
 #[then("the cluster creation reports a time zone error")]
-fn then_cluster_reports_timezone_error(world: &RefCell<ClusterWorld>) -> Result<()> {
-    let world_ref = world.borrow();
+fn then_cluster_reports_timezone_error(world: &ClusterWorldFixture) -> Result<()> {
+    let world_ref = borrow_world(world)?.borrow();
     if world_ref.is_skipped() {
         return Ok(());
     }
@@ -283,16 +298,21 @@ fn then_cluster_reports_timezone_error(world: &RefCell<ClusterWorld>) -> Result<
 }
 
 #[scenario(path = "tests/features/test_cluster.feature", index = 0)]
-fn scenario_cluster_lifecycle(serial_guard: ScenarioSerialGuard, world: RefCell<ClusterWorld>) {
-    let _ = &serial_guard;
-    let _ = world;
+fn scenario_cluster_lifecycle(
+    serial_guard: ScenarioSerialGuard,
+    world: ClusterWorldFixture,
+) -> Result<()> {
+    let _guard = serial_guard;
+    let _ = world?;
+    Ok(())
 }
 
 #[scenario(path = "tests/features/test_cluster.feature", index = 1)]
 fn scenario_cluster_timezone_error(
     serial_guard: ScenarioSerialGuard,
-    world: RefCell<ClusterWorld>,
-) {
-    let _ = &serial_guard;
-    let _ = world;
+    world: ClusterWorldFixture,
+) -> Result<()> {
+    let _guard = serial_guard;
+    let _ = world?;
+    Ok(())
 }

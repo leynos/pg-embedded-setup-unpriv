@@ -4,7 +4,7 @@
 use std::ffi::OsString;
 use std::time::Duration;
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, ensure, eyre};
 use pg_embedded_setup_unpriv::bootstrap_for_tests;
 
 #[path = "support/cap_fs_bootstrap.rs"]
@@ -22,7 +22,10 @@ fn shutdown_timeout_defaults_to_15s() -> Result<()> {
     let env = sandbox.env_without_timezone();
     let outcome = sandbox.with_env(env, bootstrap_for_tests);
     let settings = outcome?;
-    assert_eq!(settings.shutdown_timeout, Duration::from_secs(15));
+    ensure!(
+        settings.shutdown_timeout == Duration::from_secs(15),
+        "shutdown timeout should default to 15 seconds",
+    );
     sandbox.reset()?;
     Ok(())
 }
@@ -37,7 +40,10 @@ fn shutdown_timeout_honours_override() -> Result<()> {
     ));
     let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
     let settings = outcome?;
-    assert_eq!(settings.shutdown_timeout, Duration::from_secs(42));
+    ensure!(
+        settings.shutdown_timeout == Duration::from_secs(42),
+        "shutdown timeout should honour overrides",
+    );
     sandbox.reset()?;
     Ok(())
 }
@@ -51,11 +57,13 @@ fn shutdown_timeout_rejects_non_numeric_values() -> Result<()> {
         Some(OsString::from("forty-two")),
     ));
     let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
-    let err = outcome.expect_err("expected invalid timeout value to fail");
-    assert!(
+    let Err(err) = outcome else {
+        return Err(eyre!("expected invalid timeout value to fail"));
+    };
+    ensure!(
         err.to_string()
             .contains("failed to parse PG_SHUTDOWN_TIMEOUT_SECS"),
-        "unexpected error message: {err}"
+        "unexpected error message: {err}",
     );
     sandbox.reset()?;
     Ok(())
@@ -70,10 +78,12 @@ fn shutdown_timeout_rejects_excessive_values() -> Result<()> {
         Some(OsString::from("601")),
     ));
     let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
-    let err = outcome.expect_err("expected excessive timeout to fail");
-    assert!(
+    let Err(err) = outcome else {
+        return Err(eyre!("expected excessive timeout to fail"));
+    };
+    ensure!(
         err.to_string().contains("must be 600 seconds or less"),
-        "unexpected error message: {err}"
+        "unexpected error message: {err}",
     );
     sandbox.reset()?;
     Ok(())
@@ -88,10 +98,12 @@ fn shutdown_timeout_rejects_zero() -> Result<()> {
         Some(OsString::from("0")),
     ));
     let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
-    let err = outcome.expect_err("expected zero timeout to fail");
-    assert!(
+    let Err(err) = outcome else {
+        return Err(eyre!("expected zero timeout to fail"));
+    };
+    ensure!(
         err.to_string().contains("must be at least 1 second"),
-        "unexpected error message: {err}"
+        "unexpected error message: {err}",
     );
     sandbox.reset()?;
     Ok(())

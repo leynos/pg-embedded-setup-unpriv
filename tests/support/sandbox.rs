@@ -1,16 +1,16 @@
-//! Shared sandbox for behavioural tests that need isolated PostgreSQL directories.
+//! Shared sandbox for behavioural tests that need isolated `PostgreSQL` directories.
 
 use std::ffi::OsString;
 
 use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::{Context, Result};
+use color_eyre::eyre::{Context, Result, eyre};
 
 use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
 
 use super::cap_fs::{remove_tree, set_permissions};
 use super::env::{ScopedEnvVars, build_env, with_scoped_env};
 
-/// Provides a capability-backed directory tree for behavioural PostgreSQL
+/// Provides a capability-backed directory tree for behavioural `PostgreSQL`
 /// tests. Each sandbox supplies dedicated installation and data directories so
 /// scenarios remain isolated.
 #[derive(Debug)]
@@ -51,12 +51,12 @@ impl TestSandbox {
         &self.install_dir
     }
 
-    /// Returns the PostgreSQL data directory assigned to the sandbox.
+    /// Returns the `PostgreSQL` data directory assigned to the sandbox.
     pub fn data_dir(&self) -> &Utf8Path {
         &self.data_dir
     }
 
-    /// Provides the base environment variables required for PostgreSQL to run
+    /// Provides the base environment variables required for `PostgreSQL` to run
     /// within the sandbox.
     pub fn base_env(&self) -> ScopedEnvVars {
         build_env([
@@ -88,6 +88,14 @@ impl TestSandbox {
 
     /// Runs `body` with the supplied environment scoped to the sandbox.
     pub fn with_env<R>(&self, vars: ScopedEnvVars, body: impl FnOnce() -> R) -> R {
+        debug_assert!(
+            vars.iter().any(|(key, value)| {
+                key == "PG_RUNTIME_DIR"
+                    && value.as_ref().map(OsString::as_os_str) == Some(self.install_dir.as_os_str())
+            }),
+            "sandbox environment missing PG_RUNTIME_DIR for {}",
+            self.install_dir
+        );
         with_scoped_env(vars, body)
     }
 
@@ -111,12 +119,12 @@ mod tests {
     fn env_with_timezone_override_sets_tzdir() -> Result<()> {
         let sandbox = TestSandbox::new("sandbox-tz-override")?;
         let vars = sandbox.env_with_timezone_override(sandbox.install_dir());
-        assert!(
-            vars.iter().any(|(key, value)| {
-                key == "TZDIR" && value == &Some(OsString::from(sandbox.install_dir().as_str()))
-            }),
-            "expected TZDIR override to be present",
-        );
+        let has_override = vars.iter().any(|(key, value)| {
+            key == "TZDIR" && value == &Some(OsString::from(sandbox.install_dir().as_str()))
+        });
+        if !has_override {
+            return Err(eyre!("expected TZDIR override to be present"));
+        }
         Ok(())
     }
 }

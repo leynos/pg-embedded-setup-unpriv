@@ -1,8 +1,8 @@
-//! Facilitates preparing an embedded PostgreSQL instance while dropping root
+//! Facilitates preparing an embedded `PostgreSQL` instance while dropping root
 //! privileges.
 //!
 //! The library owns the lifecycle for configuring paths, permissions, and
-//! process identity so the bundled PostgreSQL binaries can initialise safely
+//! process identity so the bundled `PostgreSQL` binaries can initialise safely
 //! under an unprivileged account.
 
 mod bootstrap;
@@ -32,12 +32,15 @@ pub use bootstrap::{
     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
     bootstrap_for_tests, detect_execution_privileges, run,
 };
+#[doc(hidden)]
+pub use cluster::PrivilegedOperationContext;
 pub use cluster::TestCluster;
 #[doc(hidden)]
 pub use cluster::WorkerOperation;
 #[doc(hidden)]
 pub use error::BootstrapResult;
-pub use error::{BootstrapError, BootstrapErrorKind, Error, Result};
+pub use error::PgEmbeddedError as Error;
+pub use error::{BootstrapError, BootstrapErrorKind, PgEmbeddedError, Result};
 #[cfg(feature = "privileged-tests")]
 #[cfg(all(
     unix,
@@ -75,7 +78,7 @@ use crate::error::{ConfigError, ConfigResult};
 use camino::Utf8PathBuf;
 use std::ffi::OsString;
 
-/// Captures PostgreSQL settings supplied via environment variables.
+/// Captures `PostgreSQL` settings supplied via environment variables.
 #[derive(Debug, Clone, Serialize, Deserialize, OrthoConfig, Default)]
 #[ortho_config(prefix = "PG")]
 ///
@@ -87,17 +90,17 @@ use std::ffi::OsString;
 /// assert!(cfg.port.is_none());
 /// ```
 pub struct PgEnvCfg {
-    /// Optional semver requirement that constrains the PostgreSQL version.
+    /// Optional semver requirement that constrains the `PostgreSQL` version.
     pub version_req: Option<String>,
-    /// Port assigned to the embedded PostgreSQL server.
+    /// Port assigned to the embedded `PostgreSQL` server.
     pub port: Option<u16>,
     /// Name of the administrative user created for the cluster.
     pub superuser: Option<String>,
     /// Password provisioned for the administrative user.
     pub password: Option<String>,
-    /// Directory used for PostgreSQL data files when provided.
+    /// Directory used for `PostgreSQL` data files when provided.
     pub data_dir: Option<Utf8PathBuf>,
-    /// Directory containing the PostgreSQL binaries when provided.
+    /// Directory containing the `PostgreSQL` binaries when provided.
     pub runtime_dir: Option<Utf8PathBuf>,
     /// Locale applied to `initdb` when specified.
     pub locale: Option<String>,
@@ -107,6 +110,10 @@ pub struct PgEnvCfg {
 
 impl PgEnvCfg {
     /// Loads configuration from environment variables without parsing CLI arguments.
+    ///
+    /// # Errors
+    /// Returns an error when environment parsing fails or derived configuration
+    /// cannot be represented using UTF-8 paths.
     pub fn load() -> ConfigResult<Self> {
         let args = [OsString::from("pg-embedded-setup-unpriv")];
         Self::load_from_iter(args).map_err(|err| ConfigError::from(eyre!(err)))
@@ -119,6 +126,9 @@ impl PgEnvCfg {
     ///
     /// # Returns
     /// A fully configured `Settings` instance on success, or an error if configuration fails.
+    ///
+    /// # Errors
+    /// Returns an error when the semantic version requirement cannot be parsed.
     pub fn to_settings(&self) -> Result<Settings> {
         let mut s = Settings::default();
 
@@ -143,10 +153,10 @@ impl PgEnvCfg {
             settings.port = p;
         }
         if let Some(ref u) = self.superuser {
-            settings.username = u.clone();
+            settings.username.clone_from(u);
         }
         if let Some(ref pw) = self.password {
-            settings.password = pw.clone();
+            settings.password.clone_from(pw);
         }
     }
 
@@ -159,7 +169,7 @@ impl PgEnvCfg {
         }
     }
 
-    /// Applies locale and encoding settings to the PostgreSQL configuration if specified
+    /// Applies locale and encoding settings to the `PostgreSQL` configuration if specified
     /// in the environment.
     ///
     /// Inserts the `locale` and `encoding` values into the settings configuration map when

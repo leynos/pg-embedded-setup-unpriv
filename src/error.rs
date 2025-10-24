@@ -1,10 +1,10 @@
-//! Domain error types for the embedded PostgreSQL bootstrapper.
+//! Domain error types for the embedded `PostgreSQL` bootstrapper.
 
 use color_eyre::Report;
 use thiserror::Error;
 
-/// Result alias for operations that may return a [`Error`].
-pub type Result<T> = std::result::Result<T, Error>;
+/// Result alias for operations that may return a [`PgEmbeddedError`].
+pub type Result<T> = std::result::Result<T, PgEmbeddedError>;
 
 /// Result alias for bootstrap-specific fallible operations.
 pub type BootstrapResult<T> = std::result::Result<T, BootstrapError>;
@@ -17,7 +17,7 @@ pub type ConfigResult<T> = std::result::Result<T, ConfigError>;
 
 /// Top-level error exposed by the crate.
 #[derive(Debug, Error)]
-pub enum Error {
+pub enum PgEmbeddedError {
     /// Indicates bootstrap initialisation failed.
     #[error("bootstrap failed")]
     Bootstrap(#[from] BootstrapError),
@@ -51,12 +51,14 @@ pub struct BootstrapError {
 impl BootstrapError {
     /// Constructs a new bootstrap error with the provided kind and diagnostic
     /// report.
-    pub fn new(kind: BootstrapErrorKind, report: Report) -> Self {
+    #[must_use]
+    pub const fn new(kind: BootstrapErrorKind, report: Report) -> Self {
         Self { kind, report }
     }
 
     /// Returns the semantic category for this bootstrap failure.
-    pub fn kind(&self) -> BootstrapErrorKind {
+    #[must_use]
+    pub const fn kind(&self) -> BootstrapErrorKind {
         self.kind
     }
 
@@ -86,12 +88,12 @@ impl From<ConfigError> for BootstrapError {
     }
 }
 
-impl From<Error> for BootstrapError {
-    fn from(err: Error) -> Self {
+impl From<PgEmbeddedError> for BootstrapError {
+    fn from(err: PgEmbeddedError) -> Self {
         match err {
-            Error::Bootstrap(inner) => inner,
-            Error::Privilege(inner) => inner.into(),
-            Error::Config(inner) => inner.into(),
+            PgEmbeddedError::Bootstrap(inner) => inner,
+            PgEmbeddedError::Privilege(inner) => inner.into(),
+            PgEmbeddedError::Config(inner) => inner.into(),
         }
     }
 }

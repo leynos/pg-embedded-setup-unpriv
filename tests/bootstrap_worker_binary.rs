@@ -8,7 +8,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, ensure, eyre};
 use pg_embedded_setup_unpriv::{BootstrapErrorKind, bootstrap_for_tests};
 
 #[path = "support/cap_fs_bootstrap.rs"]
@@ -24,7 +24,7 @@ use sandbox::TestSandbox;
 fn bootstrap_fails_when_worker_binary_missing() -> Result<()> {
     let sandbox = TestSandbox::new("missing-worker-binary")?;
     let missing_worker = sandbox.install_dir().join("nonexistent-worker");
-    assert!(
+    ensure!(
         !missing_worker.as_std_path().exists(),
         "expected test sandbox to start without a worker binary",
     );
@@ -38,10 +38,10 @@ fn bootstrap_fails_when_worker_binary_missing() -> Result<()> {
     let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
     let error = outcome
         .expect_err("bootstrap_for_tests should fail fast when the worker binary is missing");
-    assert_eq!(
-        error.kind(),
-        BootstrapErrorKind::WorkerBinaryMissing,
-        "expected structured worker-missing error",
+    ensure!(
+        error.kind() == BootstrapErrorKind::WorkerBinaryMissing,
+        "expected structured worker-missing error but observed {:?}",
+        error.kind()
     );
 
     sandbox.reset()?;
@@ -63,9 +63,9 @@ fn bootstrap_fails_when_worker_path_is_directory() -> Result<()> {
     let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
     let err = outcome.expect_err("bootstrap_for_tests should reject directory worker paths");
     let message = err.to_string();
-    assert!(
+    ensure!(
         message.contains("must reference a regular file"),
-        "expected regular-file error, got: {message}",
+        eyre!("expected regular-file error, got: {message}")
     );
 
     sandbox.reset()?;
@@ -92,9 +92,9 @@ fn bootstrap_fails_when_worker_binary_not_executable() -> Result<()> {
     let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
     let err = outcome.expect_err("bootstrap_for_tests should reject non-executable workers");
     let message = err.to_string();
-    assert!(
+    ensure!(
         message.contains("must be executable"),
-        "expected non-executable error, got: {message}",
+        eyre!("expected non-executable error, got: {message}")
     );
 
     sandbox.reset()?;
@@ -106,11 +106,12 @@ fn bootstrap_fails_when_worker_binary_not_executable() -> Result<()> {
 fn env_without_timezone_removes_tz_variable() -> Result<()> {
     let sandbox = TestSandbox::new("env-without-timezone")?;
     let env_vars = sandbox.env_without_timezone();
-    assert!(
-        env_vars
-            .iter()
-            .any(|(key, value)| key == OsStr::new("TZ") && value.is_none()),
-        "expected time zone helper to remove the TZ variable",
+    let tz_removed = env_vars
+        .iter()
+        .any(|(key, value)| key == OsStr::new("TZ") && value.is_none());
+    ensure!(
+        tz_removed,
+        "expected time zone helper to remove the TZ variable"
     );
 
     sandbox.reset()?;

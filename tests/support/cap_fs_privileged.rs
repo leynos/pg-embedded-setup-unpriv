@@ -19,7 +19,7 @@ pub fn ensure_dir(path: &Utf8Path, mode: u32) -> Result<()> {
 /// Opens a capability directory handle to the specified path.
 pub fn open_dir(path: &Utf8Path) -> Result<Dir> {
     Dir::open_ambient_dir(path.as_std_path(), ambient_authority())
-        .with_context(|| format!("open {}", path))
+        .with_context(|| format!("open {path}"))
 }
 
 /// Removes a directory tree when present, ignoring `NotFound` errors.
@@ -32,6 +32,6 @@ pub fn remove_tree(path: &Utf8Path) -> Result<()> {
     match dir.remove_dir_all(relative.as_std_path()) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).with_context(|| format!("remove {}", path)),
+        Err(err) => Err(err).with_context(|| format!("remove {path}")),
     }
 }

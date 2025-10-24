@@ -1,4 +1,4 @@
-//! Invokes PostgreSQL bootstrap operations inside a privileged worker process.
+//! Invokes `PostgreSQL` bootstrap operations inside a privileged worker process.
 //!
 //! Usage:
 //!
@@ -7,7 +7,7 @@
 //! ```
 //!
 //! The `operation` must be `setup`, `start`, or `stop`. The JSON payload at
-//! `config-path` must serialise a [`WorkerPayload`] containing PostgreSQL
+//! `config-path` must serialise a [`WorkerPayload`] containing `PostgreSQL`
 //! settings and environment overrides. A representative payload is:
 //!
 //! ```json
@@ -38,7 +38,7 @@
 #![cfg(unix)]
 
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::PathBuf;
 
@@ -54,7 +54,7 @@ enum Operation {
 }
 
 impl Operation {
-    fn parse(arg: OsString) -> Result<Self> {
+    fn parse(arg: &OsStr) -> Result<Self> {
         match arg.to_string_lossy().as_ref() {
             "setup" => Ok(Self::Setup),
             "start" => Ok(Self::Start),
@@ -76,14 +76,15 @@ fn run_worker(mut args: impl Iterator<Item = OsString>) -> Result<()> {
     let op = args
         .next()
         .ok_or_else(|| Report::msg("missing operation argument"))
-        .and_then(Operation::parse)?;
+        .and_then(|arg| Operation::parse(&arg))?;
     let config_path = args
         .next()
         .map(PathBuf::from)
         .ok_or_else(|| Report::msg("missing config path argument"))?;
     if let Some(extra) = args.next() {
+        let extra_arg = extra.to_string_lossy();
         return Err(Report::msg(format!(
-            "unexpected extra argument: {extra:?}; expected only operation and config path"
+            "unexpected extra argument: {extra_arg}; expected only operation and config path"
         )));
     }
 
@@ -102,9 +103,9 @@ fn run_worker(mut args: impl Iterator<Item = OsString>) -> Result<()> {
 
     for (key, value) in &payload.environment {
         match value {
-            Some(value) => unsafe {
+            Some(env_value) => unsafe {
                 // SAFETY: the worker is single-threaded; environment updates cannot race.
-                env::set_var(key, value);
+                env::set_var(key, env_value);
             },
             None => unsafe {
                 // SAFETY: the worker is single-threaded; environment updates cannot race.

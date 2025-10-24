@@ -1,8 +1,8 @@
-//! Validates that worker settings snapshots faithfully round-trip PostgreSQL settings.
+//! Validates that worker settings snapshots faithfully round-trip `PostgreSQL` settings.
 use std::collections::HashMap;
 use std::time::Duration;
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, ensure};
 use pg_embedded_setup_unpriv::worker::SettingsSnapshot;
 use postgresql_embedded::{Settings, VersionReq};
 
@@ -33,22 +33,40 @@ fn settings_snapshot_roundtrip_preserves_all_fields() -> Result<()> {
     let snapshot = SettingsSnapshot::try_from(&settings)?;
     let restored = snapshot.into_settings()?;
 
-    assert_eq!(restored.releases_url, expected.releases_url);
-    assert_eq!(restored.version, expected.version);
-    assert_eq!(restored.installation_dir, expected.installation_dir);
-    assert_eq!(restored.password_file, expected.password_file);
-    assert_eq!(restored.data_dir, expected.data_dir);
-    assert_eq!(restored.host, expected.host);
-    assert_eq!(restored.port, expected.port);
-    assert_eq!(restored.username, expected.username);
-    assert_eq!(restored.password, expected.password);
-    assert_eq!(restored.temporary, expected.temporary);
-    assert_eq!(restored.timeout, expected.timeout);
-    assert_eq!(restored.configuration, expected.configuration);
-    assert_eq!(
-        restored.trust_installation_dir,
-        expected.trust_installation_dir
-    );
+    let comparisons = [
+        (
+            "releases_url",
+            restored.releases_url == expected.releases_url,
+        ),
+        ("version", restored.version == expected.version),
+        (
+            "installation_dir",
+            restored.installation_dir == expected.installation_dir,
+        ),
+        (
+            "password_file",
+            restored.password_file == expected.password_file,
+        ),
+        ("data_dir", restored.data_dir == expected.data_dir),
+        ("host", restored.host == expected.host),
+        ("port", restored.port == expected.port),
+        ("username", restored.username == expected.username),
+        ("password", restored.password == expected.password),
+        ("temporary", restored.temporary == expected.temporary),
+        ("timeout", restored.timeout == expected.timeout),
+        (
+            "configuration",
+            restored.configuration == expected.configuration,
+        ),
+        (
+            "trust_installation_dir",
+            restored.trust_installation_dir == expected.trust_installation_dir,
+        ),
+    ];
+
+    for (field, matches) in comparisons {
+        ensure!(matches, "{field} did not round-trip correctly");
+    }
 
     Ok(())
 }

@@ -6,11 +6,10 @@
 //! environment mutex). Following this order prevents deadlocks when multiple
 //! suites mutate process-wide state.
 
-use once_cell::sync::Lazy;
 use rstest::fixture;
 use std::sync::{Mutex, MutexGuard};
 
-static SCENARIO_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static SCENARIO_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
 #[derive(Debug)]
 #[must_use = "Hold this guard for the duration of the serialised scenario"]
@@ -46,7 +45,7 @@ pub struct ScenarioSerialGuard {
 pub fn serial_guard() -> ScenarioSerialGuard {
     let guard = SCENARIO_MUTEX
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     ScenarioSerialGuard { _guard: guard }
 }
 
@@ -59,6 +58,9 @@ mod tests {
         let guard = serial_guard();
         assert!(SCENARIO_MUTEX.try_lock().is_err());
         drop(guard);
-        assert!(SCENARIO_MUTEX.try_lock().is_ok());
+        let reacquired = SCENARIO_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(reacquired);
     }
 }

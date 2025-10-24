@@ -52,12 +52,12 @@ impl BootstrapWorld {
     }
 
     fn mark_skip(&mut self, reason: impl Into<String>) {
-        let reason = reason.into();
-        eprintln!("{reason}");
-        self.skip_reason = Some(reason);
+        let message = reason.into();
+        tracing::warn!("{message}");
+        self.skip_reason = Some(message);
     }
 
-    fn is_skipped(&self) -> bool {
+    const fn is_skipped(&self) -> bool {
         self.skip_reason.is_some()
     }
 
@@ -86,8 +86,8 @@ impl BootstrapWorld {
         match outcome {
             Ok(settings) => {
                 self.record_settings(settings);
-                if let Some(settings) = self.settings.as_ref() {
-                    let expected = EnvSnapshot::from_environment(&settings.environment);
+                if let Some(stored_settings) = self.settings.as_ref() {
+                    let expected = EnvSnapshot::from_environment(&stored_settings.environment);
                     self.record_expected_env(expected);
                 }
                 Ok(())
@@ -145,34 +145,43 @@ impl BootstrapWorld {
     }
 }
 
+type BootstrapWorldFixture = Result<RefCell<BootstrapWorld>>;
+
+fn borrow_world(world: &BootstrapWorldFixture) -> Result<&RefCell<BootstrapWorld>> {
+    world
+        .as_ref()
+        .map_err(|err| eyre!(format!("bootstrap fixture construction failed: {err}")))
+}
+
 #[fixture]
-fn world() -> RefCell<BootstrapWorld> {
-    RefCell::new(BootstrapWorld::new().expect("create bootstrap world"))
+fn world() -> BootstrapWorldFixture {
+    Ok(RefCell::new(BootstrapWorld::new()?))
 }
 
 #[given("a bootstrap sandbox for tests")]
-fn given_bootstrap_sandbox(world: &RefCell<BootstrapWorld>) -> Result<()> {
-    world.borrow().sandbox.reset()
+fn given_bootstrap_sandbox(world: &BootstrapWorldFixture) -> Result<()> {
+    borrow_world(world)?.borrow().sandbox.reset()
 }
 
 #[when("bootstrap_for_tests runs without time zone overrides")]
-fn when_bootstrap_for_tests(world: &RefCell<BootstrapWorld>) -> Result<()> {
-    let env_vars = world.borrow().sandbox.env_without_timezone();
-    let (outcome, before, snapshot) = world.borrow().sandbox.with_env(env_vars, || {
+fn when_bootstrap_for_tests(world: &BootstrapWorldFixture) -> Result<()> {
+    let world_cell = borrow_world(world)?;
+    let env_vars = world_cell.borrow().sandbox.env_without_timezone();
+    let (outcome, before, snapshot) = world_cell.borrow().sandbox.with_env(env_vars, || {
         let before = EnvSnapshot::capture();
         let outcome = bootstrap_for_tests().map_err(Report::from);
         let snapshot = EnvSnapshot::capture();
         (outcome, before, snapshot)
     });
-    let mut world_mut = world.borrow_mut();
+    let mut world_mut = world_cell.borrow_mut();
     world_mut.env_before = Some(before);
     world_mut.record_restored_env(snapshot);
     world_mut.handle_outcome(outcome)
 }
 
 #[then("the helper returns sandbox-aligned settings")]
-fn then_returns_settings(world: &RefCell<BootstrapWorld>) -> Result<()> {
-    let world_ref = world.borrow();
+fn then_returns_settings(world: &BootstrapWorldFixture) -> Result<()> {
+    let world_ref = borrow_world(world)?.borrow();
     if world_ref.is_skipped() {
         return Ok(());
     }
@@ -209,8 +218,8 @@ fn then_returns_settings(world: &RefCell<BootstrapWorld>) -> Result<()> {
 }
 
 #[then("the helper prepares default environment variables")]
-fn then_prepares_env(world: &RefCell<BootstrapWorld>) -> Result<()> {
-    let world_ref = world.borrow();
+fn then_prepares_env(world: &BootstrapWorldFixture) -> Result<()> {
+    let world_ref = borrow_world(world)?.borrow();
     if world_ref.is_skipped() {
         return Ok(());
     }
@@ -276,27 +285,35 @@ fn then_prepares_env(world: &RefCell<BootstrapWorld>) -> Result<()> {
 }
 
 #[when("bootstrap_for_tests runs with a missing time zone database")]
-fn when_bootstrap_missing_timezone(world: &RefCell<BootstrapWorld>) -> Result<()> {
-    let missing = world.borrow().sandbox.install_dir().join("missing-tzdir");
-    let env_vars = world.borrow().sandbox.env_with_timezone_override(&missing);
-    let outcome = world.borrow().sandbox.with_env(env_vars, || {
+fn when_bootstrap_missing_timezone(world: &BootstrapWorldFixture) -> Result<()> {
+    let world_cell = borrow_world(world)?;
+    let missing = world_cell
+        .borrow()
+        .sandbox
+        .install_dir()
+        .join("missing-tzdir");
+    let env_vars = world_cell
+        .borrow()
+        .sandbox
+        .env_with_timezone_override(&missing);
+    let outcome = world_cell.borrow().sandbox.with_env(env_vars, || {
         bootstrap_for_tests().map_err(|err| err.to_string())
     });
     match outcome {
         Ok(settings) => {
-            world.borrow_mut().record_settings(settings);
+            world_cell.borrow_mut().record_settings(settings);
             Err(eyre!("expected bootstrap_for_tests to fail"))
         }
         Err(err) => {
-            world.borrow_mut().record_error(err);
+            world_cell.borrow_mut().record_error(err);
             Ok(())
         }
     }
 }
 
 #[then("the helper reports a time zone error")]
-fn then_timezone_error(world: &RefCell<BootstrapWorld>) -> Result<()> {
-    let world_ref = world.borrow();
+fn then_timezone_error(world: &BootstrapWorldFixture) -> Result<()> {
+    let world_ref = borrow_world(world)?.borrow();
     if world_ref.is_skipped() {
         return Ok(());
     }
@@ -312,11 +329,13 @@ fn then_timezone_error(world: &RefCell<BootstrapWorld>) -> Result<()> {
 }
 
 #[scenario(path = "tests/features/bootstrap_for_tests.feature", index = 0)]
-fn bootstrap_for_tests_defaults(world: RefCell<BootstrapWorld>) {
-    let _ = world;
+fn bootstrap_for_tests_defaults(world: Result<RefCell<BootstrapWorld>>) -> Result<()> {
+    let _ = world?;
+    Ok(())
 }
 
 #[scenario(path = "tests/features/bootstrap_for_tests.feature", index = 1)]
-fn bootstrap_for_tests_missing_timezone(world: RefCell<BootstrapWorld>) {
-    let _ = world;
+fn bootstrap_for_tests_missing_timezone(world: Result<RefCell<BootstrapWorld>>) -> Result<()> {
+    let _ = world?;
+    Ok(())
 }

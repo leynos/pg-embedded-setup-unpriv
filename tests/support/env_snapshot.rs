@@ -26,13 +26,17 @@ impl EnvSnapshot {
             .into_iter()
             .fold(Self::default(), |mut snapshot, (key, value)| {
                 match (key.as_str(), value) {
-                    ("PGPASSFILE", Some(value)) => {
-                        snapshot.pgpassfile = Some(OsString::from(value))
+                    ("PGPASSFILE", Some(env_value)) => {
+                        snapshot.pgpassfile = Some(OsString::from(env_value));
                     }
                     ("PGPASSFILE", None) => snapshot.pgpassfile = None,
-                    ("TZDIR", Some(value)) => snapshot.tzdir = Some(OsString::from(value)),
+                    ("TZDIR", Some(env_value)) => {
+                        snapshot.tzdir = Some(OsString::from(env_value));
+                    }
                     ("TZDIR", None) => snapshot.tzdir = None,
-                    ("TZ", Some(value)) => snapshot.timezone = Some(OsString::from(value)),
+                    ("TZ", Some(env_value)) => {
+                        snapshot.timezone = Some(OsString::from(env_value));
+                    }
                     ("TZ", None) => snapshot.timezone = None,
                     _ => {}
                 }

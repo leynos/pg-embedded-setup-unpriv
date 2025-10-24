@@ -22,14 +22,15 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::Error;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
-use crate::cluster::{TestCluster, WorkerOperation};
+use crate::TestBootstrapSettings;
+#[cfg(any(test, feature = "cluster-unit-tests"))]
+use crate::cluster::{PrivilegedOperationContext, TestCluster, WorkerOperation};
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use crate::error::BootstrapResult;
-use crate::error::{BootstrapError, Error, PrivilegeError};
+use crate::error::{BootstrapError, PrivilegeError};
 use crate::fs;
-#[cfg(any(test, feature = "cluster-unit-tests"))]
-use crate::{ExecutionPrivileges, TestBootstrapSettings};
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use tracing::debug_span;
 
@@ -130,10 +131,11 @@ fn hook_install_logs() -> &'static Mutex<Vec<String>> {
 #[doc(hidden)]
 /// Clears and returns the buffered run-root-operation hook installation
 /// logs.
+#[must_use]
 pub fn drain_hook_install_logs() -> Vec<String> {
     let mut guard = hook_install_logs()
         .lock()
-        .expect("run_root_operation_hook log mutex poisoned");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     mem::take(&mut *guard)
 }
 
@@ -175,6 +177,57 @@ pub fn run_root_operation_hook() -> &'static Mutex<Option<RunRootOperationHook>>
 /// ```
 pub struct HookGuard;
 
+struct ThreadScope {
+    label: String,
+    span: tracing::Span,
+}
+
+fn capture_thread_scope() -> ThreadScope {
+    let current_thread = thread::current();
+    let thread_name = current_thread.name().unwrap_or("unnamed").to_owned();
+    let thread_id = format!("{:?}", current_thread.id());
+    let label = format!("{thread_name} ({thread_id})");
+    let span = debug_span!(
+        "install_run_root_operation_hook",
+        thread.name = %thread_name,
+        thread.id = %thread_id
+    );
+    ThreadScope { label, span }
+}
+
+fn log_duplicate_install(thread_label: &str) {
+    let message = format!("run_root_operation_hook already installed by thread {thread_label}");
+    hook_install_logs()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(message.clone());
+    #[cfg(test)]
+    tracing::warn!("{message}");
+}
+
+fn register_hook<F>(hook: F, thread_label: &str) -> Result<(), RunRootOperationHookInstallError>
+where
+    F: Fn(
+            &TestBootstrapSettings,
+            &[(String, Option<String>)],
+            WorkerOperation,
+        ) -> BootstrapResult<()>
+        + Send
+        + Sync
+        + 'static,
+{
+    let slot = run_root_operation_hook();
+    let mut guard = slot
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if guard.is_some() {
+        log_duplicate_install(thread_label);
+        return Err(RunRootOperationHookInstallError::AlreadyInstalled);
+    }
+    *guard = Some(Arc::new(hook));
+    Ok(())
+}
+
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 /// Installs a hook that observes privileged worker operations triggered by `TestCluster`.
 ///
@@ -201,33 +254,9 @@ where
         + Sync
         + 'static,
 {
-    let current_thread = thread::current();
-    let thread_name = current_thread.name().unwrap_or("unnamed");
-    let thread_id = format!("{:?}", current_thread.id());
-    let thread_label = format!("{thread_name} ({thread_id})");
-    let span = debug_span!(
-        "install_run_root_operation_hook",
-        thread.name = thread_name,
-        thread.id = %thread_id
-    );
-    let _entered = span.enter();
-
-    let slot = run_root_operation_hook();
-    {
-        let mut guard = slot.lock().expect("run_root_operation_hook lock poisoned");
-        if guard.is_some() {
-            let message =
-                format!("run_root_operation_hook already installed by thread {thread_label}");
-            hook_install_logs()
-                .lock()
-                .expect("run_root_operation_hook log mutex poisoned")
-                .push(message.clone());
-            #[cfg(test)]
-            eprintln!("{message}");
-            return Err(RunRootOperationHookInstallError::AlreadyInstalled);
-        }
-        *guard = Some(Arc::new(hook));
-    }
+    let scope = capture_thread_scope();
+    let _entered = scope.span.enter();
+    register_hook(hook, &scope.label)?;
     Ok(HookGuard)
 }
 
@@ -235,7 +264,9 @@ where
 impl Drop for HookGuard {
     fn drop(&mut self) {
         let slot = run_root_operation_hook();
-        let mut guard = slot.lock().expect("run_root_operation_hook lock poisoned");
+        let mut guard = slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.take();
     }
 }
@@ -243,24 +274,14 @@ impl Drop for HookGuard {
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 #[doc(hidden)]
 pub fn invoke_with_privileges<Fut>(
-    runtime: &tokio::runtime::Runtime,
-    privileges: ExecutionPrivileges,
-    bootstrap: &TestBootstrapSettings,
-    env_vars: &[(String, Option<String>)],
+    ctx: &PrivilegedOperationContext<'_>,
     operation: WorkerOperation,
     in_process_op: Fut,
 ) -> BootstrapResult<()>
 where
     Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
 {
-    TestCluster::with_privileges(
-        runtime,
-        privileges,
-        bootstrap,
-        env_vars,
-        operation,
-        in_process_op,
-    )
+    TestCluster::with_privileges(ctx, operation, in_process_op)
 }
 
 /// Retrieves metadata for the provided path using capability APIs.
@@ -287,6 +308,7 @@ pub fn metadata(path: &Utf8Path) -> std::io::Result<Metadata> {
 /// let err = bootstrap_error(Report::msg("bootstrap failed"));
 /// assert!(matches!(err, Error::Bootstrap(_)));
 /// ```
+#[must_use]
 pub fn bootstrap_error(err: Report) -> Error {
     Error::Bootstrap(BootstrapError::from(err))
 }
@@ -304,6 +326,7 @@ pub fn bootstrap_error(err: Report) -> Error {
 /// let err = privilege_error(Report::msg("missing capability"));
 /// assert!(matches!(err, Error::Privilege(_)));
 /// ```
+#[must_use]
 pub fn privilege_error(err: Report) -> Error {
     Error::Privilege(PrivilegeError::from(err))
 }
@@ -320,10 +343,10 @@ impl CapabilityTempDir {
     pub fn new(prefix: &str) -> Result<Self> {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-        let system_tmp = std::env::temp_dir();
-        let system_tmp = Utf8PathBuf::try_from(system_tmp)
+        let system_tmp_dir = std::env::temp_dir();
+        let system_tmp_path = Utf8PathBuf::try_from(system_tmp_dir)
             .map_err(|_| color_eyre::eyre::eyre!("system temp dir is not valid UTF-8"))?;
-        let ambient = Dir::open_ambient_dir(system_tmp.as_std_path(), ambient_authority())
+        let ambient = Dir::open_ambient_dir(system_tmp_path.as_std_path(), ambient_authority())
             .context("open ambient temp directory")?;
 
         let pid = std::process::id();
@@ -338,13 +361,13 @@ impl CapabilityTempDir {
             match ambient.create_dir(&name) {
                 Ok(()) => {
                     let dir = ambient.open_dir(&name).context("open capability tempdir")?;
-                    let path = system_tmp.join(&name);
+                    let path = system_tmp_path.join(&name);
                     return Ok(Self {
                         dir: Some(dir),
                         path,
                     });
                 }
-                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(err) => {
                     return Err(err).with_context(|| format!("create capability tempdir {name}"));
                 }
@@ -357,20 +380,22 @@ impl CapabilityTempDir {
     }
 
     /// Returns the UTF-8 path to the temporary directory.
+    #[must_use]
     pub fn path(&self) -> &Utf8Path {
         &self.path
+    }
+
+    fn remove_dir(dir: Dir, path: &Utf8Path) {
+        if let Err(err) = dir.remove_open_dir_all() {
+            tracing::warn!("SKIP-CAP-TEMPDIR: failed to remove {}: {err}", path);
+        }
     }
 }
 
 impl Drop for CapabilityTempDir {
     fn drop(&mut self) {
         if let Some(dir) = self.dir.take() {
-            match dir.remove_open_dir_all() {
-                Ok(()) => {}
-                Err(err) => {
-                    eprintln!("SKIP-CAP-TEMPDIR: failed to remove {}: {err}", self.path);
-                }
-            }
+            Self::remove_dir(dir, &self.path);
         }
     }
 }

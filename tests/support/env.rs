@@ -1,10 +1,9 @@
 //! Environment helpers for integration tests.
 
-use once_cell::sync::Lazy;
 use std::ffi::{OsStr, OsString};
 use std::sync::{Mutex, MutexGuard};
 
-static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static ENV_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
 /// Collection type for guarded environment variables.
 pub type ScopedEnvVars = Vec<(OsString, Option<OsString>)>;
@@ -79,9 +78,9 @@ fn locate_worker_binary() -> Option<OsString> {
 pub fn apply_env(vars: ScopedEnvVars) -> ScopedEnvGuard {
     let lock = ENV_MUTEX
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut saved = Vec::with_capacity(vars.len());
-    for (key, value) in vars.into_iter() {
+    for (key, value) in vars {
         let previous = std::env::var_os(&key);
         match value {
             Some(ref new_value) => unsafe {

@@ -40,24 +40,26 @@ impl ScopedEnv {
     /// Applies the supplied environment variables and returns a guard that
     /// restores the previous values when dropped.
     pub(crate) fn apply(vars: &[(String, Option<String>)]) -> Self {
-        let lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+        let lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut saved = Vec::with_capacity(vars.len());
-        for (key, value) in vars {
+        for (key, current_value) in vars {
             debug_assert!(
                 !key.is_empty() && !key.contains('='),
                 "invalid env var name"
             );
             let previous = env::var_os(key);
-            match value {
-                Some(value) => {
+            match current_value {
+                Some(new_value) => {
                     debug_assert!(
-                        !value.contains('\0'),
+                        !new_value.contains('\0'),
                         "NUL bytes are not allowed in env values"
                     );
                     unsafe {
                         // SAFETY: `ENV_LOCK` serialises changes. Drop restores
                         // recorded values before releasing the lock.
-                        env::set_var(key, value);
+                        env::set_var(key, new_value);
                     }
                 }
                 None => unsafe {
