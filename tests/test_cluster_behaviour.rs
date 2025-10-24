@@ -1,7 +1,7 @@
 //! Behavioural coverage for the `TestCluster` lifecycle.
 #![cfg(unix)]
 
-use std::cell::RefCell;
+use std::{cell::RefCell, thread, time::Duration};
 
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Context, Result, ensure, eyre};
@@ -264,13 +264,21 @@ fn then_cluster_stops(world: &ClusterWorldFixture) -> Result<()> {
         return Ok(());
     }
     let data_dir = world_mut.data_dir()?.clone();
+    let pid = data_dir.join("postmaster.pid");
     let before = world_mut.env_before()?.clone();
 
     drop(world_mut.cluster.take());
     let after = EnvSnapshot::capture();
 
+    for _ in 0..50 {
+        if !pid.exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+
     ensure!(
-        !data_dir.join("postmaster.pid").exists(),
+        !pid.exists(),
         "postmaster.pid should be removed once the cluster drops",
     );
     ensure!(
