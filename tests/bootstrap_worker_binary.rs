@@ -109,9 +109,16 @@ fn env_without_timezone_removes_tz_variable() -> Result<()> {
     let tz_removed = env_vars
         .iter()
         .any(|(key, value)| key == OsStr::new("TZ") && value.is_none());
+    let tzdir_removed = env_vars
+        .iter()
+        .any(|(key, value)| key == OsStr::new("TZDIR") && value.is_none());
     ensure!(
         tz_removed,
         "expected time zone helper to remove the TZ variable"
+    );
+    ensure!(
+        tzdir_removed,
+        "expected time zone helper to remove the TZDIR variable"
     );
 
     sandbox.reset()?;

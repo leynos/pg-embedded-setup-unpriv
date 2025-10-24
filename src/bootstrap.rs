@@ -503,10 +503,6 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
 }
 
 #[cfg(unix)]
-#[expect(
-    clippy::collapsible_if,
-    reason = "Keep the privilege-branch parameters explicit for staged directory prep"
-)]
 fn bootstrap_with_root(
     mut settings: Settings,
     cfg: &PgEnvCfg,
@@ -575,10 +571,6 @@ fn bootstrap_with_root(
 }
 
 #[cfg(unix)]
-#[expect(
-    clippy::collapsible_if,
-    reason = "Keep the privilege-branch parameters explicit for staged directory prep"
-)]
 fn bootstrap_unprivileged(
     mut settings: Settings,
     cfg: &PgEnvCfg,

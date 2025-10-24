@@ -32,7 +32,7 @@ pub struct ScenarioSerialGuard {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use rstest::rstest;
 /// use tests::support::serial::serial_guard;
 ///

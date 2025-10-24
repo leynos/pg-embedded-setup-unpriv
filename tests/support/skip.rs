@@ -37,10 +37,15 @@ pub(crate) const DEFAULT_SKIP_CONDITIONS: &[(&str, &str)] = &[
 /// Formats a skip message using `prefix` and the shared reason when any known
 /// condition appears in `message` or `debug`.
 pub(crate) fn skip_message(prefix: &str, message: &str, debug: Option<&str>) -> Option<String> {
+    let message_lc = message.to_ascii_lowercase();
+    let debug_lc = debug.map_or_else(String::new, str::to_ascii_lowercase);
     DEFAULT_SKIP_CONDITIONS
         .iter()
         .find(|(needle, _)| {
-            message.contains(needle) || debug.is_some_and(|dbg| dbg.contains(needle))
+            // Case-insensitive comparison so skip detection is resilient to
+            // platform-specific capitalisation in error messages.
+            let needle_lc = needle.to_ascii_lowercase();
+            message_lc.contains(&needle_lc) || debug_lc.contains(&needle_lc)
         })
         .map(|(_, reason)| format!("{prefix}: {reason}: {message}"))
 }
