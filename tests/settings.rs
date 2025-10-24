@@ -5,9 +5,11 @@ use color_eyre::eyre::{ensure, eyre};
 use std::path::Path;
 
 use nix::unistd::geteuid;
+#[cfg(feature = "privileged-tests")]
+use pg_embedded_setup_unpriv::Error as PgEmbeddedError;
 use pg_embedded_setup_unpriv::{
-    Error as PgEmbeddedError, ExecutionPrivileges, PgEnvCfg, detect_execution_privileges,
-    make_data_dir_private, make_dir_accessible, nobody_uid,
+    ExecutionPrivileges, PgEnvCfg, detect_execution_privileges, make_data_dir_private,
+    make_dir_accessible, nobody_uid,
 };
 use postgresql_embedded::VersionReq;
 use rstest::rstest;
