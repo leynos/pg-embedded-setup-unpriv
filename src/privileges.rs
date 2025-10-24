@@ -17,96 +17,27 @@ use cap_std::{
     fs::{Dir, DirEntry},
 };
 use color_eyre::eyre::{Context, eyre};
-use nix::unistd::{
-    Gid, Uid, User, chown, geteuid, getgroups, getresgid, getresuid, setgroups, setresgid,
-    setresuid,
-};
+use nix::unistd::{Uid, User, chown};
 use std::io::ErrorKind;
 
-/// Captures the process identity before dropping privileges so we can safely restore it.
-pub(crate) struct PrivilegeDropGuard {
-    ruid: Uid,
-    euid: Uid,
-    suid: Uid,
-    rgid: Gid,
-    egid: Gid,
-    sgid: Gid,
-    supplementary: Vec<Gid>,
-}
-
-impl Drop for PrivilegeDropGuard {
-    fn drop(&mut self) {
-        self.restore_best_effort();
-    }
-}
-
-impl PrivilegeDropGuard {
-    fn restore_best_effort(&self) {
-        // Best-effort restoration; errors during drop should not panic.
-        let _ = setgroups(&self.supplementary);
-        let _ = setresgid(self.rgid, self.egid, self.sgid);
-        let _ = setresuid(self.ruid, self.euid, self.suid);
-    }
-}
-
-pub(crate) fn drop_process_privileges(user: &User) -> PrivilegeResult<PrivilegeDropGuard> {
-    if !geteuid().is_root() {
-        return Err(PrivilegeError::from(eyre!(
-            "must start as root to drop privileges temporarily"
-        )));
-    }
-
-    let uid_set = getresuid().context("getresuid failed")?;
-    let gid_set = getresgid().context("getresgid failed")?;
-    let ruid = uid_set.real;
-    let euid = uid_set.effective;
-    let suid = uid_set.saved;
-    let rgid = gid_set.real;
-    let egid = gid_set.effective;
-    let sgid = gid_set.saved;
-    let supplementary = getgroups().context("getgroups failed")?;
-
-    let guard = PrivilegeDropGuard {
-        ruid,
-        euid,
-        suid,
-        rgid,
-        egid,
-        sgid,
-        supplementary,
-    };
-
-    // Reduce supplementary groups first so subsequent permission checks do not
-    // inherit ambient capabilities from the original uid.
-    setgroups(&[user.gid]).context("setgroups failed")?;
-    if let Err(err) = setresgid(user.gid, user.gid, guard.sgid) {
-        guard.restore_best_effort();
-        let report = eyre!(err).wrap_err("setresgid failed");
-        return Err(PrivilegeError::from(report));
-    }
-    if let Err(err) = setresuid(user.uid, user.uid, guard.suid) {
-        guard.restore_best_effort();
-        let report = eyre!(err).wrap_err("setresuid failed");
-        return Err(PrivilegeError::from(report));
-    }
-
-    Ok(guard)
-}
-
 pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
-    dir: P,
+    directory: P,
     user: &User,
     mode: u32,
 ) -> PrivilegeResult<()> {
-    let dir = dir.as_ref();
-    ensure_dir_exists(dir)?;
-    chown(dir.as_std_path(), Some(user.uid), Some(user.gid))
-        .with_context(|| format!("chown {}", dir.as_str()))?;
-    set_permissions(dir, mode)?;
+    let dir_path = directory.as_ref();
+    ensure_dir_exists(dir_path)?;
+    chown(dir_path.as_std_path(), Some(user.uid), Some(user.gid))
+        .with_context(|| format!("chown {}", dir_path.as_str()))?;
+    set_permissions(dir_path, mode)?;
     Ok(())
 }
 
 /// Ensures `dir` exists, is owned by `user`, and grants world-readable access.
+///
+/// # Errors
+/// Returns an error when the directory cannot be created, chowned, or
+/// updated with the target permissions.
 ///
 /// The example returns `PrivilegeResult` so callers propagate the helper's
 /// domain-specific error type rather than the opaque crate alias.
@@ -125,9 +56,9 @@ pub fn make_dir_accessible<P: AsRef<Utf8Path>>(dir: P, user: &User) -> Privilege
     ensure_dir_for_user(dir, user, 0o755)
 }
 
-/// Ensures `dir` exists, is owned by `user`, and has PostgreSQL-compatible 0700 permissions.
+/// Ensures `dir` exists, is owned by `user`, and has `PostgreSQL`-compatible 0700 permissions.
 ///
-/// PostgreSQL refuses to use a data directory that is accessible to other
+/// `PostgreSQL` refuses to use a data directory that is accessible to other
 /// users. This helper creates the directory (if needed), chowns it to `user`,
 /// and clamps permissions to `0700` to satisfy that requirement.
 ///
@@ -145,6 +76,10 @@ pub fn make_dir_accessible<P: AsRef<Utf8Path>>(dir: P, user: &User) -> Privilege
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Errors
+/// Returns an error when the directory cannot be created, chowned, or
+/// updated with the strict permission set required by `PostgreSQL`.
 pub fn make_data_dir_private<P: AsRef<Utf8Path>>(dir: P, user: &User) -> PrivilegeResult<()> {
     ensure_dir_for_user(dir, user, 0o700)
 }
@@ -181,14 +116,14 @@ fn process_directory_entries(
     user: &User,
     stack: &mut Vec<Utf8PathBuf>,
 ) -> PrivilegeResult<()> {
-    for entry in dir
+    for dir_entry_result in dir
         .entries()
         .with_context(|| format!("read_dir {}", path.as_str()))?
     {
-        let entry = entry.with_context(|| format!("iterate {}", path.as_str()))?;
-        let entry_path = resolve_entry_path(path, &entry)?;
+        let dir_entry = dir_entry_result.with_context(|| format!("iterate {}", path.as_str()))?;
+        let entry_path = resolve_entry_path(path, &dir_entry)?;
         chown_entry(&entry_path, user)?;
-        if is_directory(&entry) {
+        if is_directory(&dir_entry) {
             stack.push(entry_path);
         }
     }
@@ -209,7 +144,7 @@ fn chown_entry(path: &Utf8Path, user: &User) -> PrivilegeResult<()> {
 }
 
 fn is_directory(entry: &DirEntry) -> bool {
-    entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false)
+    entry.file_type().is_ok_and(|ft| ft.is_dir())
 }
 
 /// Retrieves the UID of the `nobody` account, defaulting to 65534 when absent.
@@ -219,13 +154,13 @@ fn is_directory(entry: &DirEntry) -> bool {
 /// let uid = pg_embedded_setup_unpriv::nobody_uid();
 /// assert!(uid.as_raw() > 0);
 /// ```
+#[must_use]
 pub fn nobody_uid() -> Uid {
     use nix::unistd::User;
-    User::from_name("nobody")
-        .ok()
-        .flatten()
-        .map(|u| u.uid)
-        .unwrap_or_else(|| Uid::from_raw(65534))
+    User::from_name("nobody").map_or_else(
+        |_| Uid::from_raw(65534),
+        |maybe_user| maybe_user.map_or_else(|| Uid::from_raw(65534), |user| user.uid),
+    )
 }
 
 /// Computes default installation and data directories for a given uid.
@@ -239,43 +174,37 @@ pub fn nobody_uid() -> Uid {
 /// assert!(install.as_str().contains("pg-embed-"));
 /// assert!(data.as_str().contains("pg-embed-"));
 /// ```
+#[must_use]
 pub fn default_paths_for(uid: Uid) -> (Utf8PathBuf, Utf8PathBuf) {
     let base = Utf8PathBuf::from(format!("/var/tmp/pg-embed-{}", uid.as_raw()));
     (base.join("install"), base.join("data"))
 }
 
-/// Temporarily switches the process effective user ID for test scenarios.
+/// DEPRECATED: process-wide UID switching is unsafe and unsupported.
 ///
-/// # Safety
-/// This function mutates the entire process identity. Callers must ensure no
-/// other threads perform privileged operations while the guard is active.
-/// Prefer invoking this helper in single-threaded test binaries only.
-///
-/// The example returns `PrivilegeResult` to reinforce that callers should
-/// propagate privilege failures through the domain error surface.
+/// Use the worker-based privileged path instead of relying on temporary
+/// effective UID changes.
 ///
 /// # Examples
-/// ```
+/// ```no_run
 /// # use nix::unistd::Uid;
 /// use pg_embedded_setup_unpriv::with_temp_euid;
-///
-/// # fn demo(uid: Uid) -> pg_embedded_setup_unpriv::error::PrivilegeResult<()> {
-/// with_temp_euid(uid, || Ok(()))?;
-/// # Ok(())
+/// # fn demo(uid: Uid) {
+/// let _ = with_temp_euid::<_, ()>(uid, || Ok(()));
 /// # }
 /// ```
+///
+/// # Errors
+/// Always returns an error instructing callers to use the worker-based privileged path.
 #[cfg(feature = "privileged-tests")]
-pub fn with_temp_euid<F, R>(target: Uid, body: F) -> crate::Result<R>
+#[deprecated(note = "with_temp_euid() is unsupported; use the worker-based privileged path")]
+pub fn with_temp_euid<F, R>(target: Uid, _body: F) -> crate::Result<R>
 where
     F: FnOnce() -> crate::Result<R>,
 {
-    let user = User::from_uid(target)
-        .context("User::from_uid failed")
-        .map_err(PrivilegeError::from)?
-        .ok_or_else(|| color_eyre::eyre::eyre!("no passwd entry for uid {}", target))
-        .map_err(PrivilegeError::from)?;
-    let guard = drop_process_privileges(&user)?;
-    let result = body()?;
-    drop(guard);
-    Ok(result)
+    let _ = target;
+    Err(PrivilegeError::from(eyre!(
+        "with_temp_euid() is unsupported; use the worker-based privileged path"
+    ))
+    .into())
 }

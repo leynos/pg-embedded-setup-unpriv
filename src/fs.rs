@@ -16,8 +16,7 @@ pub(crate) fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)
     if path.has_root() {
         let stripped = path
             .strip_prefix("/")
-            .map(Utf8Path::to_path_buf)
-            .unwrap_or_else(|_| path.to_path_buf());
+            .map_or_else(|_| path.to_path_buf(), Utf8Path::to_path_buf);
         let dir = Dir::open_ambient_dir("/", ambient_authority())
             .context("open ambient root directory")?;
         Ok((dir, stripped))

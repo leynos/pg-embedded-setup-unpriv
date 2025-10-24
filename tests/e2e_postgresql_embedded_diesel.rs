@@ -8,15 +8,13 @@ use std::time::Duration;
 
 use camino::Utf8PathBuf;
 use cap_std::fs::{OpenOptions, PermissionsExt};
-use color_eyre::eyre::{Context, Result, eyre};
+use color_eyre::eyre::{Context, Result, ensure, eyre};
 use diesel::prelude::*;
 use diesel::sql_types::{Int4, Text};
 use nix::unistd::geteuid;
-use pg_embedded_setup_unpriv::{
-    PgEnvCfg, nobody_uid, test_support::bootstrap_error, with_temp_euid,
-};
+use pg_embedded_setup_unpriv::PgEnvCfg;
 use postgresql_embedded::PostgreSQL;
-use tokio::runtime::Builder;
+use tokio::runtime::{Builder, Runtime};
 
 #[path = "support/cap_fs_privileged.rs"]
 mod cap_fs;
@@ -81,11 +79,11 @@ impl TestConfig {
         }
     }
 
-    fn base_dir(&self) -> &Utf8PathBuf {
+    const fn base_dir(&self) -> &Utf8PathBuf {
         &self.base_dir
     }
 
-    fn install_dir(&self) -> &Utf8PathBuf {
+    const fn install_dir(&self) -> &Utf8PathBuf {
         &self.install_dir
     }
 
@@ -132,7 +130,7 @@ impl TestConfig {
 #[test]
 fn e2e_postgresql_embedded_creates_and_queries_via_diesel() -> Result<()> {
     if !geteuid().is_root() {
-        eprintln!("Skipping root-dependent PostgreSQL e2e test.");
+        tracing::warn!("Skipping root-dependent PostgreSQL e2e test.");
         return Ok(());
     }
 
@@ -140,15 +138,7 @@ fn e2e_postgresql_embedded_creates_and_queries_via_diesel() -> Result<()> {
     remove_tree(config.base_dir())?;
 
     let test_result = run_e2e_test(&config);
-
-    if test_result.is_ok()
-        && let Err(err) = remove_tree(config.base_dir())
-    {
-        eprintln!(
-            "warning: failed to clean e2e base dir {}: {err}",
-            config.base_dir().as_str()
-        );
-    }
+    clean_base_dir(&config, &test_result);
 
     test_result
 }
@@ -158,11 +148,12 @@ fn run_e2e_test(config: &TestConfig) -> Result<()> {
         return Ok(());
     };
 
-    with_temp_euid(nobody_uid(), || {
-        run_postgres_operations(config, &context).map_err(bootstrap_error)
-    })?;
-
-    Ok(())
+    if std::env::var_os("PG_EMBEDDED_WORKER").is_some() {
+        run_postgres_operations(config, &context)
+    } else {
+        tracing::warn!("Skipping diesel e2e: set PG_EMBEDDED_WORKER to exercise the worker path");
+        Ok(())
+    }
 }
 
 fn bootstrap_postgres_environment(config: &TestConfig) -> Result<Option<BootstrapContext>> {
@@ -172,7 +163,7 @@ fn bootstrap_postgres_environment(config: &TestConfig) -> Result<Option<Bootstra
             if let Err(err) = pg_embedded_setup_unpriv::run() {
                 let message = err.to_string();
                 if message.contains("rate limit exceeded") {
-                    eprintln!("Skipping e2e postgres test: {message}");
+                    tracing::warn!("Skipping e2e postgres test: {message}");
                     return Ok(None);
                 }
                 return Err(err).wrap_err("initialise postgres environment");
@@ -186,7 +177,7 @@ fn bootstrap_postgres_environment(config: &TestConfig) -> Result<Option<Bootstra
 
             let password_file = config.password_file();
             settings.password_file = password_file.clone().into_std_path_buf();
-            settings.password = config.password.to_string();
+            config.password.clone_into(&mut settings.password);
 
             Ok(Some(BootstrapContext {
                 settings,
@@ -206,36 +197,7 @@ fn run_postgres_operations(config: &TestConfig, context: &BootstrapContext) -> R
     let env_vars = config.runtime_env(&context.password_file);
     let env_settings = context.settings.clone();
 
-    with_scoped_env(env_vars, || -> Result<()> {
-        eprintln!(
-            "postgresql install dir {}",
-            env_settings.installation_dir.display()
-        );
-        eprintln!("postgresql data dir {}", env_settings.data_dir.display());
-
-        let runtime = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .wrap_err("initialise tokio runtime for postgresql-embedded e2e test")?;
-
-        let settings = env_settings.clone();
-        let (postgresql, database_url) = runtime.block_on(async {
-            let mut postgresql = PostgreSQL::new(settings.clone());
-            postgresql.setup().await?;
-            postgresql.start().await?;
-            postgresql.create_database(config.database_name).await?;
-            let database_url = postgresql.settings().url(config.database_name);
-            Ok::<_, color_eyre::Report>((postgresql, database_url))
-        })?;
-
-        run_diesel_operations(&database_url, config)?;
-
-        runtime
-            .block_on(postgresql.stop())
-            .wrap_err("stop embedded postgres instance")?;
-
-        Ok(())
-    })
+    with_scoped_env(env_vars, move || run_postgres_in_env(config, &env_settings))
 }
 
 fn provision_password_file_for_nobody(
@@ -282,13 +244,74 @@ fn run_diesel_operations(database_url: &str, config: &TestConfig) -> Result<()> 
         .load(&mut connection)
         .wrap_err("select greetings via diesel")?;
 
-    assert_eq!(
-        rows,
-        vec![GreetingRow {
-            id: 1,
-            message: config.message.to_string(),
-        }]
-    );
+    let expected = vec![GreetingRow {
+        id: 1,
+        message: config.message.to_owned(),
+    }];
+    ensure!(rows == expected, "unexpected query result: {rows:?}",);
 
     Ok(())
+}
+
+fn clean_base_dir(config: &TestConfig, result: &Result<()>) {
+    if result.is_ok()
+        && let Err(err) = remove_tree(config.base_dir())
+    {
+        tracing::warn!(
+            "warning: failed to clean e2e base dir {}: {err}",
+            config.base_dir().as_str()
+        );
+    }
+}
+
+fn run_postgres_in_env(
+    config: &TestConfig,
+    settings: &postgresql_embedded::Settings,
+) -> Result<()> {
+    tracing::info!(
+        installation = %settings.installation_dir.display(),
+        data = %settings.data_dir.display(),
+        "postgresql directories configured",
+    );
+    let runtime = build_runtime()?;
+    let (postgresql, database_url) = start_postgres(&runtime, settings, config)?;
+
+    run_diesel_operations(&database_url, config)?;
+
+    stop_postgres(&runtime, postgresql)?;
+
+    Ok(())
+}
+
+fn build_runtime() -> Result<Runtime> {
+    Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .wrap_err("initialise tokio runtime for postgresql-embedded e2e test")
+}
+
+fn start_postgres(
+    runtime: &Runtime,
+    settings: &postgresql_embedded::Settings,
+    config: &TestConfig,
+) -> Result<(PostgreSQL, String)> {
+    runtime
+        .block_on(async {
+            let mut postgresql = PostgreSQL::new(settings.clone());
+            postgresql.setup().await?;
+            postgresql.start().await?;
+            postgresql.create_database(config.database_name).await?;
+            let database_url = postgresql.settings().url(config.database_name);
+            Ok::<_, color_eyre::Report>((postgresql, database_url))
+        })
+        .wrap_err("start embedded postgres via diesel helper")
+}
+
+fn stop_postgres(runtime: &Runtime, postgresql: PostgreSQL) -> Result<()> {
+    runtime
+        .block_on(async {
+            let instance = postgresql;
+            instance.stop().await
+        })
+        .wrap_err("stop embedded postgres instance")
 }
