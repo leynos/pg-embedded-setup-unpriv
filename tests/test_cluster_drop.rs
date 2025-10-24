@@ -98,9 +98,12 @@ fn wait_for_postmaster_shutdown(data_dir: &Utf8PathBuf) -> Result<()> {
     Ok(())
 }
 
+#[expect(
+    clippy::used_underscore_binding,
+    reason = "rstest binds the guard even though the test ignores it"
+)]
 #[rstest]
-fn drops_stop_cluster_and_restore_environment(serial_guard: ScenarioSerialGuard) -> Result<()> {
-    let _guard = serial_guard;
+fn drops_stop_cluster_and_restore_environment(_serial_guard: ScenarioSerialGuard) -> Result<()> {
     let sandbox = TestSandbox::new("test-cluster-unit").context("create test cluster sandbox")?;
     sandbox.reset()?;
     let env_before = EnvSnapshot::capture();
