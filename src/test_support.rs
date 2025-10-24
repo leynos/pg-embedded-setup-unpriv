@@ -177,11 +177,13 @@ pub fn run_root_operation_hook() -> &'static Mutex<Option<RunRootOperationHook>>
 /// ```
 pub struct HookGuard;
 
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 struct ThreadScope {
     label: String,
     span: tracing::Span,
 }
 
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 fn capture_thread_scope() -> ThreadScope {
     let current_thread = thread::current();
     let thread_name = current_thread.name().unwrap_or("unnamed").to_owned();
@@ -195,6 +197,7 @@ fn capture_thread_scope() -> ThreadScope {
     ThreadScope { label, span }
 }
 
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 fn log_duplicate_install(thread_label: &str) {
     let message = format!("run_root_operation_hook already installed by thread {thread_label}");
     hook_install_logs()
@@ -202,9 +205,26 @@ fn log_duplicate_install(thread_label: &str) {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .push(message.clone());
     #[cfg(test)]
+    write_duplicate_hook_warning(&message);
+}
+
+#[cfg(test)]
+fn write_duplicate_hook_warning(message: &str) {
+    log_duplicate_hook_to_stderr(message);
     tracing::warn!("{message}");
 }
 
+#[cfg(test)]
+fn log_duplicate_hook_to_stderr(message: &str) {
+    use std::io::Write as _;
+
+    let mut stderr = std::io::stderr();
+    if let Err(err) = writeln!(stderr, "{message}") {
+        tracing::warn!(?err, "failed to log duplicate hook install");
+    }
+}
+
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 fn register_hook<F>(hook: F, thread_label: &str) -> Result<(), RunRootOperationHookInstallError>
 where
     F: Fn(
