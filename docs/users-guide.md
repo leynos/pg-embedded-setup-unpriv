@@ -5,8 +5,8 @@ data directory regardless of whether it starts with `root` privileges. When the
 process runs as `root` it stages directories for `nobody` and delegates
 PostgreSQL lifecycle commands to the worker helper, which executes as the
 sandbox user. Unprivileged invocations keep the current identity and provision
-directories with the caller’s UID. This guide explains how to configure the tool
-and integrate it into automated test flows.
+directories with the caller’s UID. This guide explains how to configure the
+tool and integrate it into automated test flows.
 
 ## Prerequisites
 
@@ -40,10 +40,10 @@ and integrate it into automated test flows.
    command downloads the specified PostgreSQL release, ensures the directories
    exist, applies PostgreSQL-compatible permissions (0755 for runtime, 0700 for
    data), and initialises the cluster with the provided credentials.
-   Invocations that begin as `root` prepare directories for `nobody` and execute
-   lifecycle commands through the worker helper so the privileged operations run
-   entirely under the sandbox user. Ownership fix-ups occur on every call so
-   running the tool twice remains idempotent.
+   Invocations that begin as `root` prepare directories for `nobody` and
+   execute lifecycle commands through the worker helper so the privileged
+   operations run entirely under the sandbox user. Ownership fix-ups occur on
+   every call so running the tool twice remains idempotent.
 
 4. Pass the resulting paths and credentials to your tests. If you use
    `postgresql_embedded` directly after the setup step, it can reuse the staged

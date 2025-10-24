@@ -26,7 +26,7 @@ ID:
 - Root execution uses `bootstrap_with_root`, a helper that prepares the
   installation and data directories for the `nobody` account and delegates
   lifecycle commands to the `pg_worker` subprocess. The helper deliberately
- re-applies ownership and permissions on every invocation, so two consecutive
+  re-applies ownership and permissions on every invocation, so two consecutive
   bootstraps remain idempotent without mutating the caller’s process identity.
 
 - Unprivileged execution now exercises `bootstrap_unprivileged`, which sets up
@@ -51,8 +51,9 @@ ID:
 
 - The bootstrap orchestration now follows the flow illustrated below. The
   sequence diagram highlights the privilege detection and the branching between
-  the root and unprivileged bootstrap paths, including the privilege drop,
-  directory provisioning, and environment normalization phases.
+  the root and unprivileged bootstrap paths, showing how the privileged route
+  prepares directories for `nobody`, hands control to the worker subprocess,
+  and performs the same environment normalisation as the in-process branch.
 
 ```mermaid
 sequenceDiagram
@@ -87,9 +88,9 @@ sequenceDiagram
 
 - **If running as root on Linux:** the helper prepares directories that are
   owned by the sandbox user (currently `"nobody"`) and delegates every
-  privileged filesystem task to the `pg_worker` subprocess. The worker starts
-  with reduced credentials from the first instruction, so no temporary
-  process-wide UID or GID swapping is required in the parent.
+  privileged filesystem task to the `pg_worker` subprocess. The parent keeps
+  its original UID and GID throughout; the worker assumes the sandbox
+  credentials before touching the filesystem or launching PostgreSQL.
 
 - **If running as a normal user or on non-Linux platforms:** no privilege
   dropping is needed. The helper will simply use the `postgresql_embedded`
@@ -360,7 +361,8 @@ For a pleasant developer experience, we will add **logging instrumentation** to
 the helper’s operations (see docs/next-steps.md). Using the `tracing` crate, we
 can emit debug/info logs for steps like:
 
-- Dropping privileges (e.g. “Dropping from root to nobody for Postgres setup”).
+- Delegating privileged filesystem work (e.g. “Invoking pg_worker as nobody for
+  setup”).
 
 - Directory creation and ownership changes (e.g. “Chowning
   /var/tmp/pg-embed-1000 to user nobody”).
@@ -374,21 +376,21 @@ can emit debug/info logs for steps like:
 These logs (visible when tests are run with `RUST_LOG` configured) will help
 troubleshoot any issues in the setup process without the developer having to
 guess what the helper is doing (see docs/next-steps.md). By surfacing directory
-paths and config values in logs, users can verify that the auto-detection picked
-up the right settings (for example, confirming it used an ephemeral port or the
-expected PG version).
+paths and config values in logs, users can verify that the auto-detection
+picked up the right settings (for example, confirming it used an ephemeral port
+or the expected PG version).
 
 ## Platform support and limitations
 
-Initially, our focus is **Linux** for the root-dropping functionality. On
-Linux, running tests as root will trigger the privileged path (drop to
-“nobody”) so that Postgres can be initialized safely. On other Unix-like OSes
-(macOS, FreeBSD), we will not attempt any special privilege management –
-typically tests on those platforms run as normal user anyway. If someone did
-run as root on macOS, we might simply error out or treat it as unprivileged
-(since our dropping logic is primarily tested on Linux). The embedded Postgres
-crate itself supports Mac/Windows, but those environments won’t need our extra
-helper – effectively the fixture will just call `PostgreSQL::setup()` and
+Initially, our focus is **Linux** for the worker-mediated privileged flow. On
+Linux, running tests as root will trigger the privileged path, provisioning
+directories for `nobody` and delegating to the subprocess so PostgreSQL is
+initialised without ever changing the parent’s identity. On other Unix-like
+OSes (macOS, FreeBSD), we do not attempt any worker delegation because tests
+usually run as an unprivileged user. If someone does run as root on macOS, we
+either error out or treat the execution as unprivileged. The embedded Postgres
+crate itself supports Mac/Windows, but those environments rely on the normal
+in-process bootstrap – effectively the fixture calls `PostgreSQL::setup()` and
 `start()` directly on those platforms.
 
 We are **leveraging the `postgresql-embedded` crate** as the core engine for
@@ -408,11 +410,11 @@ extremely easy and consistent:
   directories, or call out to `sudo` scripts. Just calling our fixture is
   enough to get a working empty PostgreSQL instance.
 
-- **Same code runs anywhere:** The *same test code* runs on a root CI (where
-  behind the scenes we chown and drop privileges) and on an unprivileged
-  machine (where it just uses the current user). There’s no need for
-  conditional logic in the test depending on environment – the library handles
-  it.
+- **Same code runs anywhere:** The *same test code* runs on a root CI (where we
+  chown directories and delegate privileged work to the worker subprocess) and
+  on an unprivileged machine (where everything stays in-process). There’s no
+  need for conditional logic in the test depending on environment – the library
+  handles it.
 
 - **Integration with frameworks:** Using the provided rstest fixture or similar,
   tests can be written in a clean style without repetitive setup/teardown code.
@@ -444,10 +446,9 @@ effortless as using an in-memory database, but with full PostgreSQL fidelity.
   caching, etc.)
 
 - pg_embedded_setup_unpriv – *README (Usage and
-  prerequisites)* (see README.md) (need for root and tzdata for
-  embedded Postgres)
+  prerequisites)* (see README.md) (need for root and tzdata for embedded
+  Postgres)
 
 - theseus-rs/postgresql_embedded – *README (features and
-  examples)* (see postgresql-embedded README)
-  (capabilities of the underlying embedded Postgres crate, async vs blocking
-  API, ephemeral ports support)
+  examples)* (see postgresql-embedded README) (capabilities of the underlying
+  embedded Postgres crate, async vs blocking API, ephemeral ports support)
