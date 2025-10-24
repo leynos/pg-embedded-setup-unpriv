@@ -1,4 +1,4 @@
-//! Bootstraps a PostgreSQL data directory as the `nobody` user.
+//! Bootstraps a `PostgreSQL` data directory as the `nobody` user.
 //!
 //! Configuration is provided via environment variables parsed by
 //! [`OrthoConfig`](https://github.com/leynos/ortho-config). The binary exits

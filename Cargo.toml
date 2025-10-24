@@ -2,6 +2,7 @@
 name = "pg-embed-setup-unpriv"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 
 [lib]
 name = "pg_embedded_setup_unpriv"
@@ -10,6 +11,21 @@ path = "src/lib.rs"
 [[bin]]
 name = "pg_embedded_setup_unpriv"
 path = "src/main.rs"
+
+[[bin]]
+name = "pg_worker"
+path = "tests/support/pg_worker.rs"
+required-features = ["dev-worker"]
+
+[[bin]]
+name = "pg_worker_hang"
+path = "tests/support/pg_worker_hang.rs"
+required-features = ["dev-worker"]
+
+[[test]]
+name = "test_cluster"
+path = "tests/test_cluster.rs"
+required-features = ["cluster-unit-tests"]
 
 [dependencies]
 postgresql_embedded = { version = "0.20.0", features = ["tokio"] }
@@ -26,17 +42,89 @@ figment-json5 = "0.1.1"
 cap-std = "3.4.4"
 camino = { version = "1.2", features = ["serde1"] }
 thiserror = "1"
+serde_json = "1"
+tempfile = "3"
+libc = "0.2"
+wait-timeout = "0.2"
+tracing = { version = "0.1", features = ["std"] }
 
 [features]
 toml = []
 json5 = []
 yaml = []
 privileged-tests = []
+cluster-unit-tests = []
+dev-worker = []
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+# 1. hygiene
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+blanket_clippy_restriction_lints = "deny"
+cognitive_complexity = "deny"
+needless_pass_by_value = "deny"
+implicit_hasher = "deny"
+
+# 2. debugging leftovers
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+# 2. panic-prone operations
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+integer_division = "deny"
+integer_division_remainder_used = "deny"
+panic_in_result_fn = "deny"
+unreachable = "deny"
+
+# 4. portability
+host_endian_bytes = "deny"
+little_endian_bytes = "deny"
+big_endian_bytes = "deny"
+
+# 5. nursery idiom polish
+let_underscore_must_use = "deny"
+or_fun_call = "deny"
+option_if_let_else = "deny"
+self_named_module_files = "deny"
+shadow_reuse = "deny"
+shadow_same = "deny"
+shadow_unrelated = "deny"
+str_to_string = "deny"
+string_lit_as_bytes = "deny"
+try_err = "deny"
+unneeded_field_pattern = "deny"
+use_self = "deny"
+
+# 6. numerical foot-guns
+float_arithmetic = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_precision_loss = "deny"
+lossy_float_literal = "deny"
+
+# 7. API ergonomics
+missing_const_for_fn = "deny"
+must_use_candidate = "deny"
+unused_async = "deny"
+
+# 8. Error handling
+missing_panics_doc = "deny"
+error_impl_error = "deny"
+result_large_err = "deny"
+
+[lints.rust]
+missing_docs = "deny"
+missing_crate_level_docs = "deny"
 
 [dev-dependencies]
 rstest = "0.18"
 temp-env = "0.3"
-tempfile = "3"
 color-eyre = "0.6"
 diesel = { version = "2", default-features = false, features = ["postgres"] }
 rstest-bdd = "0.1.0-alpha4"

@@ -23,7 +23,7 @@
 
 ### Step: Implement the `TestCluster` lifecycle
 
-- [ ] **Task:** Create the `TestCluster` RAII struct with `new` and `Drop`
+- [x] **Task:** Create the `TestCluster` RAII struct with `new` and `Drop`
   implementations that guarantee cluster startup and teardown, evidenced by
   tests ensuring no processes remain after scope exit.
 - [ ] **Task:** Expose connection metadata and helper methods (for example a

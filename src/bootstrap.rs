@@ -1,33 +1,49 @@
-//! Bootstraps embedded PostgreSQL while adapting to the caller's privileges.
+//! Bootstraps embedded `PostgreSQL` while adapting to the caller's privileges.
 //!
 //! Provides [`bootstrap_for_tests`] so suites can retrieve structured settings and
 //! prepared environment variables without reimplementing bootstrap orchestration.
 use crate::PgEnvCfg;
-use crate::error::BootstrapResult;
+use crate::error::{BootstrapError, BootstrapErrorKind, BootstrapResult};
 use crate::fs::{ensure_dir_exists, set_permissions};
 use crate::privileges::{
-    default_paths_for, drop_process_privileges, ensure_dir_for_user, ensure_tree_owned_by_user,
-    make_data_dir_private,
+    default_paths_for, ensure_dir_for_user, ensure_tree_owned_by_user, make_data_dir_private,
 };
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::Context;
 #[cfg(unix)]
 use nix::unistd::{Uid, User, chown, geteuid};
-use postgresql_embedded::{PostgreSQL, Settings};
-use std::env;
-use std::ffi::OsString;
-use std::future::Future;
+use postgresql_embedded::Settings;
+use std::env::{self, VarError};
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
-use tokio::runtime::{Builder, Handle, Runtime};
+use std::time::Duration;
 
-/// Represents the privileges the process is running with when bootstrapping PostgreSQL.
+const DEFAULT_SETUP_TIMEOUT: Duration = Duration::from_secs(180);
+const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(60);
+const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_SHUTDOWN_TIMEOUT_SECS: u64 = 600;
+const SHUTDOWN_TIMEOUT_ENV: &str = "PG_SHUTDOWN_TIMEOUT_SECS";
+
+/// Represents the privileges the process is running with when bootstrapping `PostgreSQL`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionPrivileges {
     /// The process owns `root` privileges and must drop to `nobody` for filesystem work.
     Root,
     /// The process is already unprivileged, so bootstrap tasks run with the current UID/GID.
     Unprivileged,
+}
+
+/// Selects how `PostgreSQL` lifecycle commands run when privileged execution is required.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionMode {
+    /// Execute lifecycle commands directly within the current process.
+    ///
+    /// This mode is only appropriate when the process already runs without elevated privileges.
+    InProcess,
+    /// Delegate lifecycle commands to a helper subprocess executed with reduced privileges.
+    Subprocess,
 }
 
 /// Groups related XDG Base Directory paths to reduce parameter clutter.
@@ -38,101 +54,14 @@ struct XdgDirs {
     runtime: Utf8PathBuf,
 }
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-/// Guards process environment mutations so bootstrap orchestration can operate
-/// safely within tests.
-///
-/// SAFETY: Mutating the process environment is inherently unsafe because reads
-/// and writes bypass the borrow checker. This guard serialises mutations with a
-/// global mutex and restores previous values on drop. Callers must avoid
-/// invoking [`bootstrap_for_tests`](crate::bootstrap_for_tests) concurrently
-/// with other code that touches the environment outside this guard.
-struct EnvGuard {
-    saved: Vec<(String, Option<OsString>)>,
-    #[expect(dead_code, reason = "Mutex guard keeps the lock held until drop")]
-    lock: MutexGuard<'static, ()>,
-}
-
-impl EnvGuard {
-    fn apply(vars: &[(String, String)]) -> Self {
-        let lock = ENV_LOCK.lock().expect("environment lock poisoned");
-        let mut saved = Vec::with_capacity(vars.len());
-        for (key, value) in vars {
-            let previous = env::var_os(key);
-            unsafe {
-                env::set_var(key, value);
-            }
-            saved.push((key.clone(), previous));
-        }
-        Self { saved, lock }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in self.saved.drain(..).rev() {
-            match value {
-                Some(previous) => unsafe {
-                    env::set_var(&key, previous);
-                },
-                None => unsafe {
-                    env::remove_var(&key);
-                },
-            }
-        }
-        // `lock` drops here, releasing the mutex once restoration completes.
-    }
-}
-
-/// Runtime handle used to execute bootstrap tasks.
-///
-/// Reuses an ambient Tokio runtime when one exists, otherwise builds a
-/// temporary single-threaded runtime. [`BootstrapRuntime::block_on`] performs a
-/// blocking wait and must not be called from asynchronous contexts running on
-/// the captured runtime.
-enum BootstrapRuntime {
-    Handle(Handle),
-    Owned(Runtime),
-}
-
-impl BootstrapRuntime {
-    fn new() -> BootstrapResult<Self> {
-        if let Ok(handle) = Handle::try_current() {
-            Ok(Self::Handle(handle))
-        } else {
-            let runtime = Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .context("failed to create Tokio runtime")?;
-            Ok(Self::Owned(runtime))
-        }
-    }
-
-    /// Blocks on the provided future to completion.
-    ///
-    /// Calling this from within an asynchronous context that is already running
-    /// on the captured runtime will deadlock or panic, so the helper must only
-    /// be used from synchronous bootstrap entry points.
-    fn block_on<F, T>(&self, future: F) -> color_eyre::Result<T>
-    where
-        F: Future<Output = color_eyre::Result<T>>,
-    {
-        match self {
-            Self::Handle(handle) => handle.block_on(future),
-            Self::Owned(runtime) => runtime.block_on(future),
-        }
-    }
-}
-
 /// Captures the environment variables prepared for test executions.
 #[derive(Debug, Clone)]
 pub struct TestBootstrapEnvironment {
-    /// Effective home directory for the PostgreSQL user during the tests.
+    /// Effective home directory for the `PostgreSQL` user during the tests.
     pub home: Utf8PathBuf,
-    /// Directory used for cached PostgreSQL artefacts.
+    /// Directory used for cached `PostgreSQL` artefacts.
     pub xdg_cache_home: Utf8PathBuf,
-    /// Directory used for PostgreSQL runtime state, such as sockets.
+    /// Directory used for `PostgreSQL` runtime state, such as sockets.
     pub xdg_runtime_dir: Utf8PathBuf,
     /// Location of the generated `.pgpass` file.
     pub pgpass_file: Utf8PathBuf,
@@ -155,24 +84,161 @@ impl TestBootstrapEnvironment {
     }
 
     /// Returns the prepared environment variables as key/value pairs.
-    pub fn to_env(&self) -> Vec<(String, String)> {
+    #[must_use]
+    pub fn to_env(&self) -> Vec<(String, Option<String>)> {
         let mut env = vec![
-            ("HOME".into(), self.home.as_str().into()),
-            ("XDG_CACHE_HOME".into(), self.xdg_cache_home.as_str().into()),
+            ("HOME".into(), Some(self.home.as_str().into())),
+            (
+                "XDG_CACHE_HOME".into(),
+                Some(self.xdg_cache_home.as_str().into()),
+            ),
             (
                 "XDG_RUNTIME_DIR".into(),
-                self.xdg_runtime_dir.as_str().into(),
+                Some(self.xdg_runtime_dir.as_str().into()),
             ),
-            ("PGPASSFILE".into(), self.pgpass_file.as_str().into()),
+            ("PGPASSFILE".into(), Some(self.pgpass_file.as_str().into())),
         ];
 
-        if let Some(dir) = &self.tz_dir {
-            env.push(("TZDIR".into(), dir.as_str().into()));
-        }
+        env.push((
+            "TZDIR".into(),
+            self.tz_dir.as_ref().map(|dir| dir.as_str().into()),
+        ));
 
-        env.push(("TZ".into(), self.timezone.clone()));
+        env.push(("TZ".into(), Some(self.timezone.clone())));
 
         env
+    }
+}
+
+fn shutdown_timeout_from_env() -> BootstrapResult<Duration> {
+    match env::var(SHUTDOWN_TIMEOUT_ENV) {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                    "{SHUTDOWN_TIMEOUT_ENV} must not be empty"
+                )));
+            }
+
+            let seconds: u64 = trimmed.parse().map_err(|err| {
+                BootstrapError::from(color_eyre::eyre::eyre!(
+                    "failed to parse {SHUTDOWN_TIMEOUT_ENV}: {err}"
+                ))
+            })?;
+
+            if seconds == 0 {
+                return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                    "{SHUTDOWN_TIMEOUT_ENV} must be at least 1 second"
+                )));
+            }
+
+            if seconds > MAX_SHUTDOWN_TIMEOUT_SECS {
+                return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                    "{SHUTDOWN_TIMEOUT_ENV} must be {MAX_SHUTDOWN_TIMEOUT_SECS} seconds or less"
+                )));
+            }
+
+            Ok(Duration::from_secs(seconds))
+        }
+        Err(VarError::NotPresent) => Ok(DEFAULT_SHUTDOWN_TIMEOUT),
+        Err(VarError::NotUnicode(_)) => Err(BootstrapError::from(color_eyre::eyre::eyre!(
+            "{SHUTDOWN_TIMEOUT_ENV} must contain a valid UTF-8 value"
+        ))),
+    }
+}
+
+fn worker_binary_from_env() -> BootstrapResult<Option<Utf8PathBuf>> {
+    let Some(raw) = env::var_os("PG_EMBEDDED_WORKER") else {
+        return Ok(None);
+    };
+
+    let path = Utf8PathBuf::from_path_buf(PathBuf::from(raw)).map_err(|_| {
+        BootstrapError::from(color_eyre::eyre::eyre!(
+            "PG_EMBEDDED_WORKER must contain a valid UTF-8 path"
+        ))
+    })?;
+
+    validate_worker_binary(&path)?;
+    Ok(Some(path))
+}
+
+fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {
+    let metadata = fs::metadata(path.as_std_path()).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            return BootstrapError::new(
+                BootstrapErrorKind::WorkerBinaryMissing,
+                color_eyre::eyre::eyre!("failed to access PG_EMBEDDED_WORKER at {path}: {err}"),
+            );
+        }
+
+        BootstrapError::from(color_eyre::eyre::eyre!(
+            "failed to access PG_EMBEDDED_WORKER at {path}: {err}"
+        ))
+    })?;
+
+    if !metadata.is_file() {
+        return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+            "PG_EMBEDDED_WORKER must reference a regular file: {path}"
+        )));
+    }
+
+    #[cfg(unix)]
+    {
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                "PG_EMBEDDED_WORKER must be executable: {path}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn prepare_bootstrap(
+    privileges: ExecutionPrivileges,
+    settings: Settings,
+    cfg: &PgEnvCfg,
+) -> BootstrapResult<PreparedBootstrap> {
+    #[cfg(unix)]
+    {
+        match privileges {
+            ExecutionPrivileges::Root => bootstrap_with_root(settings, cfg),
+            ExecutionPrivileges::Unprivileged => bootstrap_unprivileged(settings, cfg),
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = privileges;
+        bootstrap_unprivileged(settings, cfg)
+    }
+}
+
+fn determine_execution_mode(
+    privileges: ExecutionPrivileges,
+    worker_binary: Option<&Utf8PathBuf>,
+) -> BootstrapResult<ExecutionMode> {
+    #[cfg(unix)]
+    {
+        match privileges {
+            ExecutionPrivileges::Root => {
+                if worker_binary.is_none() {
+                    Err(BootstrapError::from(color_eyre::eyre::eyre!(
+                        "PG_EMBEDDED_WORKER must be set when running with root privileges"
+                    )))
+                } else {
+                    Ok(ExecutionMode::Subprocess)
+                }
+            }
+            ExecutionPrivileges::Unprivileged => Ok(ExecutionMode::InProcess),
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = worker_binary;
+        let _ = privileges;
+        Ok(ExecutionMode::InProcess)
     }
 }
 
@@ -181,18 +247,29 @@ impl TestBootstrapEnvironment {
 pub struct TestBootstrapSettings {
     /// Privilege level detected for the current process.
     pub privileges: ExecutionPrivileges,
-    /// PostgreSQL configuration prepared for the embedded instance.
+    /// Strategy for executing `PostgreSQL` lifecycle commands.
+    pub execution_mode: ExecutionMode,
+    /// `PostgreSQL` configuration prepared for the embedded instance.
     pub settings: Settings,
     /// Environment variables required to exercise the embedded instance.
     pub environment: TestBootstrapEnvironment,
+    /// Optional path to the helper binary used for subprocess execution.
+    pub worker_binary: Option<Utf8PathBuf>,
+    /// Maximum time to allow the worker to complete the setup phase.
+    pub setup_timeout: Duration,
+    /// Maximum time to allow the worker to complete the start phase.
+    pub start_timeout: Duration,
+    /// Grace period granted to `PostgreSQL` during drop before teardown proceeds regardless.
+    pub shutdown_timeout: Duration,
 }
 
 /// Determines the current execution privileges for the bootstrap sequence.
 ///
 /// Linux root users trigger the privileged path, whilst all other contexts – including
 /// non-Unix platforms – follow the unprivileged flow. The detection itself is deliberately
-/// lightweight: a simple effective-UID probe avoids shelling out, keeps start-up fast, and is
-/// testable via `with_temp_euid`.
+/// lightweight: a simple effective-UID probe avoids shelling out and keeps start-up fast while
+/// remaining easy to exercise inside integration tests that run the subprocess-based bootstrap.
+#[must_use]
 pub fn detect_execution_privileges() -> ExecutionPrivileges {
     #[cfg(unix)]
     {
@@ -298,7 +375,7 @@ fn prepare_timezone_env() -> BootstrapResult<TimezoneEnv> {
 
     let timezone = match env::var("TZ") {
         Ok(value) if !value.trim().is_empty() => value,
-        Ok(_) | Err(std::env::VarError::NotPresent) => DEFAULT_TIMEZONE.to_string(),
+        Ok(_) | Err(std::env::VarError::NotPresent) => DEFAULT_TIMEZONE.to_owned(),
         Err(std::env::VarError::NotUnicode(_)) => {
             return Err(color_eyre::eyre::eyre!("TZ must be valid UTF-8").into());
         }
@@ -340,10 +417,10 @@ fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
     }
 }
 
-/// Bootstraps an embedded PostgreSQL instance, branching between root and unprivileged flows.
+/// Bootstraps an embedded `PostgreSQL` instance, branching between root and unprivileged flows.
 ///
 /// The bootstrap honours the following environment variables when present:
-/// - `PG_RUNTIME_DIR`: Overrides the PostgreSQL installation directory.
+/// - `PG_RUNTIME_DIR`: Overrides the `PostgreSQL` installation directory.
 /// - `PG_DATA_DIR`: Overrides the data directory used for initialisation.
 /// - `PG_SUPERUSER`: Sets the superuser account name.
 /// - `PG_PASSWORD`: Supplies the superuser password.
@@ -365,12 +442,16 @@ fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
 ///     Ok(())
 /// }
 /// ```
+///
+/// # Errors
+/// Returns an error when bootstrap preparation fails or when subprocess orchestration
+/// cannot be configured.
 pub fn run() -> crate::Result<()> {
     orchestrate_bootstrap()?;
     Ok(())
 }
 
-/// Bootstraps PostgreSQL for integration tests and surfaces the prepared settings.
+/// Bootstraps `PostgreSQL` for integration tests and surfaces the prepared settings.
 ///
 /// # Examples
 /// ```no_run
@@ -379,54 +460,50 @@ pub fn run() -> crate::Result<()> {
 /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
 /// let bootstrap = bootstrap_for_tests()?;
 /// for (key, value) in bootstrap.environment.to_env() {
-///     std::env::set_var(&key, &value);
+///     match value {
+///         Some(value) => std::env::set_var(&key, &value),
+///         None => std::env::remove_var(&key),
+///     }
 /// }
 /// // Launch application logic that relies on `bootstrap.settings` here.
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Errors
+/// Returns an error when bootstrap preparation fails or when subprocess orchestration
+/// cannot be configured.
 pub fn bootstrap_for_tests() -> BootstrapResult<TestBootstrapSettings> {
     orchestrate_bootstrap()
 }
 
 fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
-    // `color_eyre::install()` is idempotent for logging but returns an error if invoked twice.
-    // Behavioural tests exercise consecutive bootstraps, so ignore the duplicate registration.
-    let _ = color_eyre::install();
+    if let Err(err) = color_eyre::install() {
+        tracing::debug!("color_eyre already installed: {err}");
+    }
 
     let privileges = detect_execution_privileges();
     let cfg = PgEnvCfg::load().context("failed to load configuration via OrthoConfig")?;
     let settings = cfg.to_settings()?;
-
-    let runtime = BootstrapRuntime::new()?;
-
-    #[cfg(unix)]
-    let prepared = {
-        match (privileges, settings) {
-            (ExecutionPrivileges::Root, settings) => bootstrap_with_root(&runtime, settings, &cfg)?,
-            (ExecutionPrivileges::Unprivileged, settings) => {
-                bootstrap_unprivileged(&runtime, settings, &cfg)?
-            }
-        }
-    };
-
-    #[cfg(not(unix))]
-    let prepared = bootstrap_unprivileged(&runtime, settings, &cfg)?;
+    let worker_binary = worker_binary_from_env()?;
+    let shutdown_timeout = shutdown_timeout_from_env()?;
+    let prepared = prepare_bootstrap(privileges, settings, &cfg)?;
+    let execution_mode = determine_execution_mode(privileges, worker_binary.as_ref())?;
 
     Ok(TestBootstrapSettings {
         privileges,
+        execution_mode,
         settings: prepared.settings,
         environment: prepared.environment,
+        worker_binary,
+        setup_timeout: DEFAULT_SETUP_TIMEOUT,
+        start_timeout: DEFAULT_START_TIMEOUT,
+        shutdown_timeout,
     })
 }
 
 #[cfg(unix)]
-#[expect(
-    clippy::collapsible_if,
-    reason = "Keep the privilege-branch parameters explicit for staged directory prep"
-)]
 fn bootstrap_with_root(
-    runtime: &BootstrapRuntime,
     mut settings: Settings,
     cfg: &PgEnvCfg,
 ) -> BootstrapResult<PreparedBootstrap> {
@@ -476,7 +553,6 @@ fn bootstrap_with_root(
     let cache_dir = install_dir.join("cache");
     let runtime_dir = install_dir.join("run");
 
-    let guard = drop_process_privileges(&nobody_user)?;
     ensure_dir_exists(&cache_dir)?;
     set_permissions(&cache_dir, 0o755)?;
     ensure_dir_exists(&runtime_dir)?;
@@ -488,20 +564,6 @@ fn bootstrap_with_root(
         runtime: runtime_dir,
     };
     let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
-    let env_vars = environment.to_env();
-    let env_guard = EnvGuard::apply(&env_vars);
-    let setup_settings = settings.clone();
-
-    runtime.block_on(async move {
-        let mut pg = PostgreSQL::new(setup_settings);
-        pg.setup()
-            .await
-            .wrap_err("postgresql_embedded::setup() failed")?;
-        Ok::<(), color_eyre::Report>(())
-    })?;
-    drop(env_guard);
-    drop(guard);
-
     Ok(PreparedBootstrap {
         settings,
         environment,
@@ -509,12 +571,7 @@ fn bootstrap_with_root(
 }
 
 #[cfg(unix)]
-#[expect(
-    clippy::collapsible_if,
-    reason = "Keep the privilege-branch parameters explicit for staged directory prep"
-)]
 fn bootstrap_unprivileged(
-    runtime: &BootstrapRuntime,
     mut settings: Settings,
     cfg: &PgEnvCfg,
 ) -> BootstrapResult<PreparedBootstrap> {
@@ -561,20 +618,6 @@ fn bootstrap_unprivileged(
         runtime: runtime_dir,
     };
     let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
-    let env_vars = environment.to_env();
-    let env_guard = EnvGuard::apply(&env_vars);
-    let setup_settings = settings.clone();
-
-    runtime.block_on(async move {
-        let mut pg = PostgreSQL::new(setup_settings);
-        pg.setup()
-            .await
-            .wrap_err("postgresql_embedded::setup() failed")?;
-        Ok::<(), color_eyre::Report>(())
-    })?;
-
-    drop(env_guard);
-
     Ok(PreparedBootstrap {
         settings,
         environment,
@@ -583,7 +626,6 @@ fn bootstrap_unprivileged(
 
 #[cfg(not(unix))]
 fn bootstrap_unprivileged(
-    runtime: &BootstrapRuntime,
     mut settings: Settings,
     _cfg: &PgEnvCfg,
 ) -> BootstrapResult<PreparedBootstrap> {
@@ -616,20 +658,6 @@ fn bootstrap_unprivileged(
         runtime: runtime_dir,
     };
     let environment = TestBootstrapEnvironment::new(xdg, password_file, timezone);
-    let env_vars = environment.to_env();
-    let env_guard = EnvGuard::apply(&env_vars);
-    let setup_settings = settings.clone();
-
-    runtime.block_on(async move {
-        let mut pg = PostgreSQL::new(setup_settings);
-        pg.setup()
-            .await
-            .wrap_err("postgresql_embedded::setup() failed")?;
-        Ok::<(), color_eyre::Report>(())
-    })?;
-
-    drop(env_guard);
-
     Ok(PreparedBootstrap {
         settings,
         environment,

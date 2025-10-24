@@ -1,12 +1,13 @@
-//! Facilitates preparing an embedded PostgreSQL instance while dropping root
+//! Facilitates preparing an embedded `PostgreSQL` instance while dropping root
 //! privileges.
 //!
 //! The library owns the lifecycle for configuring paths, permissions, and
-//! process identity so the bundled PostgreSQL binaries can initialise safely
+//! process identity so the bundled `PostgreSQL` binaries can initialise safely
 //! under an unprivileged account.
-#![allow(non_snake_case)]
 
 mod bootstrap;
+mod cluster;
+mod env;
 mod error;
 mod fs;
 #[cfg(all(
@@ -22,12 +23,24 @@ mod fs;
 mod privileges;
 #[doc(hidden)]
 pub mod test_support;
+#[doc(hidden)]
+pub mod worker;
 
+#[doc(hidden)]
+pub use crate::env::ScopedEnv;
 pub use bootstrap::{
-    ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings, bootstrap_for_tests,
-    detect_execution_privileges, run,
+    ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
+    bootstrap_for_tests, detect_execution_privileges, run,
 };
-pub use error::{Error, Result};
+#[doc(hidden)]
+pub use cluster::PrivilegedOperationContext;
+pub use cluster::TestCluster;
+#[doc(hidden)]
+pub use cluster::WorkerOperation;
+#[doc(hidden)]
+pub use error::BootstrapResult;
+pub use error::PgEmbeddedError as Error;
+pub use error::{BootstrapError, BootstrapErrorKind, PgEmbeddedError, Result};
 #[cfg(feature = "privileged-tests")]
 #[cfg(all(
     unix,
@@ -39,6 +52,10 @@ pub use error::{Error, Result};
         target_os = "dragonfly",
     ),
 ))]
+#[expect(
+    deprecated,
+    reason = "with_temp_euid() remains exported for backward compatibility whilst deprecated"
+)]
 pub use privileges::with_temp_euid;
 #[cfg(all(
     unix,
@@ -61,23 +78,42 @@ use crate::error::{ConfigError, ConfigResult};
 use camino::Utf8PathBuf;
 use std::ffi::OsString;
 
-#[allow(non_snake_case)]
+/// Captures `PostgreSQL` settings supplied via environment variables.
 #[derive(Debug, Clone, Serialize, Deserialize, OrthoConfig, Default)]
 #[ortho_config(prefix = "PG")]
+///
+/// # Examples
+/// ```
+/// use pg_embedded_setup_unpriv::PgEnvCfg;
+///
+/// let cfg = PgEnvCfg::default();
+/// assert!(cfg.port.is_none());
+/// ```
 pub struct PgEnvCfg {
-    /// e.g. "=16.4.0" or "^17"
+    /// Optional semver requirement that constrains the `PostgreSQL` version.
     pub version_req: Option<String>,
+    /// Port assigned to the embedded `PostgreSQL` server.
     pub port: Option<u16>,
+    /// Name of the administrative user created for the cluster.
     pub superuser: Option<String>,
+    /// Password provisioned for the administrative user.
     pub password: Option<String>,
+    /// Directory used for `PostgreSQL` data files when provided.
     pub data_dir: Option<Utf8PathBuf>,
+    /// Directory containing the `PostgreSQL` binaries when provided.
     pub runtime_dir: Option<Utf8PathBuf>,
+    /// Locale applied to `initdb` when specified.
     pub locale: Option<String>,
+    /// Encoding applied to `initdb` when specified.
     pub encoding: Option<String>,
 }
 
 impl PgEnvCfg {
     /// Loads configuration from environment variables without parsing CLI arguments.
+    ///
+    /// # Errors
+    /// Returns an error when environment parsing fails or derived configuration
+    /// cannot be represented using UTF-8 paths.
     pub fn load() -> ConfigResult<Self> {
         let args = [OsString::from("pg-embedded-setup-unpriv")];
         Self::load_from_iter(args).map_err(|err| ConfigError::from(eyre!(err)))
@@ -90,6 +126,9 @@ impl PgEnvCfg {
     ///
     /// # Returns
     /// A fully configured `Settings` instance on success, or an error if configuration fails.
+    ///
+    /// # Errors
+    /// Returns an error when the semantic version requirement cannot be parsed.
     pub fn to_settings(&self) -> Result<Settings> {
         let mut s = Settings::default();
 
@@ -114,10 +153,10 @@ impl PgEnvCfg {
             settings.port = p;
         }
         if let Some(ref u) = self.superuser {
-            settings.username = u.clone();
+            settings.username.clone_from(u);
         }
         if let Some(ref pw) = self.password {
-            settings.password = pw.clone();
+            settings.password.clone_from(pw);
         }
     }
 
@@ -130,7 +169,7 @@ impl PgEnvCfg {
         }
     }
 
-    /// Applies locale and encoding settings to the PostgreSQL configuration if specified
+    /// Applies locale and encoding settings to the `PostgreSQL` configuration if specified
     /// in the environment.
     ///
     /// Inserts the `locale` and `encoding` values into the settings configuration map when
