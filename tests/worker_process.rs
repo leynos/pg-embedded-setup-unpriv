@@ -1,4 +1,5 @@
 #![cfg(all(
+    test,
     unix,
     any(
         target_os = "linux",
@@ -12,7 +13,7 @@
 
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::{Context, eyre};
-use pg_embedded_setup_unpriv::worker_process::{
+use pg_embedded_setup_unpriv::worker_process_test_api::{
     WorkerRequest, disable_privilege_drop_for_tests, render_failure_for_tests, run,
 };
 use pg_embedded_setup_unpriv::{BootstrapError, BootstrapResult, WorkerOperation};

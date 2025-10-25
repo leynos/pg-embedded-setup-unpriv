@@ -25,8 +25,110 @@ mod privileges;
 pub mod test_support;
 #[doc(hidden)]
 pub mod worker;
+pub(crate) mod worker_process;
+
 #[doc(hidden)]
-pub mod worker_process;
+pub mod worker_process_test_api {
+    use std::time::Duration;
+
+    use camino::Utf8Path;
+    use postgresql_embedded::Settings;
+
+    use crate::WorkerOperation;
+    use crate::worker_process;
+
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    ))]
+    use crate::worker_process::PrivilegeDropGuard as InnerPrivilegeDropGuard;
+
+    pub struct WorkerRequest<'a>(worker_process::WorkerRequest<'a>);
+
+    impl<'a> WorkerRequest<'a> {
+        #[must_use]
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "test helper mirrors worker request constructor"
+        )]
+        pub const fn new(
+            worker: &'a Utf8Path,
+            settings: &'a Settings,
+            env_vars: &'a [(String, Option<String>)],
+            operation: WorkerOperation,
+            timeout: Duration,
+        ) -> Self {
+            Self(worker_process::WorkerRequest::new(
+                worker, settings, env_vars, operation, timeout,
+            ))
+        }
+
+        pub(crate) const fn inner(&self) -> &worker_process::WorkerRequest<'a> {
+            &self.0
+        }
+    }
+
+    pub fn run(request: &WorkerRequest<'_>) -> crate::BootstrapResult<()> {
+        worker_process::run(request.inner())
+    }
+
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    ))]
+    pub struct PrivilegeDropGuard(InnerPrivilegeDropGuard);
+
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    ))]
+    impl Drop for PrivilegeDropGuard {
+        fn drop(&mut self) {
+            let _ = &self.0;
+        }
+    }
+
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    ))]
+    #[must_use]
+    pub fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
+        PrivilegeDropGuard(worker_process::disable_privilege_drop_for_tests())
+    }
+
+    #[must_use]
+    pub fn render_failure_for_tests(
+        context: &str,
+        output: &std::process::Output,
+    ) -> crate::BootstrapError {
+        worker_process::render_failure_for_tests(context, output)
+    }
+}
 
 #[doc(hidden)]
 pub use crate::env::ScopedEnv;

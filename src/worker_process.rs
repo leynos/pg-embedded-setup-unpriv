@@ -52,7 +52,7 @@ use std::os::unix::process::CommandExt;
 ))]
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub struct WorkerRequest<'a> {
+pub(crate) struct WorkerRequest<'a> {
     worker: &'a Utf8Path,
     settings: &'a Settings,
     env_vars: &'a [(String, Option<String>)],
@@ -66,7 +66,7 @@ impl<'a> WorkerRequest<'a> {
         clippy::too_many_arguments,
         reason = "request captures all invocation context"
     )]
-    pub const fn new(
+    pub(crate) const fn new(
         worker: &'a Utf8Path,
         settings: &'a Settings,
         env_vars: &'a [(String, Option<String>)],
@@ -83,8 +83,7 @@ impl<'a> WorkerRequest<'a> {
     }
 }
 
-#[doc(hidden)]
-pub fn run(request: &WorkerRequest<'_>) -> BootstrapResult<()> {
+pub(crate) fn run(request: &WorkerRequest<'_>) -> BootstrapResult<()> {
     WorkerProcess::new(request).run()
 }
 
@@ -337,7 +336,7 @@ static SKIP_PRIVILEGE_DROP: AtomicBool = AtomicBool::new(false);
     ),
 ))]
 #[derive(Debug)]
-pub struct PrivilegeDropGuard {
+pub(crate) struct PrivilegeDropGuard {
     previous: bool,
 }
 
@@ -368,13 +367,13 @@ impl Drop for PrivilegeDropGuard {
     ),
 ))]
 #[must_use]
-pub fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
+pub(crate) fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
     let previous = SKIP_PRIVILEGE_DROP.swap(true, Ordering::SeqCst);
     PrivilegeDropGuard { previous }
 }
 
 #[doc(hidden)]
 #[must_use]
-pub fn render_failure_for_tests(context: &str, output: &Output) -> BootstrapError {
+pub(crate) fn render_failure_for_tests(context: &str, output: &Output) -> BootstrapError {
     WorkerProcess::render_failure(context, output)
 }
