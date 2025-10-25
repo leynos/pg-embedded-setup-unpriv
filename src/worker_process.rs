@@ -85,6 +85,52 @@ impl<'a> WorkerRequest<'a> {
     }
 }
 
+/// Executes the worker binary for a privileged cluster operation with
+/// timeout-aware error handling.
+///
+/// The helper serialises the request payload, drops privileges where
+/// applicable, and runs the worker command whilst enforcing the configured
+/// timeout. Failures bubble up as [`BootstrapError`] with truncated stdout and
+/// stderr to keep diagnostics readable.
+///
+/// # Errors
+///
+/// Returns an error when:
+/// - the worker payload cannot be created, serialised, or flushed to disk;
+/// - the worker command cannot be spawned or its output cannot be collected;
+/// - the worker exceeds the configured timeout and must be terminated; or
+/// - the worker exits unsuccessfully, in which case the captured output is
+///   surfaced for context.
+///
+/// # Examples
+///
+/// ```ignore
+/// use std::time::Duration;
+///
+/// use camino::Utf8Path;
+/// use pg_embedded_setup_unpriv::cluster::WorkerOperation;
+/// use pg_embedded_setup_unpriv::error::BootstrapResult;
+/// use pg_embedded_setup_unpriv::worker_process::{run, WorkerRequest};
+///
+/// fn invoke_worker() -> BootstrapResult<()> {
+///     let worker = Utf8Path::new("/usr/local/bin/pg_worker");
+///     let settings = load_cluster_settings();
+///     let env = vec![("DATABASE_URL".to_owned(), Some("postgres://...".to_owned()))];
+///     let request = WorkerRequest::new(
+///         worker,
+///         &settings,
+///         &env,
+///         WorkerOperation::Setup,
+///         Duration::from_secs(30),
+///     );
+///
+///     run(&request)
+/// }
+///
+/// fn load_cluster_settings() -> postgresql_embedded::Settings {
+///     todo!("application-specific settings initialisation")
+/// }
+/// ```
 pub(crate) fn run(request: &WorkerRequest<'_>) -> BootstrapResult<()> {
     WorkerProcess::new(request).run()
 }
