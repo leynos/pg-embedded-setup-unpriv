@@ -40,16 +40,51 @@ use nix::unistd::{Gid, Uid, User, chown};
     ),
 ))]
 use std::os::unix::process::CommandExt;
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+))]
+use std::sync::atomic::{AtomicBool, Ordering};
 
-pub(crate) struct WorkerRequest<'a> {
-    pub(crate) worker: &'a Utf8Path,
-    pub(crate) settings: &'a Settings,
-    pub(crate) env_vars: &'a [(String, Option<String>)],
-    pub(crate) operation: WorkerOperation,
-    pub(crate) timeout: Duration,
+pub struct WorkerRequest<'a> {
+    worker: &'a Utf8Path,
+    settings: &'a Settings,
+    env_vars: &'a [(String, Option<String>)],
+    operation: WorkerOperation,
+    timeout: Duration,
 }
 
-pub(crate) fn run(request: &WorkerRequest<'_>) -> BootstrapResult<()> {
+impl<'a> WorkerRequest<'a> {
+    #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "request captures all invocation context"
+    )]
+    pub const fn new(
+        worker: &'a Utf8Path,
+        settings: &'a Settings,
+        env_vars: &'a [(String, Option<String>)],
+        operation: WorkerOperation,
+        timeout: Duration,
+    ) -> Self {
+        Self {
+            worker,
+            settings,
+            env_vars,
+            operation,
+            timeout,
+        }
+    }
+}
+
+#[doc(hidden)]
+pub fn run(request: &WorkerRequest<'_>) -> BootstrapResult<()> {
     WorkerProcess::new(request).run()
 }
 
@@ -251,7 +286,6 @@ impl<'a> WorkerProcess<'a> {
     }
 
     #[cfg(all(
-        test,
         unix,
         any(
             target_os = "linux",
@@ -262,11 +296,10 @@ impl<'a> WorkerProcess<'a> {
         ),
     ))]
     fn skip_privilege_drop_for_tests() -> bool {
-        SKIP_PRIVILEGE_DROP.load(std::sync::atomic::Ordering::SeqCst)
+        SKIP_PRIVILEGE_DROP.load(Ordering::SeqCst)
     }
 
     #[cfg(not(all(
-        test,
         unix,
         any(
             target_os = "linux",
@@ -282,7 +315,6 @@ impl<'a> WorkerProcess<'a> {
 }
 
 #[cfg(all(
-    test,
     unix,
     any(
         target_os = "linux",
@@ -292,203 +324,57 @@ impl<'a> WorkerProcess<'a> {
         target_os = "dragonfly",
     ),
 ))]
-static SKIP_PRIVILEGE_DROP: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static SKIP_PRIVILEGE_DROP: AtomicBool = AtomicBool::new(false);
 
-#[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-    use camino::Utf8PathBuf;
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-    use std::os::unix::process::ExitStatusExt;
-    use std::sync::{Mutex, OnceLock};
-    use tempfile::tempdir;
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+))]
+#[derive(Debug)]
+pub struct PrivilegeDropGuard {
+    previous: bool,
+}
 
-    fn test_mutex() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+))]
+impl Drop for PrivilegeDropGuard {
+    fn drop(&mut self) {
+        SKIP_PRIVILEGE_DROP.store(self.previous, Ordering::SeqCst);
     }
+}
 
-    fn with_privilege_drop_disabled<T>(f: impl FnOnce() -> T) -> T {
-        let _guard = test_mutex()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        #[cfg(all(
-            unix,
-            any(
-                target_os = "linux",
-                target_os = "android",
-                target_os = "freebsd",
-                target_os = "openbsd",
-                target_os = "dragonfly",
-            ),
-        ))]
-        SKIP_PRIVILEGE_DROP.store(true, std::sync::atomic::Ordering::SeqCst);
-        let result = f();
-        #[cfg(all(
-            unix,
-            any(
-                target_os = "linux",
-                target_os = "android",
-                target_os = "freebsd",
-                target_os = "openbsd",
-                target_os = "dragonfly",
-            ),
-        ))]
-        SKIP_PRIVILEGE_DROP.store(false, std::sync::atomic::Ordering::SeqCst);
-        result
-    }
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+))]
+#[must_use]
+pub fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
+    let previous = SKIP_PRIVILEGE_DROP.swap(true, Ordering::SeqCst);
+    PrivilegeDropGuard { previous }
+}
 
-    fn sample_settings(root: &std::path::Path) -> Settings {
-        Settings {
-            installation_dir: root.join("install"),
-            password_file: root.join("pgpass"),
-            data_dir: root.join("data"),
-            timeout: Some(Duration::from_secs(30)),
-            ..Settings::default()
-        }
-    }
-
-    fn write_script(
-        root: &std::path::Path,
-        name: &str,
-        body: &str,
-    ) -> BootstrapResult<Utf8PathBuf> {
-        let path = root.join(name);
-        fs::write(&path, body).context("write script")?;
-        let mut perms = fs::metadata(&path)
-            .context("script metadata")?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&path, perms).context("set script permissions")?;
-        let utf8 =
-            Utf8PathBuf::from_path_buf(path).map_err(|_| eyre!("script path must be UTF-8"))?;
-        Ok(utf8)
-    }
-
-    const fn request<'a>(
-        worker: &'a Utf8Path,
-        settings: &'a Settings,
-        env: &'a [(String, Option<String>)],
-        timeout: Duration,
-    ) -> WorkerRequest<'a> {
-        WorkerRequest {
-            worker,
-            settings,
-            env_vars: env,
-            operation: WorkerOperation::Setup,
-            timeout,
-        }
-    }
-
-    fn require_contains(message: &str, needle: &str, description: &str) -> BootstrapResult<()> {
-        if message.contains(needle) {
-            Ok(())
-        } else {
-            Err(BootstrapError::from(eyre!("{description}: {message}")))
-        }
-    }
-
-    #[test]
-    fn run_succeeds_when_worker_exits_successfully() -> BootstrapResult<()> {
-        with_privilege_drop_disabled(|| -> BootstrapResult<()> {
-            let sandbox = tempdir().context("create sandbox")?;
-            fs::create_dir_all(sandbox.path().join("install")).context("install dir")?;
-            fs::create_dir_all(sandbox.path().join("data")).context("data dir")?;
-            fs::write(sandbox.path().join("pgpass"), b"").context("pgpass")?;
-            let settings = sample_settings(sandbox.path());
-            let env_vars = Vec::new();
-            let worker = Utf8Path::new("/bin/true");
-            let request = request(worker, &settings, &env_vars, Duration::from_secs(1));
-
-            run(&request)
-        })
-    }
-
-    #[test]
-    fn run_truncates_stdout_and_stderr_on_failure() -> BootstrapResult<()> {
-        with_privilege_drop_disabled(|| -> BootstrapResult<()> {
-            let sandbox = tempdir().context("create sandbox")?;
-            fs::create_dir_all(sandbox.path().join("install")).context("install dir")?;
-            fs::create_dir_all(sandbox.path().join("data")).context("data dir")?;
-            fs::write(sandbox.path().join("pgpass"), b"").context("pgpass")?;
-            let settings = sample_settings(sandbox.path());
-            let env_vars = Vec::new();
-            let long_output = "A".repeat(5_000);
-            let script_body = format!(
-                "#!/bin/sh\ncat <<'EOF'\n{long_output}\nEOF\ncat <<'EOF' >&2\n{long_output}\nEOF\nexit 1\n"
-            );
-            let worker_path = write_script(sandbox.path(), "fail.sh", &script_body)?;
-            let request = request(
-                worker_path.as_path(),
-                &settings,
-                &env_vars,
-                Duration::from_secs(1),
-            );
-
-            match run(&request) {
-                Ok(()) => Err(BootstrapError::from(eyre!("worker must fail"))),
-                Err(err) => {
-                    let message = err.to_string();
-                    require_contains(&message, "stdout:", "missing stdout")?;
-                    require_contains(&message, "stderr:", "missing stderr")?;
-                    require_contains(
-                        &message,
-                        WorkerProcess::TRUNCATION_SUFFIX,
-                        "error should mention truncation",
-                    )?;
-                    Ok(())
-                }
-            }
-        })
-    }
-
-    #[test]
-    fn run_reports_timeout_errors() -> BootstrapResult<()> {
-        with_privilege_drop_disabled(|| -> BootstrapResult<()> {
-            let sandbox = tempdir().context("create sandbox")?;
-            fs::create_dir_all(sandbox.path().join("install")).context("install dir")?;
-            fs::create_dir_all(sandbox.path().join("data")).context("data dir")?;
-            fs::write(sandbox.path().join("pgpass"), b"").context("pgpass")?;
-            let settings = sample_settings(sandbox.path());
-            let env_vars = Vec::new();
-            let script_body = "#!/bin/sh\nsleep 5\n";
-            let worker_path = write_script(sandbox.path(), "sleep.sh", script_body)?;
-            let request = request(
-                worker_path.as_path(),
-                &settings,
-                &env_vars,
-                Duration::from_millis(50),
-            );
-
-            match run(&request) {
-                Ok(()) => Err(BootstrapError::from(eyre!("worker should time out"))),
-                Err(err) => {
-                    let message = err.to_string();
-                    require_contains(&message, "timed out", "timeout context missing")?;
-                    Ok(())
-                }
-            }
-        })
-    }
-
-    #[test]
-    fn render_failure_truncates_outputs() -> BootstrapResult<()> {
-        let long = "B".repeat(4_096);
-        let output = Output {
-            status: ExitStatusExt::from_raw(0),
-            stdout: long.as_bytes().to_vec(),
-            stderr: long.as_bytes().to_vec(),
-        };
-
-        let err = WorkerProcess::render_failure("ctx", &output);
-        let message = err.to_string();
-        require_contains(
-            &message,
-            WorkerProcess::TRUNCATION_SUFFIX,
-            "error should mention truncation",
-        )?;
-        Ok(())
-    }
+#[doc(hidden)]
+#[must_use]
+pub fn render_failure_for_tests(context: &str, output: &Output) -> BootstrapError {
+    WorkerProcess::render_failure(context, output)
 }

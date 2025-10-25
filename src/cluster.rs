@@ -237,13 +237,13 @@ impl TestCluster {
             ))
         })?;
 
-        let request = WorkerRequest {
+        let request = WorkerRequest::new(
             worker,
-            settings: &bootstrap.settings,
+            &bootstrap.settings,
             env_vars,
             operation,
-            timeout: operation.timeout(bootstrap),
-        };
+            operation.timeout(bootstrap),
+        );
 
         worker_process::run(&request)
     }

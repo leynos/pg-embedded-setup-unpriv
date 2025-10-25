@@ -25,7 +25,8 @@ mod privileges;
 pub mod test_support;
 #[doc(hidden)]
 pub mod worker;
-mod worker_process;
+#[doc(hidden)]
+pub mod worker_process;
 
 #[doc(hidden)]
 pub use crate::env::ScopedEnv;
