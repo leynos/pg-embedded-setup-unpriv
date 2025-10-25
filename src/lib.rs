@@ -88,22 +88,8 @@ pub mod worker_process_test_api {
             target_os = "dragonfly",
         ),
     ))]
-    pub struct PrivilegeDropGuard(InnerPrivilegeDropGuard);
-
-    #[cfg(all(
-        unix,
-        any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "dragonfly",
-        ),
-    ))]
-    impl Drop for PrivilegeDropGuard {
-        fn drop(&mut self) {
-            let _ = &self.0;
-        }
+    pub struct PrivilegeDropGuard {
+        _inner: InnerPrivilegeDropGuard,
     }
 
     #[cfg(all(
@@ -118,7 +104,9 @@ pub mod worker_process_test_api {
     ))]
     #[must_use]
     pub fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
-        PrivilegeDropGuard(worker_process::disable_privilege_drop_for_tests())
+        PrivilegeDropGuard {
+            _inner: worker_process::disable_privilege_drop_for_tests(),
+        }
     }
 
     #[must_use]

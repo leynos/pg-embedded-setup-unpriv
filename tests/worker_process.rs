@@ -90,8 +90,13 @@ fn run_succeeds_when_worker_exits_successfully() -> BootstrapResult<()> {
         fs::write(sandbox.path().join("pgpass"), b"").context("pgpass")?;
         let settings = sample_settings(sandbox.path());
         let env_vars = Vec::new();
-        let worker = Utf8Path::new("/bin/true");
-        let request = request(worker, &settings, &env_vars, Duration::from_secs(1));
+        let worker_path = write_script(sandbox.path(), "ok.sh", "#!/bin/sh\nexit 0\n")?;
+        let request = request(
+            worker_path.as_path(),
+            &settings,
+            &env_vars,
+            Duration::from_secs(1),
+        );
 
         run(&request)
     })

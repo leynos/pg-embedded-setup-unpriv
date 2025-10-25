@@ -11,7 +11,9 @@ use color_eyre::eyre::{Context, eyre};
 use postgresql_embedded::Settings;
 use serde_json::to_writer;
 use std::borrow::Cow;
-use std::io::{ErrorKind, Write};
+use std::fmt::Write as FmtWrite;
+use std::io::ErrorKind;
+use std::io::Write as _;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
@@ -133,14 +135,38 @@ impl<'a> WorkerProcess<'a> {
     fn run_command_with_timeout(&self, command: &mut Command) -> BootstrapResult<Output> {
         let mut child = command.spawn().context("failed to spawn worker command")?;
 
-        let wait_result = child
-            .wait_timeout(self.request.timeout)
-            .context("failed to wait for worker command")?;
+        // Ensure the worker is reaped even if waiting fails unexpectedly.
+        let wait_result = match child.wait_timeout(self.request.timeout) {
+            Ok(result) => result,
+            Err(error) => {
+                let kill_result = child.kill();
+                let wait_result = child.wait_with_output();
+                let mut message = format!("failed to wait for worker command: {error}");
+                if let Err(kill_err) = kill_result {
+                    Self::append_error_context(
+                        &mut message,
+                        "additionally failed to terminate worker",
+                        &kill_err,
+                        "; additionally failed to report worker termination error",
+                    );
+                }
+                if let Err(wait_err) = wait_result {
+                    Self::append_error_context(
+                        &mut message,
+                        "additionally failed to reap worker output",
+                        &wait_err,
+                        "; additionally failed to describe worker reap error",
+                    );
+                }
+                return Err(BootstrapError::from(eyre!(message)));
+            }
+        };
         let timed_out = wait_result.is_none();
 
         if timed_out {
             match child.kill() {
                 Ok(()) => {}
+                // `InvalidInput` indicates the child has already exited; ignore it.
                 Err(err) if err.kind() == ErrorKind::InvalidInput => {}
                 Err(err) => {
                     return Err(BootstrapError::from(eyre!(
@@ -257,23 +283,22 @@ impl<'a> WorkerProcess<'a> {
     }
 
     fn truncate_output(text: Cow<'_, str>) -> String {
-        if text.chars().count() <= Self::OUTPUT_CHAR_LIMIT {
+        let mut out =
+            String::with_capacity(Self::OUTPUT_CHAR_LIMIT + Self::TRUNCATION_SUFFIX.len());
+        let mut chars = text.chars();
+        for _ in 0..Self::OUTPUT_CHAR_LIMIT {
+            match chars.next() {
+                Some(ch) => out.push(ch),
+                None => return text.into_owned(),
+            }
+        }
+
+        if chars.next().is_none() {
             return text.into_owned();
         }
 
-        let mut truncated =
-            String::with_capacity(Self::OUTPUT_CHAR_LIMIT + Self::TRUNCATION_SUFFIX.len());
-        for (idx, ch) in text.chars().enumerate() {
-            if idx < Self::OUTPUT_CHAR_LIMIT {
-                truncated.push(ch);
-                continue;
-            }
-
-            truncated.push_str(Self::TRUNCATION_SUFFIX);
-            break;
-        }
-
-        truncated
+        out.push_str(Self::TRUNCATION_SUFFIX);
+        out
     }
 
     fn combine_errors(primary: BootstrapError, cleanup: BootstrapError) -> BootstrapError {
@@ -282,6 +307,17 @@ impl<'a> WorkerProcess<'a> {
         BootstrapError::from(eyre!(
             "{primary_report}\nSecondary failure whilst removing worker payload: {cleanup_report}"
         ))
+    }
+
+    fn append_error_context(
+        message: &mut String,
+        detail: &str,
+        error: &impl std::fmt::Display,
+        fallback: &str,
+    ) {
+        if FmtWrite::write_fmt(message, format_args!("; {detail}: {error}")).is_err() {
+            message.push_str(fallback);
+        }
     }
 
     #[cfg(all(
