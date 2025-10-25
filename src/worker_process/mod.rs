@@ -3,6 +3,8 @@
 //! The helpers serialise worker payloads, prepare commands, and enforce timeouts
 //! so `TestCluster` can remain focused on orchestration logic.
 
+mod privileges;
+
 use crate::cluster::WorkerOperation;
 use crate::error::{BootstrapError, BootstrapResult};
 use crate::worker::WorkerPayload;
@@ -30,29 +32,7 @@ use wait_timeout::ChildExt;
         target_os = "dragonfly",
     ),
 ))]
-use nix::unistd::{Gid, Uid, User, chown};
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-use std::os::unix::process::CommandExt;
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-use std::sync::atomic::{AtomicBool, Ordering};
+pub(crate) use privileges::{PrivilegeDropGuard, disable_privilege_drop_for_tests};
 
 pub(crate) struct WorkerRequest<'a> {
     worker: &'a Utf8Path,
@@ -172,7 +152,7 @@ impl<'a> WorkerProcess<'a> {
         let mut command = Command::new(self.request.worker.as_std_path());
         command.arg(self.request.operation.as_str());
         command.arg(payload_path);
-        Self::drop_privileges(payload_path, &mut command)?;
+        privileges::apply(payload_path, &mut command)?;
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
         Ok(command)
@@ -262,72 +242,6 @@ impl<'a> WorkerProcess<'a> {
         Ok(())
     }
 
-    fn drop_privileges(payload_path: &Path, command: &mut Command) -> BootstrapResult<()> {
-        #[cfg(all(
-            unix,
-            any(
-                target_os = "linux",
-                target_os = "android",
-                target_os = "freebsd",
-                target_os = "openbsd",
-                target_os = "dragonfly",
-            ),
-        ))]
-        {
-            if Self::skip_privilege_drop_for_tests() {
-                return Ok(());
-            }
-
-            let user = User::from_name("nobody")
-                .context("failed to resolve user 'nobody'")?
-                .ok_or_else(|| eyre!("user 'nobody' not found"))?;
-            let uid = user.uid.as_raw();
-            let gid = user.gid.as_raw();
-
-            chown(
-                payload_path,
-                Some(Uid::from_raw(uid)),
-                Some(Gid::from_raw(gid)),
-            )
-            .context("failed to chown worker payload to nobody")?;
-
-            unsafe {
-                // SAFETY: This closure executes immediately before `exec` whilst the process
-                // still owns elevated credentials. The synchronous UID/GID demotion mirrors the
-                // previous inlined implementation in `TestCluster::spawn_worker`.
-                command.pre_exec(move || {
-                    if libc::setgroups(0, std::ptr::null()) != 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    if libc::setgid(gid) != 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    if libc::setuid(uid) != 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
-            }
-        }
-
-        #[cfg(not(all(
-            unix,
-            any(
-                target_os = "linux",
-                target_os = "android",
-                target_os = "freebsd",
-                target_os = "openbsd",
-                target_os = "dragonfly",
-            ),
-        )))]
-        {
-            let _ = payload_path;
-            let _ = command;
-        }
-
-        Ok(())
-    }
-
     fn truncate_output(text: Cow<'_, str>) -> String {
         let mut out =
             String::with_capacity(Self::OUTPUT_CHAR_LIMIT + Self::TRUNCATION_SUFFIX.len());
@@ -365,95 +279,7 @@ impl<'a> WorkerProcess<'a> {
             message.push_str(fallback);
         }
     }
-
-    #[cfg(all(
-        unix,
-        any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "dragonfly",
-        ),
-    ))]
-    fn skip_privilege_drop_for_tests() -> bool {
-        SKIP_PRIVILEGE_DROP.load(Ordering::SeqCst)
-    }
-
-    #[cfg(not(all(
-        unix,
-        any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "dragonfly",
-        ),
-    )))]
-    const fn skip_privilege_drop_for_tests() -> bool {
-        false
-    }
 }
-
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-static SKIP_PRIVILEGE_DROP: AtomicBool = AtomicBool::new(false);
-
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-#[derive(Debug)]
-pub(crate) struct PrivilegeDropGuard {
-    previous: bool,
-}
-
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-impl Drop for PrivilegeDropGuard {
-    fn drop(&mut self) {
-        SKIP_PRIVILEGE_DROP.store(self.previous, Ordering::SeqCst);
-    }
-}
-
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-#[must_use]
-pub(crate) fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
-    let previous = SKIP_PRIVILEGE_DROP.swap(true, Ordering::SeqCst);
-    PrivilegeDropGuard { previous }
-}
-
 #[doc(hidden)]
 #[must_use]
 pub(crate) fn render_failure_for_tests(context: &str, output: &Output) -> BootstrapError {
