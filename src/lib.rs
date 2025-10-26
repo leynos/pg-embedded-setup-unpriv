@@ -25,6 +25,130 @@ mod privileges;
 pub mod test_support;
 #[doc(hidden)]
 pub mod worker;
+pub(crate) mod worker_process;
+
+/// Integration test shims for worker process orchestration.
+#[doc(hidden)]
+pub mod worker_process_test_api {
+    use std::time::Duration;
+
+    use camino::Utf8Path;
+    use postgresql_embedded::Settings;
+
+    use crate::WorkerOperation;
+    use crate::worker_process;
+
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    ))]
+    use crate::worker_process::PrivilegeDropGuard as InnerPrivilegeDropGuard;
+
+    /// Test-visible wrapper around the internal worker request.
+    ///
+    /// Use this helper when integration tests need to exercise worker process
+    /// orchestration without exposing the internals as part of the public API.
+    pub struct WorkerRequest<'a>(worker_process::WorkerRequest<'a>);
+
+    impl<'a> WorkerRequest<'a> {
+        #[must_use]
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "test helper mirrors worker request constructor"
+        )]
+        /// Constructs a worker request for invoking an operation in tests.
+        ///
+        /// # Examples
+        ///
+        /// ```ignore
+        /// # use std::time::Duration;
+        /// # use camino::Utf8Path;
+        /// # use postgresql_embedded::Settings;
+        /// # use pg_embedded_setup_unpriv::{WorkerOperation, worker_process_test_api::WorkerRequest};
+        /// # let worker = Utf8Path::new("/tmp/worker");
+        /// # let settings = Settings::default();
+        /// # let env_vars: Vec<(String, Option<String>)> = Vec::new();
+        /// let request = WorkerRequest::new(
+        ///     worker,
+        ///     &settings,
+        ///     &env_vars,
+        ///     WorkerOperation::Setup,
+        ///     Duration::from_secs(1),
+        /// );
+        /// # let _ = request;
+        /// ```
+        pub const fn new(
+            worker: &'a Utf8Path,
+            settings: &'a Settings,
+            env_vars: &'a [(String, Option<String>)],
+            operation: WorkerOperation,
+            timeout: Duration,
+        ) -> Self {
+            Self(worker_process::WorkerRequest::new(
+                worker, settings, env_vars, operation, timeout,
+            ))
+        }
+
+        /// Returns a reference to the wrapped worker request.
+        pub(crate) const fn inner(&self) -> &worker_process::WorkerRequest<'a> {
+            &self.0
+        }
+    }
+
+    /// Executes a worker request whilst returning crate-level errors.
+    pub fn run(request: &WorkerRequest<'_>) -> crate::BootstrapResult<()> {
+        worker_process::run(request.inner())
+    }
+
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    ))]
+    /// Guard that restores the privilege-drop toggle when tests finish.
+    pub struct PrivilegeDropGuard {
+        _inner: InnerPrivilegeDropGuard,
+    }
+
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    ))]
+    #[must_use]
+    /// Temporarily disables privilege dropping so tests can run deterministic
+    /// worker binaries without adjusting file ownership.
+    pub fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
+        PrivilegeDropGuard {
+            _inner: worker_process::disable_privilege_drop_for_tests(),
+        }
+    }
+
+    #[must_use]
+    /// Renders a worker failure for assertion-friendly error strings.
+    pub fn render_failure_for_tests(
+        context: &str,
+        output: &std::process::Output,
+    ) -> crate::BootstrapError {
+        worker_process::render_failure_for_tests(context, output)
+    }
+}
 
 #[doc(hidden)]
 pub use crate::env::ScopedEnv;
