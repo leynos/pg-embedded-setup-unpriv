@@ -17,7 +17,7 @@ use std::fmt::Write as FmtWrite;
 use std::io::ErrorKind;
 use std::io::Write as _;
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 use tempfile::{NamedTempFile, TempPath};
 use wait_timeout::ChildExt;
@@ -164,43 +164,12 @@ impl<'a> WorkerProcess<'a> {
         // Ensure the worker is reaped even if waiting fails unexpectedly.
         let wait_result = match child.wait_timeout(self.request.timeout) {
             Ok(result) => result,
-            Err(error) => {
-                let kill_result = child.kill();
-                let wait_result = child.wait_with_output();
-                let mut message = format!("failed to wait for worker command: {error}");
-                if let Err(kill_err) = kill_result {
-                    Self::append_error_context(
-                        &mut message,
-                        "additionally failed to terminate worker",
-                        &kill_err,
-                        "; additionally failed to report worker termination error",
-                    );
-                }
-                if let Err(wait_err) = wait_result {
-                    Self::append_error_context(
-                        &mut message,
-                        "additionally failed to reap worker output",
-                        &wait_err,
-                        "; additionally failed to describe worker reap error",
-                    );
-                }
-                return Err(BootstrapError::from(eyre!(message)));
-            }
+            Err(error) => return self.handle_wait_error(child, error),
         };
         let timed_out = wait_result.is_none();
 
         if timed_out {
-            match child.kill() {
-                Ok(()) => {}
-                // `InvalidInput` indicates the child has already exited; ignore it.
-                Err(err) if err.kind() == ErrorKind::InvalidInput => {}
-                Err(err) => {
-                    return Err(BootstrapError::from(eyre!(
-                        "failed to terminate worker after {}s: {err}",
-                        self.request.timeout.as_secs(),
-                    )));
-                }
-            }
+            self.handle_timeout(&mut child)?;
         }
 
         let output = child
@@ -219,6 +188,49 @@ impl<'a> WorkerProcess<'a> {
         }
 
         Ok(output)
+    }
+
+    fn handle_wait_error(
+        &self,
+        mut child: Child,
+        error: std::io::Error,
+    ) -> BootstrapResult<Output> {
+        // Retain `&self` per the public API contract so future diagnostics can
+        // incorporate request context without reworking call sites.
+        let _ = self.request;
+        let kill_result = child.kill();
+        let wait_result = child.wait_with_output();
+        let mut message = format!("failed to wait for worker command: {error}");
+        drop(error);
+        if let Err(kill_err) = kill_result {
+            Self::append_error_context(
+                &mut message,
+                "additionally failed to terminate worker",
+                &kill_err,
+                "; additionally failed to report worker termination error",
+            );
+        }
+        if let Err(wait_err) = wait_result {
+            Self::append_error_context(
+                &mut message,
+                "additionally failed to reap worker output",
+                &wait_err,
+                "; additionally failed to describe worker reap error",
+            );
+        }
+        Err(BootstrapError::from(eyre!(message)))
+    }
+
+    fn handle_timeout(&self, child: &mut Child) -> BootstrapResult<()> {
+        match child.kill() {
+            Ok(()) => Ok(()),
+            // `InvalidInput` indicates the child has already exited; ignore it.
+            Err(err) if err.kind() == ErrorKind::InvalidInput => Ok(()),
+            Err(err) => Err(BootstrapError::from(eyre!(
+                "failed to terminate worker after {}s: {err}",
+                self.request.timeout.as_secs(),
+            ))),
+        }
     }
 
     fn handle_exit(operation: WorkerOperation, output: &Output) -> BootstrapResult<()> {
