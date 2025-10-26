@@ -42,6 +42,33 @@ use std::os::unix::process::CommandExt;
 ))]
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Applies privilege-dropping configuration to a worker command.
+///
+/// On supported Unix platforms, resolves the "nobody" account, reassigns the
+/// worker payload to that user, and arranges to demote credentials immediately
+/// before `exec`. Unsupported platforms treat the helper as a no-op so tests and
+/// non-Unix builds continue to function.
+///
+/// # Errors
+///
+/// Returns an error if resolving the "nobody" account fails or if updating the
+/// payload ownership is unsuccessful.
+///
+/// # Examples
+///
+/// ```ignore
+/// use std::path::Path;
+/// use std::process::Command;
+///
+/// use pg_embedded_setup_unpriv::worker_process::privileges;
+///
+/// # fn demo() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+/// let payload = Path::new("/tmp/worker_payload.json");
+/// let mut command = Command::new("/usr/local/bin/worker");
+/// privileges::apply(payload, &mut command)?;
+/// # Ok(())
+/// # }
+/// ```
 pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResult<()> {
     #[cfg(all(
         unix,
@@ -131,6 +158,7 @@ static SKIP_PRIVILEGE_DROP: AtomicBool = AtomicBool::new(false);
         target_os = "dragonfly",
     ),
 ))]
+/// Guard that restores the privilege-drop toggle when dropped.
 #[derive(Debug)]
 pub(crate) struct PrivilegeDropGuard {
     previous: bool,

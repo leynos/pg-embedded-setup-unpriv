@@ -27,6 +27,7 @@ pub mod test_support;
 pub mod worker;
 pub(crate) mod worker_process;
 
+/// Integration test shims for worker process orchestration.
 #[doc(hidden)]
 pub mod worker_process_test_api {
     use std::time::Duration;

@@ -34,6 +34,34 @@ use wait_timeout::ChildExt;
 ))]
 pub(crate) use privileges::{PrivilegeDropGuard, disable_privilege_drop_for_tests};
 
+/// Captures inputs for launching a worker subprocess.
+///
+/// Bundles the worker binary path, cluster settings, environment variables,
+/// requested operation, and execution timeout into a single value consumed by
+/// [`run`].
+///
+/// # Examples
+///
+/// ```ignore
+/// use std::time::Duration;
+///
+/// use camino::Utf8Path;
+/// use pg_embedded_setup_unpriv::cluster::WorkerOperation;
+/// use pg_embedded_setup_unpriv::worker_process::WorkerRequest;
+/// use postgresql_embedded::Settings;
+///
+/// let worker = Utf8Path::new("/usr/local/bin/pg_worker");
+/// let settings = Settings::default();
+/// let env_vars: Vec<(String, Option<String>)> = Vec::new();
+/// let request = WorkerRequest::new(
+///     worker,
+///     &settings,
+///     &env_vars,
+///     WorkerOperation::Setup,
+///     Duration::from_secs(30),
+/// );
+/// # let _ = request;
+/// ```
 pub(crate) struct WorkerRequest<'a> {
     worker: &'a Utf8Path,
     settings: &'a Settings,
@@ -48,6 +76,30 @@ impl<'a> WorkerRequest<'a> {
         clippy::too_many_arguments,
         reason = "request captures all invocation context"
     )]
+    /// Constructs a new worker request that can be executed via [`run`].
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use std::time::Duration;
+    ///
+    /// use camino::Utf8Path;
+    /// use pg_embedded_setup_unpriv::cluster::WorkerOperation;
+    /// use pg_embedded_setup_unpriv::worker_process::WorkerRequest;
+    /// use postgresql_embedded::Settings;
+    ///
+    /// let worker = Utf8Path::new("/usr/local/bin/pg_worker");
+    /// let settings = Settings::default();
+    /// let env_vars: Vec<(String, Option<String>)> = Vec::new();
+    /// let request = WorkerRequest::new(
+    ///     worker,
+    ///     &settings,
+    ///     &env_vars,
+    ///     WorkerOperation::Setup,
+    ///     Duration::from_secs(30),
+    /// );
+    /// # let _ = request;
+    /// ```
     pub(crate) const fn new(
         worker: &'a Utf8Path,
         settings: &'a Settings,
@@ -190,14 +242,15 @@ impl<'a> WorkerProcess<'a> {
         Ok(output)
     }
 
+    #[expect(
+        clippy::unused_self,
+        reason = "request context may be added to diagnostics"
+    )]
     fn handle_wait_error(
         &self,
         mut child: Child,
         error: std::io::Error,
     ) -> BootstrapResult<Output> {
-        // Retain `&self` per the public API contract so future diagnostics can
-        // incorporate request context without reworking call sites.
-        let _ = self.request;
         let kill_result = child.kill();
         let wait_result = child.wait_with_output();
         let mut message = format!("failed to wait for worker command: {error}");
