@@ -226,7 +226,7 @@ impl<'a> WorkerProcess<'a> {
         // Ensure the worker is reaped even if waiting fails unexpectedly.
         let wait_result = match child.wait_timeout(self.request.timeout) {
             Ok(result) => result,
-            Err(error) => return self.handle_wait_error(child, error),
+            Err(error) => return Self::handle_wait_error(child, error),
         };
         let timed_out = wait_result.is_none();
 
@@ -252,15 +252,7 @@ impl<'a> WorkerProcess<'a> {
         Ok(output)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "request context may be added to diagnostics"
-    )]
-    fn handle_wait_error(
-        &self,
-        mut child: Child,
-        error: std::io::Error,
-    ) -> BootstrapResult<Output> {
+    fn handle_wait_error(mut child: Child, error: std::io::Error) -> BootstrapResult<Output> {
         let kill_result = child.kill();
         let wait_result = child.wait_with_output();
         let mut message = format!("failed to wait for worker command: {error}");

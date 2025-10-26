@@ -159,6 +159,10 @@ static SKIP_PRIVILEGE_DROP: AtomicBool = AtomicBool::new(false);
     ),
 ))]
 /// Guard that restores the privilege-drop toggle when dropped.
+///
+/// Obtain the guard through [`disable_privilege_drop_for_tests`] when
+/// temporarily bypassing demotion during integration tests; dropping the guard
+/// re-enables the standard privilege enforcement automatically.
 #[derive(Debug)]
 pub(crate) struct PrivilegeDropGuard {
     previous: bool,
