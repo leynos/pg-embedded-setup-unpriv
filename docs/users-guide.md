@@ -98,7 +98,7 @@ use pg_embedded_setup_unpriv::{TestCluster, error::BootstrapResult};
 fn exercise_cluster() -> BootstrapResult<()> {
     let cluster = TestCluster::new()?;
     let url = cluster.settings().url("app_db");
-    // Issue queries with your preferred client here.
+    // Issue queries using any preferred client here.
     drop(cluster); // PostgreSQL shuts down automatically.
     Ok(())
 }
