@@ -133,7 +133,7 @@ error_impl_error = "deny"
 result_large_err = "deny"
 
 [dev-dependencies]
-rstest = "0.18"
+rstest = "0.26"
 temp-env = "0.3"
 color-eyre = "0.6"
 diesel = { version = "2", default-features = false, features = ["postgres"] }
