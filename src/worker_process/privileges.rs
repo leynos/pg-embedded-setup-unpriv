@@ -74,7 +74,8 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
         unsafe {
             // SAFETY: This closure executes immediately before `exec` whilst the process
             // still owns elevated credentials. The synchronous UID/GID demotion mirrors the
-            // previous inlined implementation in `TestCluster::spawn_worker`.
+            // previous inlined implementation in `TestCluster::spawn_worker` and keeps the
+            // privilege adjustments ordered: groups, gid, then uid.
             command.pre_exec(move || {
                 if libc::setgroups(0, std::ptr::null()) != 0 {
                     return Err(std::io::Error::last_os_error());
