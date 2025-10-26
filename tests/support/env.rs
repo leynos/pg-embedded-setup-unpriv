@@ -1,39 +1,15 @@
 //! Environment helpers for integration tests.
 
 use std::ffi::{OsStr, OsString};
-use std::sync::{Mutex, MutexGuard};
 
-static ENV_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
+use pg_embedded_setup_unpriv::ScopedEnv;
+use pg_embedded_setup_unpriv::test_support;
 
 /// Collection type for guarded environment variables.
 pub type ScopedEnvVars = Vec<(OsString, Option<OsString>)>;
 
 /// Guard that keeps the supplied environment variables active until dropped.
-#[derive(Debug)]
-#[must_use = "Hold the guard until the environment scope completes"]
-pub struct ScopedEnvGuard {
-    saved: Vec<(OsString, Option<OsString>)>,
-    #[expect(dead_code, reason = "Mutex guard keeps the lock held until drop")]
-    lock: MutexGuard<'static, ()>,
-}
-
-impl Drop for ScopedEnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in self.saved.drain(..).rev() {
-            match value {
-                Some(previous) => unsafe {
-                    // SAFETY: serialised by `ENV_MUTEX` and restored before releasing it.
-                    std::env::set_var(&key, previous);
-                },
-                None => unsafe {
-                    // SAFETY: serialised by `ENV_MUTEX` and restored before releasing it.
-                    std::env::remove_var(&key);
-                },
-            }
-        }
-        // `lock` drops here, releasing the mutex once restoration completes.
-    }
-}
+pub type ScopedEnvGuard = ScopedEnv;
 
 /// Builds guarded environment variables from any iterable of key/value pairs.
 pub fn build_env<I, K, V>(vars: I) -> ScopedEnvVars
@@ -72,39 +48,22 @@ fn locate_worker_binary() -> Option<OsString> {
 
 /// Applies `vars` and returns a guard that keeps them active until dropped.
 ///
-/// The guard acquires a global, non-re-entrant mutex. Nesting [`apply_env`] or
-/// mixing it with [`with_scoped_env`] within the same thread will deadlock
-/// because the outer guard retains the mutex until it is dropped.
+/// The guard relies on the library's re-entrant [`ScopedEnv`] implementation, so
+/// nested scopes on the same thread share the mutex whilst recording the outer
+/// state. Scopes on different threads still serialise to avoid interleaving
+/// process-level environment mutations.
 pub fn apply_env(vars: ScopedEnvVars) -> ScopedEnvGuard {
-    let lock = ENV_MUTEX
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut saved = Vec::with_capacity(vars.len());
-    for (key, value) in vars {
-        let previous = std::env::var_os(&key);
-        match value {
-            Some(ref new_value) => unsafe {
-                // SAFETY: serialised by `ENV_MUTEX` and restored before releasing it.
-                std::env::set_var(&key, new_value);
-            },
-            None => unsafe {
-                // SAFETY: serialised by `ENV_MUTEX` and restored before releasing it.
-                std::env::remove_var(&key);
-            },
-        }
-        saved.push((key, previous));
-    }
-    ScopedEnvGuard { saved, lock }
+    test_support::scoped_env(vars)
 }
 
 /// Runs `body` with the provided environment variables temporarily set.
 ///
 /// The guard restores any pre-existing values when `body` returns, ensuring tests do
 /// not leak environment configuration across scenarios. A global mutex serialises
-/// access so concurrent tests cannot interleave environment mutations.
+/// access so concurrent tests cannot interleave environment mutations. Calls on the
+/// same thread are re-entrant, enabling helpers to compose without risking
+/// deadlocks.
 ///
-/// Important: this guard is not re-entrant. Do not nest `with_scoped_env` calls, as
-/// the inner invocation will deadlock waiting for the mutex held by the outer scope.
 pub fn with_scoped_env<R>(
     vars: impl IntoIterator<Item = (OsString, Option<OsString>)>,
     body: impl FnOnce() -> R,

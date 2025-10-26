@@ -11,6 +11,7 @@ use cap_std::{
     fs::{Dir, Metadata},
 };
 use color_eyre::eyre::{Context, Report, Result};
+use std::ffi::OsString;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use std::future::Future;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
@@ -27,12 +28,31 @@ use crate::Error;
 use crate::TestBootstrapSettings;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use crate::cluster::{PrivilegedOperationContext, TestCluster, WorkerOperation};
+use crate::env::ScopedEnv;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use crate::error::BootstrapResult;
 use crate::error::{BootstrapError, PrivilegeError};
 use crate::fs;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use tracing::debug_span;
+
+#[doc(hidden)]
+/// Applies environment overrides for tests using the library's shared guard.
+///
+/// # Examples
+/// ```
+/// use std::ffi::OsString;
+///
+/// use pg_embedded_setup_unpriv::test_support;
+///
+/// let guard = test_support::scoped_env(vec![
+///     (OsString::from("PGUSER"), Some(OsString::from("postgres"))),
+/// ]);
+/// drop(guard);
+/// ```
+pub fn scoped_env(vars: Vec<(OsString, Option<OsString>)>) -> ScopedEnv {
+    ScopedEnv::apply_os_iter(vars)
+}
 
 /// Opens the ambient directory containing `path` and returns its relative component.
 ///
