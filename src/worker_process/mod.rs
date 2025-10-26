@@ -63,10 +63,20 @@ pub(crate) use privileges::{PrivilegeDropGuard, disable_privilege_drop_for_tests
 /// # let _ = request;
 /// ```
 pub(crate) struct WorkerRequest<'a> {
+    /// Filesystem path to the worker binary that will execute the requested
+    /// privileged operation.
     worker: &'a Utf8Path,
+    /// Cluster configuration that is serialised into the worker payload so the
+    /// child process can bootstrap itself consistently with the parent.
     settings: &'a Settings,
+    /// Environment variable overrides propagated to the worker to reproduce the
+    /// launcher context (values may be unset via `None`).
     env_vars: &'a [(String, Option<String>)],
+    /// Specific worker action that determines the command-line flag passed to
+    /// the worker binary.
     operation: WorkerOperation,
+    /// Maximum duration the worker is allowed to run before it is terminated
+    /// and treated as a timeout failure.
     timeout: Duration,
 }
 
