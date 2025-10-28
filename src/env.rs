@@ -58,25 +58,44 @@ impl ThreadState {
         }
     }
 
-    fn acquire(&mut self) {
+    fn enter_scope<I>(&mut self, vars: I) -> usize
+    where
+        I: IntoIterator<Item = (OsString, Option<OsString>)>,
+    {
         if self.depth == 0 {
-            debug_assert!(self.lock.is_none(), "ScopedEnv depth desynchronised");
+            assert!(
+                self.lock.is_none(),
+                "ScopedEnv depth desynchronised: mutex still held",
+            );
+            if ENV_LOCK.is_poisoned() {
+                ENV_LOCK.clear_poison();
+            }
             let guard = ENV_LOCK
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.lock = Some(guard);
         }
 
-        let active = self.stack.iter().filter(|state| !state.finished).count();
-        debug_assert_eq!(
-            active, self.depth,
-            "active scope count must track recursion depth",
-        );
-
         self.depth += 1;
-    }
 
-    fn push_scope(&mut self, saved: Vec<(OsString, Option<OsString>)>) -> usize {
+        let mut saved = Vec::new();
+        for (key, new_value) in vars {
+            let previous = env::var_os(&key);
+            match new_value {
+                Some(value) => unsafe {
+                    // SAFETY: `ENV_LOCK` serialises changes. Drop restores
+                    // recorded values before releasing the lock.
+                    env::set_var(&key, value);
+                },
+                None => unsafe {
+                    // SAFETY: `ENV_LOCK` serialises changes. Drop restores
+                    // recorded values before releasing the lock.
+                    env::remove_var(&key);
+                },
+            }
+            saved.push((key, previous));
+        }
+
         let index = self.stack.len();
         self.stack.push(GuardState {
             saved,
@@ -85,12 +104,18 @@ impl ThreadState {
         index
     }
 
-    fn finish_scope(&mut self, index: usize) {
-        let Some(state) = self.stack.get_mut(index) else {
-            debug_assert!(false, "scope index should exist when finishing");
-            return;
-        };
-        debug_assert!(!state.finished, "scope finished twice");
+    fn exit_scope(&mut self, index: usize) {
+        assert!(self.depth > 0, "ScopedEnv drop without matching apply");
+        self.depth -= 1;
+
+        let state = self
+            .stack
+            .get_mut(index)
+            .unwrap_or_else(|| panic!("ScopedEnv finished out of order: index {index}"));
+        assert!(
+            !state.finished,
+            "ScopedEnv finished twice for index {index}"
+        );
         state.finished = true;
 
         while self
@@ -98,44 +123,28 @@ impl ThreadState {
             .last()
             .is_some_and(|candidate| candidate.finished)
         {
-            if let Some(finished) = self.stack.pop() {
-                restore_saved(finished.saved);
-            } else {
-                debug_assert!(false, "finished scope disappeared before restoration");
-                break;
-            }
+            let Some(finished) = self.stack.pop() else {
+                panic!("Finished scope missing from stack during restoration");
+            };
+            restore_saved(finished.saved);
         }
-    }
 
-    fn release(&mut self) {
-        debug_assert!(
-            self.depth > 0,
-            "ScopedEnv lock released without acquisition"
-        );
-        self.depth -= 1;
         if self.depth == 0 {
-            debug_assert!(
+            assert!(
                 self.stack.is_empty(),
-                "scope stack must be empty when recursion depth resets",
+                "ScopedEnv stack must be empty once recursion depth reaches zero",
             );
-            match self.lock.take() {
-                Some(previous) => drop(previous),
-                None => debug_assert!(false, "ScopedEnv lock missing at depth zero"),
-            }
+            let guard = self
+                .lock
+                .take()
+                .unwrap_or_else(|| panic!("ScopedEnv mutex guard missing at depth zero"));
+            drop(guard);
         }
     }
 }
 
 thread_local! {
     static THREAD_STATE: RefCell<ThreadState> = const { RefCell::new(ThreadState::new()) };
-}
-
-fn acquire_env_lock() {
-    THREAD_STATE.with(|cell| cell.borrow_mut().acquire());
-}
-
-fn release_env_lock() {
-    THREAD_STATE.with(|cell| cell.borrow_mut().release());
 }
 
 impl ScopedEnv {
@@ -153,53 +162,29 @@ impl ScopedEnv {
                 (OsString::from(key), owned_value)
             })
             .collect();
-        Self::apply_os(&owned)
+        Self::apply_os(owned)
     }
 
-    /// Applies environment variables provided as `OsString` pairs.
-    pub(crate) fn apply_os(vars: &[(OsString, Option<OsString>)]) -> Self {
-        acquire_env_lock();
-        let mut saved = Vec::with_capacity(vars.len());
-        for (key, current_value) in vars {
-            let previous = env::var_os(key);
-            match current_value {
-                Some(new_value) => unsafe {
-                    // SAFETY: `ENV_LOCK` serialises changes. Drop restores
-                    // recorded values before releasing the lock.
-                    env::set_var(key, new_value);
-                },
-                None => unsafe {
-                    // SAFETY: `ENV_LOCK` serialises changes. Drop restores
-                    // recorded values before releasing the lock.
-                    env::remove_var(key);
-                },
-            }
-            saved.push((key.clone(), previous));
-        }
-        let index = THREAD_STATE.with(|cell| cell.borrow_mut().push_scope(saved));
-
-        Self { index }
-    }
-
-    /// Applies environment variables provided by any owned iterator.
-    pub(crate) fn apply_os_iter<I>(vars: I) -> Self
+    /// Applies environment variables provided as `OsString` pairs by any owned iterator.
+    pub(crate) fn apply_os<I>(vars: I) -> Self
     where
         I: IntoIterator<Item = (OsString, Option<OsString>)>,
     {
-        let owned: Vec<(OsString, Option<OsString>)> = vars.into_iter().collect();
-        Self::apply_os(&owned)
+        let index = THREAD_STATE.with(|cell| {
+            let mut state = cell.borrow_mut();
+            state.enter_scope(vars)
+        });
+        Self { index }
     }
 }
 
 impl Drop for ScopedEnv {
     fn drop(&mut self) {
-        restore_finished_scopes(self.index);
-        release_env_lock();
+        THREAD_STATE.with(|cell| {
+            let mut state = cell.borrow_mut();
+            state.exit_scope(self.index);
+        });
     }
-}
-
-fn restore_finished_scopes(index: usize) {
-    THREAD_STATE.with(|cell| cell.borrow_mut().finish_scope(index));
 }
 
 fn restore_saved(saved: Vec<(OsString, Option<OsString>)>) {

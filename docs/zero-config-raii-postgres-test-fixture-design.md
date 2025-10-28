@@ -212,7 +212,7 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
 
 ### Implementation update (2024-06-24)
 
-- Consolidated environment scoping through the library's `ScopedEnv` guard so
+- Consolidated environment scoping through the library's `ScopedEnv` guard, so
   integration helpers reuse the same mutex and restoration semantics. This
   removes the bespoke test guard that risked diverging behaviour or deadlocks
   when combined with library code.

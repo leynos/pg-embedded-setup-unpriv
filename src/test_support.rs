@@ -51,7 +51,7 @@ use tracing::debug_span;
 /// drop(guard);
 /// ```
 pub fn scoped_env(vars: Vec<(OsString, Option<OsString>)>) -> ScopedEnv {
-    ScopedEnv::apply_os_iter(vars)
+    ScopedEnv::apply_os(vars)
 }
 
 /// Opens the ambient directory containing `path` and returns its relative component.
