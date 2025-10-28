@@ -62,6 +62,21 @@ impl ThreadState {
     where
         I: IntoIterator<Item = (OsString, Option<OsString>)>,
     {
+        self.acquire_lock_if_needed();
+
+        self.depth += 1;
+
+        let saved = self.apply_env_vars(vars);
+
+        let index = self.stack.len();
+        self.stack.push(GuardState {
+            saved,
+            finished: false,
+        });
+        index
+    }
+
+    fn acquire_lock_if_needed(&mut self) {
         if self.depth == 0 {
             assert!(
                 self.lock.is_none(),
@@ -75,33 +90,39 @@ impl ThreadState {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.lock = Some(guard);
         }
+    }
 
-        self.depth += 1;
-
+    fn apply_env_vars<I>(&self, vars: I) -> Vec<(OsString, Option<OsString>)>
+    where
+        I: IntoIterator<Item = (OsString, Option<OsString>)>,
+    {
+        debug_assert!(
+            self.lock.is_some(),
+            "ScopedEnv must hold the mutex before mutating the environment",
+        );
         let mut saved = Vec::new();
         for (key, new_value) in vars {
-            let previous = env::var_os(&key);
-            match new_value {
-                Some(value) => unsafe {
-                    // SAFETY: `ENV_LOCK` serialises changes. Drop restores
-                    // recorded values before releasing the lock.
-                    env::set_var(&key, value);
-                },
-                None => unsafe {
-                    // SAFETY: `ENV_LOCK` serialises changes. Drop restores
-                    // recorded values before releasing the lock.
-                    env::remove_var(&key);
-                },
-            }
+            let previous = Self::apply_single_var(&key, new_value);
             saved.push((key, previous));
         }
+        saved
+    }
 
-        let index = self.stack.len();
-        self.stack.push(GuardState {
-            saved,
-            finished: false,
-        });
-        index
+    fn apply_single_var(key: &OsString, new_value: Option<OsString>) -> Option<OsString> {
+        let previous = env::var_os(key);
+        match new_value {
+            Some(value) => unsafe {
+                // SAFETY: `ENV_LOCK` serialises changes. Drop restores
+                // recorded values before releasing the lock.
+                env::set_var(key, value);
+            },
+            None => unsafe {
+                // SAFETY: `ENV_LOCK` serialises changes. Drop restores
+                // recorded values before releasing the lock.
+                env::remove_var(key);
+            },
+        }
+        previous
     }
 
     fn exit_scope(&mut self, index: usize) {
