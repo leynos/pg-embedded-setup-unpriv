@@ -22,17 +22,12 @@
 //! depth so callers can compose helpers without deadlocking. Different threads
 //! are still serialised.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::env;
 use std::ffi::OsString;
 use std::sync::{Mutex, MutexGuard};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-thread_local! {
-    static RECURSION_DEPTH: Cell<usize> = const { Cell::new(0) };
-    static HELD_LOCK: RefCell<Option<MutexGuard<'static, ()>>> = const { RefCell::new(None) };
-}
 
 /// Restores the process environment when dropped, reverting to prior values.
 #[derive(Debug)]
@@ -47,54 +42,100 @@ struct GuardState {
     finished: bool,
 }
 
+#[derive(Debug)]
+struct ThreadState {
+    depth: usize,
+    lock: Option<MutexGuard<'static, ()>>,
+    stack: Vec<GuardState>,
+}
+
+impl ThreadState {
+    const fn new() -> Self {
+        Self {
+            depth: 0,
+            lock: None,
+            stack: Vec::new(),
+        }
+    }
+
+    fn acquire(&mut self) {
+        if self.depth == 0 {
+            debug_assert!(self.lock.is_none(), "ScopedEnv depth desynchronised");
+            let guard = ENV_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.lock = Some(guard);
+        }
+
+        let active = self.stack.iter().filter(|state| !state.finished).count();
+        debug_assert_eq!(
+            active, self.depth,
+            "active scope count must track recursion depth",
+        );
+
+        self.depth += 1;
+    }
+
+    fn push_scope(&mut self, saved: Vec<(OsString, Option<OsString>)>) -> usize {
+        let index = self.stack.len();
+        self.stack.push(GuardState {
+            saved,
+            finished: false,
+        });
+        index
+    }
+
+    fn finish_scope(&mut self, index: usize) {
+        let Some(state) = self.stack.get_mut(index) else {
+            debug_assert!(false, "scope index should exist when finishing");
+            return;
+        };
+        debug_assert!(!state.finished, "scope finished twice");
+        state.finished = true;
+
+        while self
+            .stack
+            .last()
+            .is_some_and(|candidate| candidate.finished)
+        {
+            if let Some(finished) = self.stack.pop() {
+                restore_saved(finished.saved);
+            } else {
+                debug_assert!(false, "finished scope disappeared before restoration");
+                break;
+            }
+        }
+    }
+
+    fn release(&mut self) {
+        debug_assert!(
+            self.depth > 0,
+            "ScopedEnv lock released without acquisition"
+        );
+        self.depth -= 1;
+        if self.depth == 0 {
+            debug_assert!(
+                self.stack.is_empty(),
+                "scope stack must be empty when recursion depth resets",
+            );
+            match self.lock.take() {
+                Some(previous) => drop(previous),
+                None => debug_assert!(false, "ScopedEnv lock missing at depth zero"),
+            }
+        }
+    }
+}
+
 thread_local! {
-    static SCOPE_STACK: RefCell<Vec<GuardState>> = const { RefCell::new(Vec::new()) };
+    static THREAD_STATE: RefCell<ThreadState> = const { RefCell::new(ThreadState::new()) };
 }
 
 fn acquire_env_lock() {
-    RECURSION_DEPTH.with(|depth| {
-        let current = depth.get();
-        if current == 0 {
-            HELD_LOCK.with(|held| {
-                debug_assert!(held.borrow().is_none(), "ScopedEnv depth desynchronised");
-                let guard = ENV_LOCK
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                held.replace(Some(guard));
-            });
-        }
-        depth.set(current + 1);
-        SCOPE_STACK.with(|cells| {
-            let stack = cells.borrow();
-            let active = stack.iter().filter(|state| !state.finished).count();
-            debug_assert_eq!(
-                active, current,
-                "active scope count must track recursion depth"
-            );
-        });
-    });
+    THREAD_STATE.with(|cell| cell.borrow_mut().acquire());
 }
 
 fn release_env_lock() {
-    RECURSION_DEPTH.with(|depth| {
-        let current = depth.get();
-        debug_assert!(current > 0, "ScopedEnv lock released without acquisition");
-        let next = current - 1;
-        depth.set(next);
-        if next == 0 {
-            SCOPE_STACK.with(|stack| {
-                debug_assert!(
-                    stack.borrow().is_empty(),
-                    "scope stack must be empty when recursion depth resets"
-                );
-            });
-            HELD_LOCK.with(|held| {
-                let previous = held.replace(None);
-                debug_assert!(previous.is_some(), "ScopedEnv lock missing at depth zero");
-                drop(previous);
-            });
-        }
-    });
+    THREAD_STATE.with(|cell| cell.borrow_mut().release());
 }
 
 impl ScopedEnv {
@@ -135,15 +176,7 @@ impl ScopedEnv {
             }
             saved.push((key.clone(), previous));
         }
-        let index = SCOPE_STACK.with(|cells| {
-            let mut stack = cells.borrow_mut();
-            let index = stack.len();
-            stack.push(GuardState {
-                saved,
-                finished: false,
-            });
-            index
-        });
+        let index = THREAD_STATE.with(|cell| cell.borrow_mut().push_scope(saved));
 
         Self { index }
     }
@@ -166,24 +199,7 @@ impl Drop for ScopedEnv {
 }
 
 fn restore_finished_scopes(index: usize) {
-    SCOPE_STACK.with(|cells| {
-        let mut stack = cells.borrow_mut();
-        let Some(state) = stack.get_mut(index) else {
-            debug_assert!(false, "scope index should exist when finishing");
-            return;
-        };
-        debug_assert!(!state.finished, "scope finished twice");
-        state.finished = true;
-
-        while stack.last().is_some_and(|candidate| candidate.finished) {
-            if let Some(finished) = stack.pop() {
-                restore_saved(finished.saved);
-            } else {
-                debug_assert!(false, "finished scope disappeared");
-                break;
-            }
-        }
-    });
+    THREAD_STATE.with(|cell| cell.borrow_mut().finish_scope(index));
 }
 
 fn restore_saved(saved: Vec<(OsString, Option<OsString>)>) {
