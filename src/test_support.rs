@@ -29,6 +29,7 @@ use crate::Error;
 use crate::TestBootstrapSettings;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use crate::cluster::{PrivilegedOperationContext, TestCluster, WorkerOperation};
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 use crate::env::ScopedEnv;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use crate::error::BootstrapResult;

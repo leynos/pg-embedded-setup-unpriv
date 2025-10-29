@@ -170,40 +170,58 @@ impl ThreadState {
     }
 
     fn exit_scope(&mut self, index: usize) {
-        assert!(self.depth > 0, "ScopedEnv drop without matching apply");
+        debug_assert!(self.depth > 0, "ScopedEnv drop without matching apply");
         self.depth -= 1;
 
-        let state = self
-            .stack
-            .get_mut(index)
-            .unwrap_or_else(|| panic!("ScopedEnv finished out of order: index {index}"));
-        assert!(
-            !state.finished,
-            "ScopedEnv finished twice for index {index}"
-        );
-        state.finished = true;
+        self.finish_scope(index);
 
+        if self.depth == 0 {
+            self.release_outermost_lock();
+        }
+    }
+
+    fn restore_finished_scopes(&mut self) {
         while self
             .stack
             .last()
             .is_some_and(|candidate| candidate.finished)
         {
             let Some(finished) = self.stack.pop() else {
-                panic!("Finished scope missing from stack during restoration");
+                debug_assert!(
+                    false,
+                    "Finished scope missing from stack during restoration"
+                );
+                break;
             };
             restore_saved(finished.saved);
         }
+    }
 
-        if self.depth == 0 {
-            assert!(
-                self.stack.is_empty(),
-                "ScopedEnv stack must be empty once recursion depth reaches zero",
+    fn finish_scope(&mut self, index: usize) {
+        {
+            let state = self
+                .stack
+                .get_mut(index)
+                .unwrap_or_else(|| panic!("ScopedEnv finished out of order: index {index}"));
+            debug_assert!(
+                !state.finished,
+                "ScopedEnv finished twice for index {index}"
             );
-            let guard = self
-                .lock
-                .take()
-                .unwrap_or_else(|| panic!("ScopedEnv mutex guard missing at depth zero"));
+            state.finished = true;
+        }
+
+        self.restore_finished_scopes();
+    }
+
+    fn release_outermost_lock(&mut self) {
+        debug_assert!(
+            self.stack.is_empty(),
+            "ScopedEnv stack must be empty once recursion depth reaches zero",
+        );
+        if let Some(guard) = self.lock.take() {
             drop(guard);
+        } else {
+            debug_assert!(false, "ScopedEnv mutex guard missing at depth zero");
         }
     }
 }
