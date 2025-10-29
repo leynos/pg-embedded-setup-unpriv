@@ -77,19 +77,30 @@ impl ThreadState {
     }
 
     fn acquire_lock_if_needed(&mut self) {
-        if self.depth == 0 {
-            assert!(
-                self.lock.is_none(),
-                "ScopedEnv depth desynchronised: mutex still held",
-            );
-            if ENV_LOCK.is_poisoned() {
-                ENV_LOCK.clear_poison();
-            }
-            let guard = ENV_LOCK
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            self.lock = Some(guard);
+        if self.depth > 0 {
+            return;
         }
+
+        assert!(
+            self.lock.is_none(),
+            "ScopedEnv depth desynchronised: mutex still held",
+        );
+        Self::ensure_lock_is_clean();
+        let guard = Self::lock_env_mutex();
+        self.lock = Some(guard);
+    }
+
+    fn ensure_lock_is_clean() {
+        if ENV_LOCK.is_poisoned() {
+            tracing::warn!("ENV_LOCK was poisoned; clearing poison and proceeding");
+            ENV_LOCK.clear_poison();
+        }
+    }
+
+    fn lock_env_mutex() -> MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn apply_env_vars<I>(&self, vars: I) -> Vec<(OsString, Option<OsString>)>

@@ -11,6 +11,7 @@ use cap_std::{
     fs::{Dir, Metadata},
 };
 use color_eyre::eyre::{Context, Report, Result};
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 use std::ffi::OsString;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use std::future::Future;
@@ -36,11 +37,12 @@ use crate::fs;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 use tracing::debug_span;
 
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 #[doc(hidden)]
 /// Applies environment overrides for tests using the library's shared guard.
 ///
 /// # Examples
-/// ```
+/// ```rust,no_run
 /// use std::ffi::OsString;
 ///
 /// use pg_embedded_setup_unpriv::test_support;
@@ -50,7 +52,10 @@ use tracing::debug_span;
 /// ]);
 /// drop(guard);
 /// ```
-pub fn scoped_env(vars: Vec<(OsString, Option<OsString>)>) -> ScopedEnv {
+pub fn scoped_env<I>(vars: I) -> ScopedEnv
+where
+    I: IntoIterator<Item = (OsString, Option<OsString>)>,
+{
     ScopedEnv::apply_os(vars)
 }
 
