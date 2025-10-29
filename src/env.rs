@@ -113,10 +113,43 @@ impl ThreadState {
         );
         let mut saved = Vec::new();
         for (key, new_value) in vars {
+            Self::validate_env_key(&key);
             let previous = Self::apply_single_var(&key, new_value);
             saved.push((key, previous));
         }
         saved
+    }
+
+    fn validate_env_key(key: &OsString) {
+        assert!(
+            !key.is_empty(),
+            "ScopedEnv received an empty environment variable name"
+        );
+        assert!(
+            !Self::contains_equals(key),
+            "ScopedEnv received an environment variable name containing '='"
+        );
+    }
+
+    #[cfg(unix)]
+    fn contains_equals(key: &OsString) -> bool {
+        use std::os::unix::ffi::OsStrExt;
+
+        key.as_os_str().as_bytes().contains(&b'=')
+    }
+
+    #[cfg(windows)]
+    fn contains_equals(key: &OsString) -> bool {
+        use std::os::windows::ffi::OsStrExt;
+
+        key.as_os_str()
+            .encode_wide()
+            .any(|value| value == u16::from(b'='))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn contains_equals(key: &OsString) -> bool {
+        key.to_string_lossy().contains('=')
     }
 
     fn apply_single_var(key: &OsString, new_value: Option<OsString>) -> Option<OsString> {
@@ -241,6 +274,7 @@ mod tests {
     use super::{ENV_LOCK, ScopedEnv};
 
     use std::env;
+    use std::ffi::OsString;
     use std::panic;
 
     #[test]
@@ -300,5 +334,18 @@ mod tests {
             .expect("mutex should release after final scope drops");
         drop(free);
         assert!(env::var("SCOPE_TEST").is_err());
+    }
+
+    #[test]
+    fn apply_os_rejects_invalid_keys() {
+        let result = panic::catch_unwind(|| {
+            let invalid = vec![(OsString::from("INVALID=KEY"), Some(OsString::from("value")))];
+            let _guard = ScopedEnv::apply_os(invalid);
+        });
+
+        assert!(
+            result.is_err(),
+            "apply_os must reject environment names containing '='"
+        );
     }
 }
