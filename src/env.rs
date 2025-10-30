@@ -186,10 +186,15 @@ impl ThreadState {
             .last()
             .is_some_and(|candidate| candidate.finished)
         {
-            let Some(finished) = self.stack.pop() else {
-                panic!("Finished scope missing from stack during restoration");
-            };
-            restore_saved(finished.saved);
+            if let Some(finished) = self.stack.pop() {
+                restore_saved(finished.saved);
+            } else {
+                debug_assert!(
+                    false,
+                    "Finished scope missing from stack during restoration"
+                );
+                break;
+            }
         }
     }
 
