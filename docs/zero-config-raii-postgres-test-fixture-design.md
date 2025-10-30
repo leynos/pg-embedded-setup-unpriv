@@ -210,6 +210,13 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
   is restored to its pre-cluster snapshot. Behavioural tests exercise both the
   happy path and the time zone failure case.
 
+### Implementation update (2024-06-24)
+
+- Consolidated environment scoping through the library's `ScopedEnv` guard, so
+  integration helpers reuse the same mutex and restoration semantics. This
+  removes the bespoke test guard that risked diverging behaviour or deadlocks
+  when combined with library code.
+
 In practice, **`TestCluster::start()` can wrap `bootstrap_for_tests()`**
 internally. For example, `TestCluster::start()` would call
 `bootstrap_for_tests()` to do all the configuration and initialization work,
