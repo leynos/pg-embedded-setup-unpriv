@@ -81,7 +81,7 @@ impl ThreadState {
             return;
         }
 
-        assert!(
+        debug_assert!(
             self.lock.is_none(),
             "ScopedEnv depth desynchronised: mutex still held",
         );
