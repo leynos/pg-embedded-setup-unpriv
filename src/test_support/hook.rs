@@ -39,14 +39,11 @@ pub enum RunRootOperationHookInstallError {
 static RUN_ROOT_OPERATION_HOOK: OnceLock<Mutex<Option<RunRootOperationHook>>> = OnceLock::new();
 static RUN_ROOT_OPERATION_HOOK_LOGS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
-fn hook_install_logs() -> &'static Mutex<Vec<String>> {
-    RUN_ROOT_OPERATION_HOOK_LOGS.get_or_init(|| Mutex::new(Vec::new()))
-}
-
 #[doc(hidden)]
 #[must_use]
 pub fn drain_hook_install_logs() -> Vec<String> {
-    let mut guard = hook_install_logs()
+    let mut guard = RUN_ROOT_OPERATION_HOOK_LOGS
+        .get_or_init(|| Mutex::new(Vec::new()))
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     mem::take(&mut *guard)
@@ -108,18 +105,20 @@ fn capture_thread_scope() -> ThreadScope {
 
 fn log_duplicate_install(thread_label: &str) {
     let message = format!("run_root_operation_hook already installed by thread {thread_label}");
-    hook_install_logs()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .push(message.clone());
-    #[cfg(test)]
-    write_duplicate_hook_warning(&message);
+    record_duplicate_install(&message);
 }
 
-#[cfg(test)]
-fn write_duplicate_hook_warning(message: &str) {
-    log_duplicate_hook_to_stderr(message);
-    tracing::warn!("{message}");
+fn record_duplicate_install(message: &str) {
+    RUN_ROOT_OPERATION_HOOK_LOGS
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(message.to_owned());
+    #[cfg(test)]
+    {
+        log_duplicate_hook_to_stderr(message);
+        tracing::warn!("{message}");
+    }
 }
 
 #[cfg(test)]

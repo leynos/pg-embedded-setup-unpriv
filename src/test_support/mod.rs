@@ -6,21 +6,25 @@
 //! helper registers a closure for the duration of a `HookGuard`, ensuring
 //! `TestCluster` calls are observable without leaking state across suites.
 
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod errors;
-mod fs;
-#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+mod filesystem;
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod hook;
-#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod scoped_env;
 
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use errors::{bootstrap_error, privilege_error};
-pub use fs::{
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+pub use filesystem::{
     CapabilityTempDir, ambient_dir_and_path, ensure_dir_exists, metadata, set_permissions,
 };
-#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use hook::{
     HookGuard, RunRootOperationHook, RunRootOperationHookInstallError, drain_hook_install_logs,
     install_run_root_operation_hook, invoke_with_privileges, run_root_operation_hook,
 };
-#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use scoped_env::scoped_env;
