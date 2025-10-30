@@ -81,7 +81,7 @@ impl ThreadState {
             return;
         }
 
-        debug_assert!(
+        assert!(
             self.lock.is_none(),
             "ScopedEnv depth desynchronised: mutex still held",
         );
@@ -107,7 +107,7 @@ impl ThreadState {
     where
         I: IntoIterator<Item = (OsString, Option<OsString>)>,
     {
-        debug_assert!(
+        assert!(
             self.lock.is_some(),
             "ScopedEnv must hold the mutex before mutating the environment",
         );
@@ -170,7 +170,7 @@ impl ThreadState {
     }
 
     fn exit_scope(&mut self, index: usize) {
-        debug_assert!(self.depth > 0, "ScopedEnv drop without matching apply");
+        assert!(self.depth > 0, "ScopedEnv drop without matching apply");
         self.depth -= 1;
 
         self.finish_scope(index);
@@ -187,11 +187,7 @@ impl ThreadState {
             .is_some_and(|candidate| candidate.finished)
         {
             let Some(finished) = self.stack.pop() else {
-                debug_assert!(
-                    false,
-                    "Finished scope missing from stack during restoration"
-                );
-                break;
+                panic!("Finished scope missing from stack during restoration");
             };
             restore_saved(finished.saved);
         }
@@ -214,14 +210,14 @@ impl ThreadState {
     }
 
     fn release_outermost_lock(&mut self) {
-        debug_assert!(
+        assert!(
             self.stack.is_empty(),
             "ScopedEnv stack must be empty once recursion depth reaches zero",
         );
         if let Some(guard) = self.lock.take() {
             drop(guard);
         } else {
-            debug_assert!(false, "ScopedEnv mutex guard missing at depth zero");
+            panic!("ScopedEnv mutex guard missing at depth zero");
         }
     }
 }
