@@ -11,28 +11,54 @@ use cap_std::{
     fs::{Dir, Metadata},
 };
 use color_eyre::eyre::{Context, Report, Result};
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+use std::ffi::OsString;
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use std::future::Future;
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use std::sync::{Arc, Mutex, OnceLock};
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::Error;
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use crate::TestBootstrapSettings;
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use crate::cluster::{PrivilegedOperationContext, TestCluster, WorkerOperation};
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+use crate::env::ScopedEnv;
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use crate::error::BootstrapResult;
 use crate::error::{BootstrapError, PrivilegeError};
 use crate::fs;
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use tracing::debug_span;
+
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+#[doc(hidden)]
+/// Applies environment overrides for tests using the library's shared guard.
+///
+/// # Examples
+/// ```rust,no_run
+/// use std::ffi::OsString;
+///
+/// use pg_embedded_setup_unpriv::test_support;
+///
+/// let guard = test_support::scoped_env(vec![
+///     (OsString::from("PGUSER"), Some(OsString::from("postgres"))),
+/// ]);
+/// drop(guard);
+/// ```
+pub fn scoped_env<I>(vars: I) -> ScopedEnv
+where
+    I: IntoIterator<Item = (OsString, Option<OsString>)>,
+{
+    ScopedEnv::apply_os(vars)
+}
 
 /// Opens the ambient directory containing `path` and returns its relative component.
 ///
@@ -86,7 +112,7 @@ pub fn set_permissions(path: &Utf8Path, mode: u32) -> Result<()> {
     fs::set_permissions(path, mode)
 }
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[doc(hidden)]
 /// Signature for intercepting privileged worker operations triggered by `TestCluster`.
 ///
@@ -108,7 +134,7 @@ pub type RunRootOperationHook = Arc<
         + Sync,
 >;
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[doc(hidden)]
 pub enum RunRootOperationHookInstallError {
@@ -116,18 +142,18 @@ pub enum RunRootOperationHookInstallError {
     AlreadyInstalled,
 }
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 static RUN_ROOT_OPERATION_HOOK: OnceLock<Mutex<Option<RunRootOperationHook>>> = OnceLock::new();
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 static RUN_ROOT_OPERATION_HOOK_LOGS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 fn hook_install_logs() -> &'static Mutex<Vec<String>> {
     RUN_ROOT_OPERATION_HOOK_LOGS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[doc(hidden)]
 /// Clears and returns the buffered run-root-operation hook installation
 /// logs.
@@ -139,7 +165,7 @@ pub fn drain_hook_install_logs() -> Vec<String> {
     mem::take(&mut *guard)
 }
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[doc(hidden)]
 /// Retrieves the optional run-root-operation hook for inspection or mutation.
 ///
@@ -164,7 +190,7 @@ pub fn run_root_operation_hook() -> &'static Mutex<Option<RunRootOperationHook>>
     RUN_ROOT_OPERATION_HOOK.get_or_init(|| Mutex::new(None))
 }
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 /// Guard that removes the installed run-root-operation hook when dropped.
 ///
 /// # Examples
@@ -177,13 +203,13 @@ pub fn run_root_operation_hook() -> &'static Mutex<Option<RunRootOperationHook>>
 /// ```
 pub struct HookGuard;
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 struct ThreadScope {
     label: String,
     span: tracing::Span,
 }
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 fn capture_thread_scope() -> ThreadScope {
     let current_thread = thread::current();
     let thread_name = current_thread.name().unwrap_or("unnamed").to_owned();
@@ -197,7 +223,7 @@ fn capture_thread_scope() -> ThreadScope {
     ThreadScope { label, span }
 }
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 fn log_duplicate_install(thread_label: &str) {
     let message = format!("run_root_operation_hook already installed by thread {thread_label}");
     hook_install_logs()
@@ -224,7 +250,7 @@ fn log_duplicate_hook_to_stderr(message: &str) {
     }
 }
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 fn register_hook<F>(hook: F, thread_label: &str) -> Result<(), RunRootOperationHookInstallError>
 where
     F: Fn(
@@ -248,7 +274,7 @@ where
     Ok(())
 }
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 /// Installs a hook that observes privileged worker operations triggered by `TestCluster`.
 ///
 /// The hook remains active until the returned [`HookGuard`] is dropped.
@@ -280,7 +306,7 @@ where
     Ok(HookGuard)
 }
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 impl Drop for HookGuard {
     fn drop(&mut self) {
         let slot = run_root_operation_hook();
@@ -291,7 +317,7 @@ impl Drop for HookGuard {
     }
 }
 
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[doc(hidden)]
 pub fn invoke_with_privileges<Fut>(
     ctx: &PrivilegedOperationContext<'_>,

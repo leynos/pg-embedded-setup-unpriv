@@ -17,6 +17,10 @@ pub(crate) const DEFAULT_SKIP_CONDITIONS: &[(&str, &str)] = &[
         "PostgreSQL binaries were unavailable for the requested operation",
     ),
     (
+        "deadline has elapsed",
+        "PostgreSQL helper timed out waiting for a subprocess to finish",
+    ),
+    (
         "failed to read worker config",
         "worker helper cannot access its configuration",
     ),
