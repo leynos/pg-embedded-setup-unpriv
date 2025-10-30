@@ -1,3 +1,6 @@
+//! Capability-aware filesystem helpers for tests, mirroring the public `fs`
+//! API while exposing ambient operations for scaffolding.
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 

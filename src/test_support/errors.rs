@@ -1,3 +1,6 @@
+//! Error conversion helpers that adapt `color-eyre` reports into the public
+//! [`crate::Error`] type for test scaffolding.
+
 use color_eyre::eyre::Report;
 
 use crate::Error;

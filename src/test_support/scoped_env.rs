@@ -1,3 +1,6 @@
+//! Scoped environment guard that temporarily overrides variables for test
+//! cases, restoring the original process state when dropped.
+
 use std::ffi::OsString;
 
 use crate::env::ScopedEnv;

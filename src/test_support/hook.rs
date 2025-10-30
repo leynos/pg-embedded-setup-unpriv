@@ -1,3 +1,6 @@
+//! Hook infrastructure that intercepts privileged worker operations during
+//! tests to assert behaviour and control cluster bootstrapping.
+
 use std::future::Future;
 use std::mem;
 use std::sync::{Arc, Mutex, OnceLock};
