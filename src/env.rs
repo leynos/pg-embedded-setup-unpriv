@@ -153,6 +153,10 @@ impl ThreadState {
     }
 
     fn apply_single_var(key: &OsString, new_value: Option<OsString>) -> Option<OsString> {
+        debug_assert!(
+            !key.is_empty() && !Self::contains_equals(key),
+            "invalid env var name: {key:?}"
+        );
         let previous = env::var_os(key);
         match new_value {
             Some(value) => unsafe {
