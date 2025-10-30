@@ -170,7 +170,7 @@ impl ThreadState {
     }
 
     fn exit_scope(&mut self, index: usize) {
-        assert!(self.depth > 0, "ScopedEnv drop without matching apply");
+        debug_assert!(self.depth > 0, "ScopedEnv drop without matching apply");
         self.depth -= 1;
 
         self.finish_scope(index);
@@ -210,14 +210,14 @@ impl ThreadState {
     }
 
     fn release_outermost_lock(&mut self) {
-        assert!(
+        debug_assert!(
             self.stack.is_empty(),
             "ScopedEnv stack must be empty once recursion depth reaches zero",
         );
         if let Some(guard) = self.lock.take() {
             drop(guard);
         } else {
-            panic!("ScopedEnv mutex guard missing at depth zero");
+            debug_assert!(false, "ScopedEnv mutex guard missing at depth zero");
         }
     }
 }
