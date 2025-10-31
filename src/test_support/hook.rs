@@ -125,7 +125,7 @@ fn record_duplicate_install(message: &str) {
 }
 
 #[cfg(test)]
-pub fn log_duplicate_hook_to_stderr(message: &str) {
+pub(crate) fn log_duplicate_hook_to_stderr(message: &str) {
     use std::io::Write as _;
 
     let mut stderr = std::io::stderr();
