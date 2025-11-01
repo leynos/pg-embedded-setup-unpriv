@@ -156,9 +156,9 @@ pub use bootstrap::{
     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
     bootstrap_for_tests, detect_execution_privileges, run,
 };
-#[doc(hidden)]
-pub use cluster::PrivilegedOperationContext;
 pub use cluster::TestCluster;
+#[doc(hidden)]
+pub use cluster::WorkerInvoker;
 #[doc(hidden)]
 pub use cluster::WorkerOperation;
 #[doc(hidden)]

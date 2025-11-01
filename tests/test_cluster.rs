@@ -14,8 +14,8 @@ use pg_embedded_setup_unpriv::test_support::{
     invoke_with_privileges,
 };
 use pg_embedded_setup_unpriv::{
-    ExecutionMode, ExecutionPrivileges, PrivilegedOperationContext, TestBootstrapEnvironment,
-    TestBootstrapSettings, WorkerOperation,
+    ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
+    WorkerInvoker, WorkerOperation,
 };
 use postgresql_embedded::Settings;
 use tokio::runtime::{Builder, Runtime};
@@ -62,12 +62,12 @@ fn unprivileged_operations_run_in_process() -> Result<()> {
     let runtime = test_runtime()?;
     let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
     let env_vars = bootstrap.environment.to_env();
-    let ctx = PrivilegedOperationContext::new(&runtime, &bootstrap, &env_vars);
+    let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
     let setup_calls = AtomicUsize::new(0);
 
     for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
         let call_counter = &setup_calls;
-        invoke_with_privileges(&ctx, operation, async move {
+        invoke_with_privileges(&invoker, operation, async move {
             call_counter.fetch_add(1, Ordering::Relaxed);
             Ok::<(), postgresql_embedded::Error>(())
         })
@@ -86,7 +86,7 @@ fn root_operations_delegate_to_worker() -> Result<()> {
     let runtime = test_runtime()?;
     let bootstrap = dummy_settings(ExecutionPrivileges::Root);
     let env_vars = bootstrap.environment.to_env();
-    let ctx = PrivilegedOperationContext::new(&runtime, &bootstrap, &env_vars);
+    let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
     let worker_calls = Arc::new(AtomicUsize::new(0));
     let in_process_invoked = Arc::new(AtomicBool::new(false));
 
@@ -99,7 +99,7 @@ fn root_operations_delegate_to_worker() -> Result<()> {
 
     for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
         let flag = Arc::clone(&in_process_invoked);
-        invoke_with_privileges(&ctx, operation, async move {
+        invoke_with_privileges(&invoker, operation, async move {
             flag.store(true, Ordering::Relaxed);
             Ok::<(), postgresql_embedded::Error>(())
         })
@@ -179,8 +179,8 @@ fn run_hanging_worker_timeout_test(worker_path: Utf8PathBuf) -> Result<()> {
     bootstrap.start_timeout = Duration::from_secs(1);
 
     let env_vars = bootstrap.environment.to_env();
-    let ctx = PrivilegedOperationContext::new(&runtime, &bootstrap, &env_vars);
-    let result = invoke_with_privileges(&ctx, WorkerOperation::Setup, async {
+    let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
+    let result = invoke_with_privileges(&invoker, WorkerOperation::Setup, async {
         Ok::<(), postgresql_embedded::Error>(())
     });
     let Err(err) = result else {
