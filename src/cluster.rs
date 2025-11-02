@@ -36,12 +36,13 @@ pub struct TestCluster {
     postgres: Option<PostgreSQL>,
     bootstrap: TestBootstrapSettings,
     is_managed_via_worker: bool,
+    env_vars: Vec<(String, Option<String>)>,
     _env_guard: ScopedEnv,
 }
 
+/// Executes worker operations whilst respecting configured privileges.
 #[doc(hidden)]
 #[derive(Debug)]
-/// Executes worker operations whilst respecting configured privileges.
 pub struct WorkerInvoker<'a> {
     runtime: &'a Runtime,
     bootstrap: &'a TestBootstrapSettings,
@@ -51,6 +52,41 @@ pub struct WorkerInvoker<'a> {
 impl<'a> WorkerInvoker<'a> {
     /// Creates an invoker bound to a runtime, bootstrap configuration, and
     /// derived environment variables.
+    ///
+    /// # Examples
+    /// ```
+    /// # use camino::Utf8PathBuf;
+    /// # use pg_embedded_setup_unpriv::{
+    /// #     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
+    /// #     WorkerInvoker,
+    /// # };
+    /// # use postgresql_embedded::Settings;
+    /// # use std::time::Duration;
+    /// # fn build_settings() -> TestBootstrapSettings {
+    /// #     TestBootstrapSettings {
+    /// #         privileges: ExecutionPrivileges::Unprivileged,
+    /// #         execution_mode: ExecutionMode::InProcess,
+    /// #         settings: Settings::default(),
+    /// #         environment: TestBootstrapEnvironment {
+    /// #             home: Utf8PathBuf::from("/tmp"),
+    /// #             xdg_cache_home: Utf8PathBuf::from("/tmp/cache"),
+    /// #             xdg_runtime_dir: Utf8PathBuf::from("/tmp/run"),
+    /// #             pgpass_file: Utf8PathBuf::from("/tmp/.pgpass"),
+    /// #             tz_dir: None,
+    /// #             timezone: "UTC".into(),
+    /// #         },
+    /// #         worker_binary: None,
+    /// #         setup_timeout: Duration::from_secs(1),
+    /// #         start_timeout: Duration::from_secs(1),
+    /// #         shutdown_timeout: Duration::from_secs(1),
+    /// #     }
+    /// # }
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().map(|runtime| {
+    /// #     let bootstrap = build_settings();
+    /// #     let env_vars = bootstrap.environment.to_env();
+    /// #     WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
+    /// # });
+    /// ```
     pub const fn new(
         runtime: &'a Runtime,
         bootstrap: &'a TestBootstrapSettings,
@@ -69,19 +105,55 @@ impl<'a> WorkerInvoker<'a> {
     /// # Errors
     /// Returns a [`BootstrapError`] when the worker invocation fails or when
     /// the in-process operation returns an error.
-    pub fn run<Fut>(&self, operation: WorkerOperation, in_process_op: Fut) -> BootstrapResult<()>
+    ///
+    /// # Examples
+    /// ```
+    /// # use camino::Utf8PathBuf;
+    /// # use pg_embedded_setup_unpriv::{
+    /// #     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
+    /// #     WorkerInvoker, WorkerOperation,
+    /// # };
+    /// # use postgresql_embedded::Settings;
+    /// # use std::time::Duration;
+    /// # async fn do_nothing() -> Result<(), postgresql_embedded::Error> { Ok(()) }
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().map(|runtime| {
+    /// #     let bootstrap = TestBootstrapSettings {
+    /// #         privileges: ExecutionPrivileges::Unprivileged,
+    /// #         execution_mode: ExecutionMode::InProcess,
+    /// #         settings: Settings::default(),
+    /// #         environment: TestBootstrapEnvironment {
+    /// #             home: Utf8PathBuf::from("/tmp"),
+    /// #             xdg_cache_home: Utf8PathBuf::from("/tmp/cache"),
+    /// #             xdg_runtime_dir: Utf8PathBuf::from("/tmp/run"),
+    /// #             pgpass_file: Utf8PathBuf::from("/tmp/.pgpass"),
+    /// #             tz_dir: None,
+    /// #             timezone: "UTC".into(),
+    /// #         },
+    /// #         worker_binary: None,
+    /// #         setup_timeout: Duration::from_secs(1),
+    /// #         start_timeout: Duration::from_secs(1),
+    /// #         shutdown_timeout: Duration::from_secs(1),
+    /// #     };
+    /// #     let env_vars = bootstrap.environment.to_env();
+    /// #     let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
+    /// #     let _ = invoker
+    /// #         .invoke(WorkerOperation::Setup, do_nothing())
+    /// #         .expect("invocation should succeed");
+    /// # });
+    /// ```
+    pub fn invoke<Fut>(&self, operation: WorkerOperation, in_process_op: Fut) -> BootstrapResult<()>
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
         match self.bootstrap.privileges {
             ExecutionPrivileges::Unprivileged => {
-                self.block_in_process(in_process_op, operation.error_context())
+                self.invoke_unprivileged(in_process_op, operation.error_context())
             }
-            ExecutionPrivileges::Root => self.run_root_operation(operation),
+            ExecutionPrivileges::Root => self.invoke_as_root(operation),
         }
     }
 
-    fn block_in_process<Fut>(&self, future: Fut, ctx: &'static str) -> BootstrapResult<()>
+    fn invoke_unprivileged<Fut>(&self, future: Fut, ctx: &'static str) -> BootstrapResult<()>
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
@@ -91,7 +163,7 @@ impl<'a> WorkerInvoker<'a> {
             .map_err(BootstrapError::from)
     }
 
-    fn run_root_operation(&self, operation: WorkerOperation) -> BootstrapResult<()> {
+    fn invoke_as_root(&self, operation: WorkerOperation) -> BootstrapResult<()> {
         #[cfg(any(test, feature = "cluster-unit-tests"))]
         {
             let hook_slot = crate::test_support::run_root_operation_hook()
@@ -168,81 +240,6 @@ impl<'a> WorkerInvoker<'a> {
     }
 }
 
-#[derive(Debug)]
-struct Stopper<'a> {
-    runtime: &'a Runtime,
-    bootstrap: &'a TestBootstrapSettings,
-    is_managed_via_worker: bool,
-}
-
-impl<'a> Stopper<'a> {
-    const fn new(
-        runtime: &'a Runtime,
-        bootstrap: &'a TestBootstrapSettings,
-        is_managed_via_worker: bool,
-    ) -> Self {
-        Self {
-            runtime,
-            bootstrap,
-            is_managed_via_worker,
-        }
-    }
-
-    fn stop(&self, postgres: Option<PostgreSQL>) {
-        let context = Self::stop_context(&self.bootstrap.settings);
-
-        if self.is_managed_via_worker {
-            self.stop_via_worker(&context);
-            return;
-        }
-
-        if let Some(mut embedded) = postgres {
-            self.stop_in_process(&mut embedded, &context);
-        }
-    }
-
-    fn stop_context(settings: &Settings) -> String {
-        let data_dir = settings.data_dir.display();
-        let version = settings.version.to_string();
-        format!("version {version}, data_dir {data_dir}")
-    }
-
-    fn stop_via_worker(&self, context: &str) {
-        let env_vars = self.bootstrap.environment.to_env();
-        let invoker = WorkerInvoker::new(self.runtime, self.bootstrap, &env_vars);
-        if let Err(err) = invoker.run_root_operation(WorkerOperation::Stop) {
-            Self::warn_stop_failure(context, &err);
-        }
-    }
-
-    fn stop_in_process(&self, postgres: &mut PostgreSQL, context: &str) {
-        let timeout = self.bootstrap.shutdown_timeout;
-        let timeout_secs = timeout.as_secs();
-        let outcome = self
-            .runtime
-            .block_on(async { time::timeout(timeout, postgres.stop()).await });
-        match outcome {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => Self::warn_stop_failure(context, &err),
-            Err(_) => Self::warn_stop_timeout(timeout_secs, context),
-        }
-    }
-
-    fn warn_stop_failure(context: &str, err: &impl Display) {
-        tracing::warn!(
-            "SKIP-TEST-CLUSTER: failed to stop embedded postgres instance ({}): {}",
-            context,
-            err
-        );
-    }
-
-    fn warn_stop_timeout(timeout_secs: u64, context: &str) {
-        tracing::warn!(
-            "SKIP-TEST-CLUSTER: stop() timed out after {timeout_secs}s ({context}); proceeding with drop"
-        );
-    }
-}
-
 impl TestCluster {
     /// Boots a `PostgreSQL` instance configured by [`bootstrap_for_tests`].
     ///
@@ -267,8 +264,8 @@ impl TestCluster {
 
         let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
 
-        invoker.run(WorkerOperation::Setup, async { embedded.setup().await })?;
-        invoker.run(WorkerOperation::Start, async { embedded.start().await })?;
+        invoker.invoke(WorkerOperation::Setup, async { embedded.setup().await })?;
+        invoker.invoke(WorkerOperation::Start, async { embedded.start().await })?;
 
         let is_managed_via_worker = matches!(privileges, crate::ExecutionPrivileges::Root);
         let postgres = if is_managed_via_worker {
@@ -282,6 +279,7 @@ impl TestCluster {
             postgres,
             bootstrap,
             is_managed_via_worker,
+            env_vars,
             _env_guard: env_guard,
         })
     }
@@ -299,6 +297,26 @@ impl TestCluster {
     /// Returns the bootstrap metadata captured when the cluster was started.
     pub const fn bootstrap(&self) -> &TestBootstrapSettings {
         &self.bootstrap
+    }
+
+    fn stop_context(settings: &Settings) -> String {
+        let data_dir = settings.data_dir.display();
+        let version = settings.version.to_string();
+        format!("version {version}, data_dir {data_dir}")
+    }
+
+    fn warn_stop_failure(context: &str, err: &impl Display) {
+        tracing::warn!(
+            "SKIP-TEST-CLUSTER: failed to stop embedded postgres instance ({}): {}",
+            context,
+            err
+        );
+    }
+
+    fn warn_stop_timeout(timeout_secs: u64, context: &str) {
+        tracing::warn!(
+            "SKIP-TEST-CLUSTER: stop() timed out after {timeout_secs}s ({context}); proceeding with drop"
+        );
     }
 }
 
@@ -342,9 +360,100 @@ impl WorkerOperation {
 
 impl Drop for TestCluster {
     fn drop(&mut self) {
-        let stopper = Stopper::new(&self.runtime, &self.bootstrap, self.is_managed_via_worker);
-        stopper.stop(self.postgres.take());
+        let context = Self::stop_context(&self.bootstrap.settings);
+
+        if self.is_managed_via_worker {
+            let invoker = WorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
+            if let Err(err) = invoker.invoke_as_root(WorkerOperation::Stop) {
+                Self::warn_stop_failure(&context, &err);
+            }
+        } else if let Some(postgres) = self.postgres.take() {
+            let timeout = self.bootstrap.shutdown_timeout;
+            let timeout_secs = timeout.as_secs();
+            let outcome = self
+                .runtime
+                .block_on(async { time::timeout(timeout, postgres.stop()).await });
+            match outcome {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => Self::warn_stop_failure(&context, &err),
+                Err(_) => Self::warn_stop_timeout(timeout_secs, &context),
+            }
+        }
         // `env_guard` drops after this block, restoring the environment.
+    }
+}
+
+#[cfg(test)]
+mod drop_logging_tests {
+    use super::*;
+    use std::io::{Result as IoResult, Write};
+    use std::sync::{Arc, Mutex};
+    use tracing::Level;
+    use tracing::subscriber::with_default;
+    use tracing_subscriber::fmt;
+
+    struct BufferWriter {
+        buffer: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for BufferWriter {
+        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+            let mut guard = self
+                .buffer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> IoResult<()> {
+            Ok(())
+        }
+    }
+
+    fn capture_warn_logs<F>(action: F) -> Vec<String>
+    where
+        F: FnOnce(),
+    {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer_buffer = Arc::clone(&buffer);
+        let subscriber = fmt()
+            .with_max_level(Level::WARN)
+            .without_time()
+            .with_writer(move || BufferWriter {
+                buffer: Arc::clone(&writer_buffer),
+            })
+            .finish();
+
+        with_default(subscriber, action);
+
+        let bytes = buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let content = String::from_utf8(bytes)
+            .unwrap_or_else(|err| panic!("logs should be valid UTF-8: {err}"));
+        content.lines().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn warn_stop_timeout_emits_warning() {
+        let logs = capture_warn_logs(|| TestCluster::warn_stop_timeout(5, "ctx"));
+        assert!(
+            logs.iter()
+                .any(|line| line.contains("stop() timed out after 5s (ctx)")),
+            "expected timeout warning, got {logs:?}"
+        );
+    }
+
+    #[test]
+    fn warn_stop_failure_emits_warning() {
+        let logs = capture_warn_logs(|| TestCluster::warn_stop_failure("ctx", &"boom"));
+        assert!(
+            logs.iter()
+                .any(|line| line.contains("failed to stop embedded postgres instance")),
+            "expected failure warning, got {logs:?}"
+        );
     }
 }
 

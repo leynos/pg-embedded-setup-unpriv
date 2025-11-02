@@ -207,5 +207,5 @@ pub fn invoke_with_privileges<Fut>(
 where
     Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
 {
-    invoker.run(operation, in_process_op)
+    invoker.invoke(operation, in_process_op)
 }
