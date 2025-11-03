@@ -240,11 +240,11 @@ impl<'a> WorkerProcess<'a> {
 
         if timed_out {
             let timeout_secs = self.request.timeout.as_secs();
-            let operation = self.request.operation.as_str();
             tracing::warn!(
-                operation,
+                operation = self.request.operation.as_str(),
                 timeout_secs,
-                "SKIP-TEST-CLUSTER: worker {operation} timed out after {timeout_secs}s"
+                "SKIP-TEST-CLUSTER: worker {} timed out after {timeout_secs}s",
+                self.request.operation.as_str()
             );
             return Err(Self::render_failure(
                 &format!(

@@ -2,7 +2,7 @@
 //! Unit tests covering `TestCluster` privilege dispatch behaviour.
 
 use std::sync::{
-    Arc,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::Duration;
@@ -39,6 +39,13 @@ fn dummy_environment() -> TestBootstrapEnvironment {
         tz_dir: Some(Utf8PathBuf::from("/usr/share/zoneinfo")),
         timezone: "UTC".into(),
     }
+}
+
+fn serialise_hook_tests() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn dummy_settings(privileges: ExecutionPrivileges) -> TestBootstrapSettings {
@@ -107,6 +114,7 @@ fn unprivileged_operation_errors_propagate() -> Result<()> {
 
 #[test]
 fn root_operation_errors_surface_worker_failure() -> Result<()> {
+    let _serial = serialise_hook_tests();
     let runtime = test_runtime()?;
     let bootstrap = dummy_settings(ExecutionPrivileges::Root);
     let env_vars = bootstrap.environment.to_env();
@@ -133,6 +141,7 @@ fn root_operation_errors_surface_worker_failure() -> Result<()> {
 
 #[test]
 fn root_operations_delegate_to_worker() -> Result<()> {
+    let _serial = serialise_hook_tests();
     let runtime = test_runtime()?;
     let bootstrap = dummy_settings(ExecutionPrivileges::Root);
     let env_vars = bootstrap.environment.to_env();
@@ -169,6 +178,7 @@ fn root_operations_delegate_to_worker() -> Result<()> {
 
 #[test]
 fn installing_hook_twice_returns_error() -> Result<()> {
+    let _serial = serialise_hook_tests();
     drop(drain_hook_install_logs());
     let initial_guard = install_run_root_operation_hook(|_, _, _| Ok(()))
         .map_err(|install_err| eyre!(install_err))?;
