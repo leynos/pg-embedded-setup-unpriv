@@ -1,19 +1,20 @@
 #![cfg(all(unix, feature = "cluster-unit-tests"))]
 //! Unit tests covering `TestCluster` privilege dispatch behaviour.
 
-use std::io::{Result as IoResult, Write};
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::Duration;
 
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Result, ensure, eyre};
+#[cfg(feature = "privileged-tests")]
+use nix::unistd::geteuid;
 use pg_embedded_setup_unpriv::BootstrapError;
 use pg_embedded_setup_unpriv::test_support::{
-    RunRootOperationHookInstallError, drain_hook_install_logs, install_run_root_operation_hook,
-    invoke_with_privileges,
+    RunRootOperationHookInstallError, capture_warn_logs, drain_hook_install_logs,
+    install_run_root_operation_hook, invoke_with_privileges,
 };
 use pg_embedded_setup_unpriv::{
     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
@@ -21,12 +22,6 @@ use pg_embedded_setup_unpriv::{
 };
 use postgresql_embedded::Settings;
 use tokio::runtime::{Builder, Runtime};
-use tracing::Level;
-use tracing::subscriber::with_default;
-use tracing_subscriber::fmt;
-
-#[cfg(feature = "privileged-tests")]
-use nix::unistd::geteuid;
 
 fn test_runtime() -> Result<Runtime> {
     Builder::new_current_thread()
@@ -60,50 +55,6 @@ fn dummy_settings(privileges: ExecutionPrivileges) -> TestBootstrapSettings {
         start_timeout: Duration::from_secs(60),
         shutdown_timeout: Duration::from_secs(15),
     }
-}
-
-struct TestLogWriter {
-    buffer: Arc<Mutex<Vec<u8>>>,
-}
-
-impl Write for TestLogWriter {
-    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
-        let mut guard = self
-            .buffer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> IoResult<()> {
-        Ok(())
-    }
-}
-
-fn capture_warn_logs<F, R>(action: F) -> (Vec<String>, R)
-where
-    F: FnOnce() -> R,
-{
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let writer_buffer = Arc::clone(&buffer);
-    let subscriber = fmt()
-        .with_max_level(Level::WARN)
-        .without_time()
-        .with_writer(move || TestLogWriter {
-            buffer: Arc::clone(&writer_buffer),
-        })
-        .finish();
-
-    let result = with_default(subscriber, action);
-    let bytes = buffer
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    let content =
-        String::from_utf8(bytes).unwrap_or_else(|err| panic!("logs should be valid UTF-8: {err}"));
-    let logs = content.lines().map(str::to_owned).collect();
-    (logs, result)
 }
 
 #[test]
@@ -279,7 +230,7 @@ fn run_hanging_worker_timeout_test(worker_path: Utf8PathBuf) -> Result<()> {
 
     let env_vars = bootstrap.environment.to_env();
     let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
-    let (_logs, result) = capture_warn_logs(|| {
+    let (logs, result) = capture_warn_logs(|| {
         invoke_with_privileges(&invoker, WorkerOperation::Setup, async {
             Ok::<(), postgresql_embedded::Error>(())
         })
@@ -291,6 +242,11 @@ fn run_hanging_worker_timeout_test(worker_path: Utf8PathBuf) -> Result<()> {
     ensure!(
         message.contains("timed out"),
         "expected timeout error, got: {message}",
+    );
+    ensure!(
+        logs.iter()
+            .any(|entry| entry.contains("worker setup timed out after 1s")),
+        "expected timeout warning log, got {logs:?}",
     );
     Ok(())
 }

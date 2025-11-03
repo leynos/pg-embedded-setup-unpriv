@@ -41,8 +41,8 @@ pub struct TestCluster {
 }
 
 /// Executes worker operations whilst respecting configured privileges.
-#[doc(hidden)]
 #[derive(Debug)]
+#[doc(hidden)]
 pub struct WorkerInvoker<'a> {
     runtime: &'a Runtime,
     bootstrap: &'a TestBootstrapSettings,
@@ -53,40 +53,7 @@ impl<'a> WorkerInvoker<'a> {
     /// Creates an invoker bound to a runtime, bootstrap configuration, and
     /// derived environment variables.
     ///
-    /// # Examples
-    /// ```
-    /// # use camino::Utf8PathBuf;
-    /// # use pg_embedded_setup_unpriv::{
-    /// #     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
-    /// #     WorkerInvoker,
-    /// # };
-    /// # use postgresql_embedded::Settings;
-    /// # use std::time::Duration;
-    /// # fn build_settings() -> TestBootstrapSettings {
-    /// #     TestBootstrapSettings {
-    /// #         privileges: ExecutionPrivileges::Unprivileged,
-    /// #         execution_mode: ExecutionMode::InProcess,
-    /// #         settings: Settings::default(),
-    /// #         environment: TestBootstrapEnvironment {
-    /// #             home: Utf8PathBuf::from("/tmp"),
-    /// #             xdg_cache_home: Utf8PathBuf::from("/tmp/cache"),
-    /// #             xdg_runtime_dir: Utf8PathBuf::from("/tmp/run"),
-    /// #             pgpass_file: Utf8PathBuf::from("/tmp/.pgpass"),
-    /// #             tz_dir: None,
-    /// #             timezone: "UTC".into(),
-    /// #         },
-    /// #         worker_binary: None,
-    /// #         setup_timeout: Duration::from_secs(1),
-    /// #         start_timeout: Duration::from_secs(1),
-    /// #         shutdown_timeout: Duration::from_secs(1),
-    /// #     }
-    /// # }
-    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().map(|runtime| {
-    /// #     let bootstrap = build_settings();
-    /// #     let env_vars = bootstrap.environment.to_env();
-    /// #     WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
-    /// # });
-    /// ```
+    /// See [`TestCluster::new`] for usage in context.
     pub const fn new(
         runtime: &'a Runtime,
         bootstrap: &'a TestBootstrapSettings,
@@ -106,41 +73,7 @@ impl<'a> WorkerInvoker<'a> {
     /// Returns a [`BootstrapError`] when the worker invocation fails or when
     /// the in-process operation returns an error.
     ///
-    /// # Examples
-    /// ```
-    /// # use camino::Utf8PathBuf;
-    /// # use pg_embedded_setup_unpriv::{
-    /// #     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
-    /// #     WorkerInvoker, WorkerOperation,
-    /// # };
-    /// # use postgresql_embedded::Settings;
-    /// # use std::time::Duration;
-    /// # async fn do_nothing() -> Result<(), postgresql_embedded::Error> { Ok(()) }
-    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().map(|runtime| {
-    /// #     let bootstrap = TestBootstrapSettings {
-    /// #         privileges: ExecutionPrivileges::Unprivileged,
-    /// #         execution_mode: ExecutionMode::InProcess,
-    /// #         settings: Settings::default(),
-    /// #         environment: TestBootstrapEnvironment {
-    /// #             home: Utf8PathBuf::from("/tmp"),
-    /// #             xdg_cache_home: Utf8PathBuf::from("/tmp/cache"),
-    /// #             xdg_runtime_dir: Utf8PathBuf::from("/tmp/run"),
-    /// #             pgpass_file: Utf8PathBuf::from("/tmp/.pgpass"),
-    /// #             tz_dir: None,
-    /// #             timezone: "UTC".into(),
-    /// #         },
-    /// #         worker_binary: None,
-    /// #         setup_timeout: Duration::from_secs(1),
-    /// #         start_timeout: Duration::from_secs(1),
-    /// #         shutdown_timeout: Duration::from_secs(1),
-    /// #     };
-    /// #     let env_vars = bootstrap.environment.to_env();
-    /// #     let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
-    /// #     let _ = invoker
-    /// #         .invoke(WorkerOperation::Setup, do_nothing())
-    /// #         .expect("invocation should succeed");
-    /// # });
-    /// ```
+    /// See [`TestCluster::new`] for concrete usage examples.
     pub fn invoke<Fut>(&self, operation: WorkerOperation, in_process_op: Fut) -> BootstrapResult<()>
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
@@ -386,59 +319,11 @@ impl Drop for TestCluster {
 #[cfg(test)]
 mod drop_logging_tests {
     use super::*;
-    use std::io::{Result as IoResult, Write};
-    use std::sync::{Arc, Mutex};
-    use tracing::Level;
-    use tracing::subscriber::with_default;
-    use tracing_subscriber::fmt;
-
-    struct BufferWriter {
-        buffer: Arc<Mutex<Vec<u8>>>,
-    }
-
-    impl Write for BufferWriter {
-        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
-            let mut guard = self
-                .buffer
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            guard.extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> IoResult<()> {
-            Ok(())
-        }
-    }
-
-    fn capture_warn_logs<F>(action: F) -> Vec<String>
-    where
-        F: FnOnce(),
-    {
-        let buffer = Arc::new(Mutex::new(Vec::new()));
-        let writer_buffer = Arc::clone(&buffer);
-        let subscriber = fmt()
-            .with_max_level(Level::WARN)
-            .without_time()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_buffer),
-            })
-            .finish();
-
-        with_default(subscriber, action);
-
-        let bytes = buffer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let content = String::from_utf8(bytes)
-            .unwrap_or_else(|err| panic!("logs should be valid UTF-8: {err}"));
-        content.lines().map(str::to_owned).collect()
-    }
+    use crate::test_support::capture_warn_logs;
 
     #[test]
     fn warn_stop_timeout_emits_warning() {
-        let logs = capture_warn_logs(|| TestCluster::warn_stop_timeout(5, "ctx"));
+        let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_timeout(5, "ctx"));
         assert!(
             logs.iter()
                 .any(|line| line.contains("stop() timed out after 5s (ctx)")),
@@ -448,7 +333,7 @@ mod drop_logging_tests {
 
     #[test]
     fn warn_stop_failure_emits_warning() {
-        let logs = capture_warn_logs(|| TestCluster::warn_stop_failure("ctx", &"boom"));
+        let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_failure("ctx", &"boom"));
         assert!(
             logs.iter()
                 .any(|line| line.contains("failed to stop embedded postgres instance")),
