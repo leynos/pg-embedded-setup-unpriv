@@ -14,7 +14,7 @@ use nix::unistd::geteuid;
 use pg_embedded_setup_unpriv::BootstrapError;
 use pg_embedded_setup_unpriv::test_support::{
     RunRootOperationHookInstallError, capture_warn_logs, drain_hook_install_logs,
-    install_run_root_operation_hook, invoke_with_privileges,
+    install_run_root_operation_hook,
 };
 use pg_embedded_setup_unpriv::{
     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
@@ -41,6 +41,10 @@ fn dummy_environment() -> TestBootstrapEnvironment {
     }
 }
 
+/// Serialises tests that install the run-root-operation hook.
+///
+/// The hook is a global singleton, so tests installing it must not run concurrently
+/// to avoid `AlreadyInstalled` errors.
 fn serialise_hook_tests() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -74,11 +78,12 @@ fn unprivileged_operations_run_in_process() -> Result<()> {
 
     for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
         let call_counter = &setup_calls;
-        invoke_with_privileges(&invoker, operation, async move {
-            call_counter.fetch_add(1, Ordering::Relaxed);
-            Ok::<(), postgresql_embedded::Error>(())
-        })
-        .map_err(|err| eyre!(err))?;
+        invoker
+            .invoke(operation, async move {
+                call_counter.fetch_add(1, Ordering::Relaxed);
+                Ok::<(), postgresql_embedded::Error>(())
+            })
+            .map_err(|err| eyre!(err))?;
     }
 
     ensure!(
@@ -95,7 +100,7 @@ fn unprivileged_operation_errors_propagate() -> Result<()> {
     let env_vars = bootstrap.environment.to_env();
     let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
 
-    let result = invoke_with_privileges(&invoker, WorkerOperation::Setup, async {
+    let result = invoker.invoke(WorkerOperation::Setup, async {
         Err::<(), postgresql_embedded::Error>(postgresql_embedded::Error::DatabaseStartError(
             "boom".into(),
         ))
@@ -125,7 +130,7 @@ fn root_operation_errors_surface_worker_failure() -> Result<()> {
     })
     .map_err(|err| eyre!(err))?;
 
-    let result = invoke_with_privileges(&invoker, WorkerOperation::Start, async {
+    let result = invoker.invoke(WorkerOperation::Start, async {
         Ok::<(), postgresql_embedded::Error>(())
     });
 
@@ -158,11 +163,12 @@ fn root_operations_delegate_to_worker() -> Result<()> {
 
     for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
         let flag = Arc::clone(&in_process_invoked);
-        invoke_with_privileges(&invoker, operation, async move {
-            flag.store(true, Ordering::Relaxed);
-            Ok::<(), postgresql_embedded::Error>(())
-        })
-        .map_err(|err| eyre!(err))?;
+        invoker
+            .invoke(operation, async move {
+                flag.store(true, Ordering::Relaxed);
+                Ok::<(), postgresql_embedded::Error>(())
+            })
+            .map_err(|err| eyre!(err))?;
     }
 
     ensure!(
@@ -241,7 +247,7 @@ fn run_hanging_worker_timeout_test(worker_path: Utf8PathBuf) -> Result<()> {
     let env_vars = bootstrap.environment.to_env();
     let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
     let (logs, result) = capture_warn_logs(|| {
-        invoke_with_privileges(&invoker, WorkerOperation::Setup, async {
+        invoker.invoke(WorkerOperation::Setup, async {
             Ok::<(), postgresql_embedded::Error>(())
         })
     });
