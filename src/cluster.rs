@@ -316,7 +316,7 @@ impl Drop for TestCluster {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "cluster-unit-tests"))]
 mod drop_logging_tests {
     use super::*;
     use crate::test_support::capture_warn_logs;
