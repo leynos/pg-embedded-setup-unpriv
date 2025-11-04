@@ -36,20 +36,24 @@ pub struct TestCluster {
     postgres: Option<PostgreSQL>,
     bootstrap: TestBootstrapSettings,
     is_managed_via_worker: bool,
+    env_vars: Vec<(String, Option<String>)>,
     _env_guard: ScopedEnv,
 }
 
+/// Executes worker operations whilst respecting configured privileges.
+#[derive(Debug)]
 #[doc(hidden)]
-/// Binds runtime, bootstrap settings, and environment variables for
-/// privilege-aware cluster operations.
-pub struct PrivilegedOperationContext<'a> {
+pub struct WorkerInvoker<'a> {
     runtime: &'a Runtime,
     bootstrap: &'a TestBootstrapSettings,
     env_vars: &'a [(String, Option<String>)],
 }
 
-impl<'a> PrivilegedOperationContext<'a> {
-    /// Creates a new context for executing a privileged worker operation.
+impl<'a> WorkerInvoker<'a> {
+    /// Creates an invoker bound to a runtime, bootstrap configuration, and
+    /// derived environment variables.
+    ///
+    /// See [`TestCluster::new`] for usage in context.
     pub const fn new(
         runtime: &'a Runtime,
         bootstrap: &'a TestBootstrapSettings,
@@ -62,113 +66,37 @@ impl<'a> PrivilegedOperationContext<'a> {
         }
     }
 
-    /// Returns the execution privileges configured for the current bootstrap.
-    const fn privileges(&self) -> ExecutionPrivileges {
-        self.bootstrap.privileges
-    }
-
-    /// Returns the Tokio runtime used to execute asynchronous operations.
-    const fn runtime(&self) -> &'a Runtime {
-        self.runtime
-    }
-
-    /// Returns the bootstrap settings associated with the operation.
-    const fn bootstrap(&self) -> &'a TestBootstrapSettings {
-        self.bootstrap
-    }
-
-    /// Returns the scoped environment variables for the worker invocation.
-    const fn env_vars(&self) -> &'a [(String, Option<String>)] {
-        self.env_vars
-    }
-}
-
-impl TestCluster {
-    /// Boots a `PostgreSQL` instance configured by [`bootstrap_for_tests`].
-    ///
-    /// The constructor blocks until the underlying server process is running and returns an
-    /// error when startup fails.
+    /// Executes an operation either in-process or via the privileged worker,
+    /// depending on the configured privilege level.
     ///
     /// # Errors
-    /// Returns an error if the bootstrap configuration cannot be prepared or if starting the
-    /// embedded cluster fails.
-    pub fn new() -> BootstrapResult<Self> {
-        let bootstrap = bootstrap_for_tests()?;
-        let runtime = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("failed to create Tokio runtime for TestCluster")
-            .map_err(BootstrapError::from)?;
-
-        let env_vars = bootstrap.environment.to_env();
-        let env_guard = ScopedEnv::apply(&env_vars);
-        let privileges = bootstrap.privileges;
-        let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
-
-        {
-            let ctx = PrivilegedOperationContext::new(&runtime, &bootstrap, &env_vars);
-            Self::with_privileges(&ctx, WorkerOperation::Setup, async {
-                embedded.setup().await
-            })?;
-            Self::with_privileges(&ctx, WorkerOperation::Start, async {
-                embedded.start().await
-            })?;
-        }
-
-        let is_managed_via_worker = matches!(privileges, crate::ExecutionPrivileges::Root);
-        let postgres = if is_managed_via_worker {
-            None
-        } else {
-            Some(embedded)
-        };
-
-        Ok(Self {
-            runtime,
-            postgres,
-            bootstrap,
-            is_managed_via_worker,
-            _env_guard: env_guard,
-        })
-    }
-
-    #[doc(hidden)]
-    pub(crate) fn with_privileges<Fut>(
-        ctx: &PrivilegedOperationContext<'_>,
-        operation: WorkerOperation,
-        in_process_op: Fut,
-    ) -> BootstrapResult<()>
+    /// Returns a [`BootstrapError`] when the worker invocation fails or when
+    /// the in-process operation returns an error.
+    ///
+    /// See [`TestCluster::new`] for concrete usage examples.
+    pub fn invoke<Fut>(&self, operation: WorkerOperation, in_process_op: Fut) -> BootstrapResult<()>
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
-        match ctx.privileges() {
-            crate::ExecutionPrivileges::Unprivileged => {
-                Self::block_in_process(ctx.runtime(), in_process_op, operation.error_context())
+        match self.bootstrap.privileges {
+            ExecutionPrivileges::Unprivileged => {
+                self.invoke_unprivileged(in_process_op, operation.error_context())
             }
-            crate::ExecutionPrivileges::Root => {
-                Self::run_root_operation(ctx.bootstrap(), ctx.env_vars(), operation)
-            }
+            ExecutionPrivileges::Root => self.invoke_as_root(operation),
         }
     }
 
-    fn block_in_process<Fut>(
-        runtime: &Runtime,
-        future: Fut,
-        ctx: &'static str,
-    ) -> BootstrapResult<()>
+    fn invoke_unprivileged<Fut>(&self, future: Fut, ctx: &'static str) -> BootstrapResult<()>
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
-        runtime
+        self.runtime
             .block_on(future)
             .context(ctx)
             .map_err(BootstrapError::from)
     }
 
-    fn run_root_operation(
-        bootstrap: &TestBootstrapSettings,
-        env_vars: &[(String, Option<String>)],
-        operation: WorkerOperation,
-    ) -> BootstrapResult<()> {
+    fn invoke_as_root(&self, operation: WorkerOperation) -> BootstrapResult<()> {
         #[cfg(any(test, feature = "cluster-unit-tests"))]
         {
             let hook_slot = crate::test_support::run_root_operation_hook()
@@ -176,11 +104,11 @@ impl TestCluster {
                 .unwrap_or_else(|poison| poison.into_inner())
                 .clone();
             if let Some(hook) = hook_slot {
-                return hook(bootstrap, env_vars, operation);
+                return hook(self.bootstrap, self.env_vars, operation);
             }
         }
 
-        match bootstrap.execution_mode {
+        match self.bootstrap.execution_mode {
             crate::ExecutionMode::InProcess => Err(BootstrapError::from(eyre!(concat!(
                 "ExecutionMode::InProcess is unsafe for root because process-wide ",
                 "UID/GID changes race in multi-threaded tests; switch to ",
@@ -215,7 +143,7 @@ impl TestCluster {
                     ),
                 ))]
                 {
-                    return Self::spawn_worker(bootstrap, env_vars, operation);
+                    return self.spawn_worker(operation);
                 }
 
                 #[expect(unreachable_code, reason = "cfg guard ensures all targets handled")]
@@ -226,12 +154,8 @@ impl TestCluster {
         }
     }
 
-    fn spawn_worker(
-        bootstrap: &TestBootstrapSettings,
-        env_vars: &[(String, Option<String>)],
-        operation: WorkerOperation,
-    ) -> BootstrapResult<()> {
-        let worker = bootstrap.worker_binary.as_ref().ok_or_else(|| {
+    fn spawn_worker(&self, operation: WorkerOperation) -> BootstrapResult<()> {
+        let worker = self.bootstrap.worker_binary.as_ref().ok_or_else(|| {
             BootstrapError::from(eyre!(
                 "PG_EMBEDDED_WORKER must be set when using ExecutionMode::Subprocess"
             ))
@@ -239,13 +163,58 @@ impl TestCluster {
 
         let request = WorkerRequest::new(
             worker,
-            &bootstrap.settings,
-            env_vars,
+            &self.bootstrap.settings,
+            self.env_vars,
             operation,
-            operation.timeout(bootstrap),
+            operation.timeout(self.bootstrap),
         );
 
         worker_process::run(&request)
+    }
+}
+
+impl TestCluster {
+    /// Boots a `PostgreSQL` instance configured by [`bootstrap_for_tests`].
+    ///
+    /// The constructor blocks until the underlying server process is running and returns an
+    /// error when startup fails.
+    ///
+    /// # Errors
+    /// Returns an error if the bootstrap configuration cannot be prepared or if starting the
+    /// embedded cluster fails.
+    pub fn new() -> BootstrapResult<Self> {
+        let bootstrap = bootstrap_for_tests()?;
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("failed to create Tokio runtime for TestCluster")
+            .map_err(BootstrapError::from)?;
+
+        let env_vars = bootstrap.environment.to_env();
+        let env_guard = ScopedEnv::apply(&env_vars);
+        let privileges = bootstrap.privileges;
+        let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
+
+        let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
+
+        invoker.invoke(WorkerOperation::Setup, async { embedded.setup().await })?;
+        invoker.invoke(WorkerOperation::Start, async { embedded.start().await })?;
+
+        let is_managed_via_worker = matches!(privileges, crate::ExecutionPrivileges::Root);
+        let postgres = if is_managed_via_worker {
+            None
+        } else {
+            Some(embedded)
+        };
+
+        Ok(Self {
+            runtime,
+            postgres,
+            bootstrap,
+            is_managed_via_worker,
+            env_vars,
+            _env_guard: env_guard,
+        })
     }
 
     /// Returns the prepared `PostgreSQL` settings for the running cluster.
@@ -261,6 +230,26 @@ impl TestCluster {
     /// Returns the bootstrap metadata captured when the cluster was started.
     pub const fn bootstrap(&self) -> &TestBootstrapSettings {
         &self.bootstrap
+    }
+
+    fn stop_context(settings: &Settings) -> String {
+        let data_dir = settings.data_dir.display();
+        let version = settings.version.to_string();
+        format!("version {version}, data_dir {data_dir}")
+    }
+
+    fn warn_stop_failure(context: &str, err: &impl Display) {
+        tracing::warn!(
+            "SKIP-TEST-CLUSTER: failed to stop embedded postgres instance ({}): {}",
+            context,
+            err
+        );
+    }
+
+    fn warn_stop_timeout(timeout_secs: u64, context: &str) {
+        tracing::warn!(
+            "SKIP-TEST-CLUSTER: stop() timed out after {timeout_secs}s ({context}); proceeding with drop"
+        );
     }
 }
 
@@ -307,57 +296,48 @@ impl Drop for TestCluster {
         let context = Self::stop_context(&self.bootstrap.settings);
 
         if self.is_managed_via_worker {
-            self.stop_via_worker(&context);
-            return;
-        }
-
-        if let Some(mut postgres) = self.postgres.take() {
-            self.stop_in_process(&mut postgres, &context);
+            let invoker = WorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
+            if let Err(err) = invoker.invoke_as_root(WorkerOperation::Stop) {
+                Self::warn_stop_failure(&context, &err);
+            }
+        } else if let Some(postgres) = self.postgres.take() {
+            let timeout = self.bootstrap.shutdown_timeout;
+            let timeout_secs = timeout.as_secs();
+            let outcome = self
+                .runtime
+                .block_on(async { time::timeout(timeout, postgres.stop()).await });
+            match outcome {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => Self::warn_stop_failure(&context, &err),
+                Err(_) => Self::warn_stop_timeout(timeout_secs, &context),
+            }
         }
         // `env_guard` drops after this block, restoring the environment.
     }
 }
 
-impl TestCluster {
-    fn stop_context(settings: &Settings) -> String {
-        let data_dir = settings.data_dir.display();
-        let version = settings.version.to_string();
-        format!("version {version}, data_dir {data_dir}")
-    }
+#[cfg(all(test, feature = "cluster-unit-tests"))]
+mod drop_logging_tests {
+    use super::*;
+    use crate::test_support::capture_warn_logs;
 
-    fn stop_via_worker(&self, context: &str) {
-        let env_vars = self.bootstrap.environment.to_env();
-        if let Err(err) =
-            Self::run_root_operation(&self.bootstrap, &env_vars, WorkerOperation::Stop)
-        {
-            Self::warn_stop_failure(context, &err);
-        }
-    }
-
-    fn stop_in_process(&mut self, postgres: &mut PostgreSQL, context: &str) {
-        let timeout = self.bootstrap.shutdown_timeout;
-        let timeout_secs = timeout.as_secs();
-        let outcome = self
-            .runtime
-            .block_on(async { time::timeout(timeout, postgres.stop()).await });
-        match outcome {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => Self::warn_stop_failure(context, &err),
-            Err(_) => Self::warn_stop_timeout(timeout_secs, context),
-        }
-    }
-
-    fn warn_stop_failure(context: &str, err: &impl Display) {
-        tracing::warn!(
-            "SKIP-TEST-CLUSTER: failed to stop embedded postgres instance ({}): {}",
-            context,
-            err
+    #[test]
+    fn warn_stop_timeout_emits_warning() {
+        let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_timeout(5, "ctx"));
+        assert!(
+            logs.iter()
+                .any(|line| line.contains("stop() timed out after 5s (ctx)")),
+            "expected timeout warning, got {logs:?}"
         );
     }
 
-    fn warn_stop_timeout(timeout_secs: u64, context: &str) {
-        tracing::warn!(
-            "SKIP-TEST-CLUSTER: stop() timed out after {timeout_secs}s ({context}); proceeding with drop"
+    #[test]
+    fn warn_stop_failure_emits_warning() {
+        let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_failure("ctx", &"boom"));
+        assert!(
+            logs.iter()
+                .any(|line| line.contains("failed to stop embedded postgres instance")),
+            "expected failure warning, got {logs:?}"
         );
     }
 }
