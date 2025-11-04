@@ -16,8 +16,8 @@ use crate::{
     error::{BootstrapResult, Result as CrateResult},
 };
 
+pub use env::TestBootstrapEnvironment;
 pub use mode::{ExecutionMode, ExecutionPrivileges, detect_execution_privileges};
-pub use prepare::TestBootstrapEnvironment;
 
 use self::{
     env::{shutdown_timeout_from_env, worker_binary_from_env},
@@ -132,4 +132,111 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
         start_timeout: DEFAULT_START_TIMEOUT,
         shutdown_timeout,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use camino::Utf8PathBuf;
+    use temp_env::with_vars;
+    use tempfile::tempdir;
+
+    #[test]
+    fn orchestrate_bootstrap_respects_env_overrides() {
+        if detect_execution_privileges() == ExecutionPrivileges::Root {
+            tracing::warn!(
+                "skipping orchestrate test because root privileges require PG_EMBEDDED_WORKER"
+            );
+            return;
+        }
+
+        let runtime = tempdir().expect("runtime dir");
+        let data = tempdir().expect("data dir");
+        let runtime_path =
+            Utf8PathBuf::from_path_buf(runtime.path().to_path_buf()).expect("runtime dir utf8");
+        let data_path =
+            Utf8PathBuf::from_path_buf(data.path().to_path_buf()).expect("data dir utf8");
+
+        let settings = with_vars(
+            [
+                ("PG_RUNTIME_DIR", Some(runtime_path.as_str())),
+                ("PG_DATA_DIR", Some(data_path.as_str())),
+                ("PG_SUPERUSER", Some("bootstrap_test")),
+                ("PG_PASSWORD", Some("bootstrap_test_pw")),
+                ("PG_EMBEDDED_WORKER", None),
+            ],
+            || orchestrate_bootstrap().expect("bootstrap to succeed"),
+        );
+
+        assert_paths(&settings, &runtime_path, &data_path);
+        assert_identity(&settings, "bootstrap_test", "bootstrap_test_pw");
+        assert_environment(&settings, &runtime_path);
+    }
+
+    #[test]
+    fn run_succeeds_with_customised_paths() {
+        if detect_execution_privileges() == ExecutionPrivileges::Root {
+            tracing::warn!("skipping run test because root privileges require PG_EMBEDDED_WORKER");
+            return;
+        }
+
+        let runtime = tempdir().expect("runtime dir");
+        let data = tempdir().expect("data dir");
+        let runtime_path =
+            Utf8PathBuf::from_path_buf(runtime.path().to_path_buf()).expect("runtime dir utf8");
+        let data_path =
+            Utf8PathBuf::from_path_buf(data.path().to_path_buf()).expect("data dir utf8");
+
+        with_vars(
+            [
+                ("PG_RUNTIME_DIR", Some(runtime_path.as_str())),
+                ("PG_DATA_DIR", Some(data_path.as_str())),
+                ("PG_SUPERUSER", Some("bootstrap_run")),
+                ("PG_PASSWORD", Some("bootstrap_run_pw")),
+                ("PG_EMBEDDED_WORKER", None),
+            ],
+            || {
+                run().expect("run should bootstrap successfully");
+
+                let cache_dir = runtime_path.join("cache");
+                let run_dir = runtime_path.join("run");
+                assert!(cache_dir.exists(), "cache directory should be created");
+                assert!(run_dir.exists(), "runtime directory should be created");
+            },
+        );
+    }
+
+    fn assert_paths(
+        settings: &TestBootstrapSettings,
+        runtime_path: &Utf8PathBuf,
+        data_path: &Utf8PathBuf,
+    ) {
+        let observed_install =
+            Utf8PathBuf::from_path_buf(settings.settings.installation_dir.clone())
+                .expect("installation dir utf8");
+        let observed_data =
+            Utf8PathBuf::from_path_buf(settings.settings.data_dir.clone()).expect("data dir utf8");
+
+        assert_eq!(observed_install.as_path(), runtime_path.as_path());
+        assert_eq!(observed_data.as_path(), data_path.as_path());
+    }
+
+    fn assert_identity(
+        settings: &TestBootstrapSettings,
+        expected_user: &str,
+        expected_password: &str,
+    ) {
+        assert_eq!(settings.settings.username, expected_user);
+        assert_eq!(settings.settings.password, expected_password);
+        assert_eq!(settings.privileges, ExecutionPrivileges::Unprivileged);
+        assert_eq!(settings.execution_mode, ExecutionMode::InProcess);
+        assert!(settings.worker_binary.is_none());
+    }
+
+    fn assert_environment(settings: &TestBootstrapSettings, runtime_path: &Utf8PathBuf) {
+        let env_pairs = settings.environment.to_env();
+        let pgpass = runtime_path.join(".pgpass");
+        assert!(env_pairs.contains(&("PGPASSFILE".into(), Some(pgpass.as_str().into()))));
+        assert_eq!(settings.environment.home.as_path(), runtime_path.as_path());
+    }
 }

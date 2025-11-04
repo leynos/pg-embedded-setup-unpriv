@@ -1,3 +1,5 @@
+//! Detects execution privileges and selects the appropriate orchestration mode.
+
 use camino::Utf8PathBuf;
 
 use crate::error::{BootstrapError, BootstrapResult};
