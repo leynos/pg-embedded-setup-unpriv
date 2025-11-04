@@ -88,16 +88,14 @@ pub fn run() -> CrateResult<()> {
 /// # Examples
 /// ```no_run
 /// use pg_embedded_setup_unpriv::bootstrap_for_tests;
+/// use temp_env::with_vars;
 ///
 /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
 /// let bootstrap = bootstrap_for_tests()?;
-/// for (key, value) in bootstrap.environment.to_env() {
-///     match value {
-///         Some(value) => std::env::set_var(&key, &value),
-///         None => std::env::remove_var(&key),
-///     }
-/// }
-/// // Launch application logic that relies on `bootstrap.settings` here.
+/// with_vars(bootstrap.environment.to_env(), || -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+///     // Launch application logic that relies on `bootstrap.settings` here.
+///     Ok(())
+/// })?;
 /// # Ok(())
 /// # }
 /// ```

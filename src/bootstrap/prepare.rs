@@ -56,12 +56,7 @@ fn bootstrap_with_root(
 
     let paths = resolve_settings_paths_for_uid(&mut settings, cfg, nobody_user.uid)?;
 
-    if paths.install_default {
-        ensure_parent_for_user(&paths.install_dir, &nobody_user)?;
-    }
-    if paths.data_default {
-        ensure_parent_for_user(&paths.data_dir, &nobody_user)?;
-    }
+    ensure_parents_for_paths(&paths, |path| ensure_parent_for_user(path, &nobody_user))?;
 
     ensure_install_dir_for_user(&paths.install_dir, &nobody_user)?;
     make_data_dir_private(&paths.data_dir, &nobody_user)?;
@@ -89,12 +84,7 @@ fn bootstrap_unprivileged(
 ) -> BootstrapResult<PreparedBootstrap> {
     let paths = resolve_settings_paths_for_current_user(&mut settings, cfg)?;
 
-    if paths.install_default {
-        ensure_parent_exists(&paths.install_dir)?;
-    }
-    if paths.data_default {
-        ensure_parent_exists(&paths.data_dir)?;
-    }
+    ensure_parents_for_paths(&paths, ensure_parent_exists)?;
 
     ensure_dir_with_mode(&paths.install_dir, 0o755)?;
     ensure_dir_with_mode(&paths.data_dir, 0o700)?;
@@ -176,6 +166,19 @@ fn settings_paths_from_settings(
         install_default,
         data_default,
     })
+}
+
+fn ensure_parents_for_paths<F>(paths: &SettingsPaths, mut ensure_parent: F) -> BootstrapResult<()>
+where
+    F: FnMut(&Utf8PathBuf) -> BootstrapResult<()>,
+{
+    if paths.install_default {
+        ensure_parent(&paths.install_dir)?;
+    }
+    if paths.data_default {
+        ensure_parent(&paths.data_dir)?;
+    }
+    Ok(())
 }
 
 fn ensure_dir_with_mode(path: &Utf8Path, mode: u32) -> BootstrapResult<()> {
