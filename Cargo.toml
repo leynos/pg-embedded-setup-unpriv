@@ -47,13 +47,14 @@ tempfile = "3"
 libc = "0.2"
 wait-timeout = "0.2"
 tracing = { version = "0.1", features = ["std"] }
+tracing-subscriber = { version = "0.3", features = ["fmt"], optional = true }
 
 [features]
 toml = []
 json5 = []
 yaml = []
 privileged-tests = []
-cluster-unit-tests = []
+cluster-unit-tests = ["dep:tracing-subscriber"]
 dev-worker = []
 
 [workspace.lints.rust]

@@ -239,11 +239,18 @@ impl<'a> WorkerProcess<'a> {
             .context("failed to collect worker output")?;
 
         if timed_out {
+            let timeout_secs = self.request.timeout.as_secs();
+            tracing::warn!(
+                operation = self.request.operation.as_str(),
+                timeout_secs,
+                "SKIP-TEST-CLUSTER: worker {} timed out after {timeout_secs}s",
+                self.request.operation.as_str()
+            );
             return Err(Self::render_failure(
                 &format!(
                     "{} timed out after {}s",
                     self.request.operation.error_context(),
-                    self.request.timeout.as_secs()
+                    timeout_secs
                 ),
                 &output,
             ));

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
 use crate::TestBootstrapSettings;
-use crate::cluster::{PrivilegedOperationContext, TestCluster, WorkerOperation};
+use crate::cluster::{WorkerInvoker, WorkerOperation};
 use crate::error::BootstrapResult;
 use tracing::debug_span;
 
@@ -200,12 +200,12 @@ impl Drop for HookGuard {
 
 #[doc(hidden)]
 pub fn invoke_with_privileges<Fut>(
-    ctx: &PrivilegedOperationContext<'_>,
+    invoker: &WorkerInvoker<'_>,
     operation: WorkerOperation,
     in_process_op: Fut,
 ) -> BootstrapResult<()>
 where
     Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
 {
-    TestCluster::with_privileges(ctx, operation, in_process_op)
+    invoker.invoke(operation, in_process_op)
 }
