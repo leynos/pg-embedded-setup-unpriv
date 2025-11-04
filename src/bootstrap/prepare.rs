@@ -71,9 +71,7 @@ fn bootstrap_with_root(
 
     ensure_pgpass_for_user(&paths.password_file, &nobody_user)?;
 
-    if paths.install_default {
-        ensure_tree_owned_by_user(&paths.install_dir, &nobody_user)?;
-    }
+    ensure_tree_owned_by_user(&paths.install_dir, &nobody_user)?;
     if paths.data_default {
         ensure_tree_owned_by_user(&paths.data_dir, &nobody_user)?;
     }
