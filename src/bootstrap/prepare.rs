@@ -63,6 +63,7 @@ fn bootstrap_with_root(
 
     let timezone = prepare_timezone_env()?;
     let xdg = prepare_xdg_dirs(&paths.install_dir)?;
+    ensure_xdg_dirs_owned_by_user(&xdg, &nobody_user)?;
 
     ensure_pgpass_for_user(&paths.password_file, &nobody_user)?;
 
@@ -210,6 +211,15 @@ fn prepare_xdg_dirs(install_dir: &Utf8PathBuf) -> BootstrapResult<XdgDirs> {
         cache,
         runtime,
     })
+}
+
+#[cfg(unix)]
+fn ensure_xdg_dirs_owned_by_user(xdg: &XdgDirs, user: &User) -> BootstrapResult<()> {
+    // The cache/run directories are created by the root worker, so explicitly
+    // hand them to the unprivileged user to keep custom install dirs usable.
+    ensure_dir_for_user(&xdg.cache, user, 0o755)?;
+    ensure_dir_for_user(&xdg.runtime, user, 0o700)?;
+    Ok(())
 }
 
 #[cfg(unix)]
