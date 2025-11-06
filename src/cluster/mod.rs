@@ -123,7 +123,7 @@ impl TestCluster {
     /// # }
     /// ```
     #[must_use]
-    pub const fn connection(&self) -> TestClusterConnection<'_> {
+    pub fn connection(&self) -> TestClusterConnection {
         TestClusterConnection::new(&self.bootstrap)
     }
 

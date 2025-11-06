@@ -233,7 +233,7 @@ essentially one line in the test setup.
   generated `.pgpass` file without cloning the underlying bootstrap struct.
   `ConnectionMetadata` captures an owned snapshot so callers can persist the
   values beyond the guard's lifetime.
-- Introduced the opt-in `diesel-support` Cargo feature. When enabled the new
+- Introduced the opt-in `diesel-support` Cargo feature. When enabled, the new
   helper exposes `diesel_connection()` for establishing a
   `diesel::PgConnection` with a single call. The helper preserves the crate's
   default of keeping Diesel optional for consumers that do not need it, while

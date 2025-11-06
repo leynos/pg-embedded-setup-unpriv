@@ -35,7 +35,7 @@ fn test_runtime() -> Result<Runtime> {
     Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|err| eyre!(err))
+        .map_err(|err: std::io::Error| eyre!(err))
 }
 
 fn dummy_environment() -> TestBootstrapEnvironment {
@@ -91,7 +91,7 @@ fn unprivileged_operations_run_in_process() -> Result<()> {
                 call_counter.fetch_add(1, Ordering::Relaxed);
                 Ok::<(), postgresql_embedded::Error>(())
             })
-            .map_err(|err| eyre!(err))?;
+            .map_err(|err: BootstrapError| eyre!(err))?;
     }
 
     ensure!(
@@ -136,7 +136,7 @@ fn root_operation_errors_surface_worker_failure() -> Result<()> {
     let _guard = install_run_root_operation_hook(|_, _, _| {
         Err(BootstrapError::from(eyre!("worker exploded")))
     })
-    .map_err(|err| eyre!(err))?;
+    .map_err(|err: RunRootOperationHookInstallError| eyre!(err))?;
 
     let result = invoker.invoke(WorkerOperation::Start, async {
         Ok::<(), postgresql_embedded::Error>(())
@@ -167,7 +167,7 @@ fn root_operations_delegate_to_worker() -> Result<()> {
         hook_calls.fetch_add(1, Ordering::Relaxed);
         Ok(())
     })
-    .map_err(|err| eyre!(err))?;
+    .map_err(|err: RunRootOperationHookInstallError| eyre!(err))?;
 
     for operation in [WorkerOperation::Setup, WorkerOperation::Start] {
         let flag = Arc::clone(&in_process_invoked);
@@ -176,7 +176,7 @@ fn root_operations_delegate_to_worker() -> Result<()> {
                 flag.store(true, Ordering::Relaxed);
                 Ok::<(), postgresql_embedded::Error>(())
             })
-            .map_err(|err| eyre!(err))?;
+            .map_err(|err: BootstrapError| eyre!(err))?;
     }
 
     ensure!(
@@ -195,7 +195,7 @@ fn installing_hook_twice_returns_error() -> Result<()> {
     let _serial = serialise_hook_tests();
     drop(drain_hook_install_logs());
     let initial_guard = install_run_root_operation_hook(|_, _, _| Ok(()))
-        .map_err(|install_err| eyre!(install_err))?;
+        .map_err(|install_err: RunRootOperationHookInstallError| eyre!(install_err))?;
 
     let Err(err) = install_run_root_operation_hook(|_, _, _| Ok(())) else {
         return Err(eyre!("second installation should fail"));
@@ -214,7 +214,7 @@ fn installing_hook_twice_returns_error() -> Result<()> {
     drop(initial_guard);
 
     let reinstalled_guard = install_run_root_operation_hook(|_, _, _| Ok(()))
-        .map_err(|install_err| eyre!(install_err))?;
+        .map_err(|install_err: RunRootOperationHookInstallError| eyre!(install_err))?;
     drop(reinstalled_guard);
     drop(drain_hook_install_logs());
     Ok(())

@@ -1,6 +1,8 @@
+//! Connection helpers for `TestCluster`, including metadata accessors and optional Diesel support.
 use camino::{Utf8Path, Utf8PathBuf};
 #[cfg(feature = "diesel-support")]
 use color_eyre::eyre::WrapErr;
+use postgresql_embedded::Settings;
 
 use crate::TestBootstrapSettings;
 #[cfg(feature = "diesel-support")]
@@ -19,22 +21,16 @@ use crate::error::BootstrapResult;
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ConnectionMetadata {
-    host: String,
-    port: u16,
-    superuser: String,
-    password: String,
+    settings: Settings,
     pgpass_file: Utf8PathBuf,
 }
 
 impl ConnectionMetadata {
     pub(crate) fn from_settings(settings: &TestBootstrapSettings) -> Self {
         Self {
-            host: settings.settings.host.clone(),
-            port: settings.settings.port,
-            superuser: settings.settings.username.clone(),
-            password: settings.settings.password.clone(),
+            settings: settings.settings.clone(),
             pgpass_file: settings.environment.pgpass_file.clone(),
         }
     }
@@ -42,25 +38,25 @@ impl ConnectionMetadata {
     /// Returns the configured database host.
     #[must_use]
     pub fn host(&self) -> &str {
-        &self.host
+        self.settings.host.as_str()
     }
 
     /// Returns the configured port.
     #[must_use]
     pub const fn port(&self) -> u16 {
-        self.port
+        self.settings.port
     }
 
     /// Returns the configured superuser name.
     #[must_use]
     pub fn superuser(&self) -> &str {
-        &self.superuser
+        self.settings.username.as_str()
     }
 
     /// Returns the generated superuser password.
     #[must_use]
     pub fn password(&self) -> &str {
-        &self.password
+        self.settings.password.as_str()
     }
 
     /// Returns the prepared `.pgpass` file path.
@@ -69,17 +65,11 @@ impl ConnectionMetadata {
         self.pgpass_file.as_ref()
     }
 
-    /// Constructs a libpq-compatible URL for `database`.
+    /// Constructs a libpq-compatible URL for `database` using the underlying
+    /// `postgresql_embedded` helper.
     #[must_use]
     pub fn database_url(&self, database: &str) -> String {
-        format!(
-            "postgresql://{}:{}@{}:{}/{}",
-            self.superuser(),
-            self.password(),
-            self.host(),
-            self.port(),
-            database,
-        )
+        self.settings.url(database)
     }
 }
 
@@ -99,56 +89,58 @@ impl ConnectionMetadata {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Copy, Debug)]
-pub struct TestClusterConnection<'cluster> {
-    settings: &'cluster TestBootstrapSettings,
+#[derive(Debug, Clone)]
+pub struct TestClusterConnection {
+    metadata: ConnectionMetadata,
 }
 
-impl<'cluster> TestClusterConnection<'cluster> {
-    pub(crate) const fn new(settings: &'cluster TestBootstrapSettings) -> Self {
-        Self { settings }
+impl TestClusterConnection {
+    pub(crate) fn new(settings: &TestBootstrapSettings) -> Self {
+        Self {
+            metadata: ConnectionMetadata::from_settings(settings),
+        }
     }
 
-    /// Returns host metadata without cloning the underlying settings.
+    /// Returns host metadata without exposing internal storage.
     #[must_use]
     pub fn host(&self) -> &str {
-        &self.settings.settings.host
+        self.metadata.host()
     }
 
     /// Returns the configured port.
     #[must_use]
     pub const fn port(&self) -> u16 {
-        self.settings.settings.port
+        self.metadata.port()
     }
 
     /// Returns the configured superuser account name.
     #[must_use]
     pub fn superuser(&self) -> &str {
-        &self.settings.settings.username
+        self.metadata.superuser()
     }
 
     /// Returns the generated password for the superuser.
     #[must_use]
     pub fn password(&self) -> &str {
-        &self.settings.settings.password
+        self.metadata.password()
     }
 
     /// Returns the `.pgpass` file prepared during bootstrap.
     #[must_use]
     pub fn pgpass_file(&self) -> &Utf8Path {
-        self.settings.environment.pgpass_file.as_ref()
+        self.metadata.pgpass_file()
     }
 
     /// Provides an owned snapshot of the connection metadata.
     #[must_use]
     pub fn metadata(&self) -> ConnectionMetadata {
-        ConnectionMetadata::from_settings(self.settings)
+        self.metadata.clone()
     }
 
     /// Builds a libpq-compatible database URL for `database`.
     #[must_use]
     pub fn database_url(&self, database: &str) -> String {
-        self.settings.settings.url(database)
+        self.metadata.database_url(database)
     }
 
     /// Establishes a Diesel connection for the target `database`.
@@ -159,8 +151,7 @@ impl<'cluster> TestClusterConnection<'cluster> {
     pub fn diesel_connection(&self, database: &str) -> BootstrapResult<diesel::PgConnection> {
         use diesel::Connection;
 
-        let url = self.database_url(database);
-        diesel::PgConnection::establish(&url)
+        diesel::PgConnection::establish(&self.database_url(database))
             .wrap_err(format!("failed to connect to {database} via Diesel"))
             .map_err(crate::error::BootstrapError::from)
     }

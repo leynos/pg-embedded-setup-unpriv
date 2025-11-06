@@ -1,3 +1,4 @@
+//! Dispatches `PostgreSQL` lifecycle operations either in-process or via the privileged worker binary.
 use std::future::Future;
 
 use color_eyre::eyre::{Context, eyre};
@@ -138,3 +139,6 @@ impl<'a> WorkerInvoker<'a> {
         worker_process::run(&request)
     }
 }
+
+#[cfg(test)]
+mod tests;

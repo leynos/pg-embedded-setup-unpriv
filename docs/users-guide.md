@@ -80,18 +80,18 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
 timezone database can be discovered (currently on Unix-like hosts) the helper
 also sets `TZDIR`; otherwise it leaves any caller-provided value untouched so
 platform-specific defaults remain available. If the system timezone database is
-missing the helper returns an error advising the caller to install `tzdata` or
+missing, the helper returns an error advising the caller to install `tzdata` or
 set `TZDIR` explicitly, making the dependency visible during test startup
 rather than when PostgreSQL launches.
 
-## RAII test clusters
+## Resource Acquisition Is Initialization (RAII) test clusters
 
-`pg_embedded_setup_unpriv::TestCluster` wraps `bootstrap_for_tests()` with an
-RAII lifecycle. Constructing the guard starts PostgreSQL using the discovered
-settings, applies the environment produced by the bootstrap helper, and exposes
-the configuration to callers. Dropping the guard stops the instance and
-restores the prior process environment, so subsequent tests start from a clean
-slate.
+`pg_embedded_setup_unpriv::TestCluster` wraps `bootstrap_for_tests()` with a
+Resource Acquisition Is Initialization (RAII) lifecycle. Constructing the guard
+starts PostgreSQL using the discovered settings, applies the environment
+produced by the bootstrap helper, and exposes the configuration to callers.
+Dropping the guard stops the instance and restores the prior process
+environment, so subsequent tests start from a clean slate.
 
 ```rust,no_run
 use pg_embedded_setup_unpriv::{TestCluster, error::BootstrapResult};
