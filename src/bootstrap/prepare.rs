@@ -201,6 +201,27 @@ fn ensure_pgpass_permissions(path: &Utf8PathBuf) -> BootstrapResult<()> {
     }
 }
 
+/// Create the XDG cache and runtime directories with the expected
+/// permissions.
+///
+/// The cache surface only stores extracted binaries and log files, so it
+/// remains group/world-readable (0o755) to make debugging easier when the
+/// helper runs inside CI sandboxes. The runtime directory, however, holds the
+/// `PostgreSQL` socket, `postmaster.pid`, and `.pgpass`, so it is locked down
+/// to user-only access (0o700) to avoid leaking credentials or allowing other
+/// processes to tamper with the instance.
+///
+/// # Examples
+///
+/// ```ignore
+/// use camino::Utf8PathBuf;
+/// use crate::bootstrap::prepare::prepare_xdg_dirs;
+///
+/// let install_dir = Utf8PathBuf::from("/tmp/test-install");
+/// let dirs = prepare_xdg_dirs(&install_dir).expect("xdg dirs");
+/// assert_eq!(dirs.cache, install_dir.join("cache"));
+/// assert_eq!(dirs.runtime, install_dir.join("run"));
+/// ```
 fn prepare_xdg_dirs(install_dir: &Utf8PathBuf) -> BootstrapResult<XdgDirs> {
     let cache = install_dir.join("cache");
     let runtime = install_dir.join("run");
