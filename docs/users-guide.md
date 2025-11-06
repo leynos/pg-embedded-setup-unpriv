@@ -38,12 +38,13 @@ tool and integrate it into automated test flows.
 
 3. Run the helper (`cargo run --release --bin pg_embedded_setup_unpriv`). The
    command downloads the specified PostgreSQL release, ensures the directories
-   exist, applies PostgreSQL-compatible permissions (0755 for runtime, 0700 for
-   data), and initialises the cluster with the provided credentials.
-   Invocations that begin as `root` prepare directories for `nobody` and
-   execute lifecycle commands through the worker helper so the privileged
-   operations run entirely under the sandbox user. Ownership fix-ups occur on
-   every call so running the tool twice remains idempotent.
+   exist, applies PostgreSQL-compatible permissions (0755 for the installation
+   cache, 0700 for the runtime and data directories), and initialises the
+   cluster with the provided credentials. Invocations that begin as `root`
+   prepare directories for `nobody` and execute lifecycle commands through the
+   worker helper so the privileged operations run entirely under the sandbox
+   user. Ownership fix-ups occur on every call so running the tool twice
+   remains idempotent.
 
 4. Pass the resulting paths and credentials to your tests. If you use
    `postgresql_embedded` directly after the setup step, it can reuse the staged
@@ -74,14 +75,15 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
 }
 ```
 
-`bootstrap_for_tests()` ensures that `PGPASSFILE`, `HOME`, `XDG_CACHE_HOME`,
-`XDG_RUNTIME_DIR`, and `TZ` are populated with deterministic defaults. When a
-timezone database can be discovered (currently on Unix-like hosts) the helper
-also sets `TZDIR`; otherwise it leaves any caller-provided value untouched so
-platform-specific defaults remain available. If the system timezone database is
-missing the helper returns an error advising the caller to install `tzdata` or
-set `TZDIR` explicitly, making the dependency visible during test startup
-rather than when PostgreSQL launches.
+`bootstrap_for_tests()` ensures that
+`PGPASSFILE`, `HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`, and `TZ` are
+populated with deterministic defaults. When a timezone database can be
+discovered (currently on Unix-like hosts) the helper also sets `TZDIR`;
+otherwise it leaves any caller-provided value untouched so platform-specific
+defaults remain available. If the system timezone database is missing the
+helper returns an error advising the caller to install `tzdata` or set `TZDIR`
+explicitly, making the dependency visible during test startup rather than when
+PostgreSQL launches.
 
 ## RAII test clusters
 
@@ -115,10 +117,15 @@ drop, demonstrating that no orphaned processes remain.
   processes follow the privileged branch and complete all filesystem work as
   `nobody`; non-root invocations leave permissions untouched and keep the
   caller’s UID on the runtime directories.
-- Both flows create the runtime directory with mode `0755` and the data
+- Both flows create the runtime directory with mode `0700` and the data
   directory with mode `0700`. Existing directories are re-chowned or re-mode’d
   to enforce the expected invariants, allowing two consecutive runs to succeed
   without manual cleanup.
+- The XDG cache home stays `0755` so team-mates can inspect extracted binaries
+  and logs when debugging CI issues. The runtime directory is clamped to `0700`
+  because it holds the PostgreSQL socket, `postmaster.pid`, and `.pgpass`, so
+  leaking read or execute access would expose credentials or let other users
+  interfere with the helper’s cluster lifecycle.
 - Behavioural tests driven by `rstest-bdd` exercise both branches to guard
   against regressions in privilege detection or ownership management.
 

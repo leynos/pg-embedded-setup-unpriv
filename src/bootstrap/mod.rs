@@ -1,0 +1,240 @@
+//! Bootstraps embedded `PostgreSQL` while adapting to the caller's privileges.
+//!
+//! Provides [`bootstrap_for_tests`] so suites can retrieve structured settings and
+//! prepared environment variables without reimplementing bootstrap orchestration.
+mod env;
+mod mode;
+mod prepare;
+
+use std::time::Duration;
+
+use color_eyre::eyre::Context;
+use postgresql_embedded::Settings;
+
+use crate::{
+    PgEnvCfg,
+    error::{BootstrapResult, Result as CrateResult},
+};
+
+pub use env::TestBootstrapEnvironment;
+pub use mode::{ExecutionMode, ExecutionPrivileges, detect_execution_privileges};
+
+use self::{
+    env::{shutdown_timeout_from_env, worker_binary_from_env},
+    mode::determine_execution_mode,
+    prepare::prepare_bootstrap,
+};
+
+const DEFAULT_SETUP_TIMEOUT: Duration = Duration::from_secs(180);
+const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Structured settings returned from [`bootstrap_for_tests`].
+#[derive(Debug, Clone)]
+pub struct TestBootstrapSettings {
+    /// Privilege level detected for the current process.
+    pub privileges: ExecutionPrivileges,
+    /// Strategy for executing `PostgreSQL` lifecycle commands.
+    pub execution_mode: ExecutionMode,
+    /// `PostgreSQL` configuration prepared for the embedded instance.
+    pub settings: Settings,
+    /// Environment variables required to exercise the embedded instance.
+    pub environment: TestBootstrapEnvironment,
+    /// Optional path to the helper binary used for subprocess execution.
+    pub worker_binary: Option<camino::Utf8PathBuf>,
+    /// Maximum time to allow the worker to complete the setup phase.
+    pub setup_timeout: Duration,
+    /// Maximum time to allow the worker to complete the start phase.
+    pub start_timeout: Duration,
+    /// Grace period granted to `PostgreSQL` during drop before teardown proceeds regardless.
+    pub shutdown_timeout: Duration,
+}
+
+/// Bootstraps an embedded `PostgreSQL` instance, branching between root and unprivileged flows.
+///
+/// The bootstrap honours the following environment variables when present:
+/// - `PG_RUNTIME_DIR`: Overrides the `PostgreSQL` installation directory.
+/// - `PG_DATA_DIR`: Overrides the data directory used for initialisation.
+/// - `PG_SUPERUSER`: Sets the superuser account name.
+/// - `PG_PASSWORD`: Supplies the superuser password.
+///
+/// When executed as `root` on Unix platforms the runtime drops privileges to the `nobody` user
+/// and prepares the filesystem on that user's behalf. Unprivileged executions reuse the current
+/// user identity. The function returns a [`crate::Error`] describing failures encountered during
+/// bootstrap.
+///
+/// This convenience wrapper discards the detailed [`TestBootstrapSettings`]. Call
+/// [`bootstrap_for_tests`] to obtain the structured response for assertions.
+///
+/// # Examples
+/// ```rust
+/// use pg_embedded_setup_unpriv::run;
+///
+/// fn main() -> Result<(), pg_embedded_setup_unpriv::Error> {
+///     run()?;
+///     Ok(())
+/// }
+/// ```
+///
+/// # Errors
+/// Returns an error when bootstrap preparation fails or when subprocess orchestration
+/// cannot be configured.
+pub fn run() -> CrateResult<()> {
+    orchestrate_bootstrap()?;
+    Ok(())
+}
+
+/// Bootstraps `PostgreSQL` for integration tests and surfaces the prepared settings.
+///
+/// # Examples
+/// ```no_run
+/// use pg_embedded_setup_unpriv::bootstrap_for_tests;
+/// use temp_env::with_vars;
+///
+/// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+/// let bootstrap = bootstrap_for_tests()?;
+/// with_vars(bootstrap.environment.to_env(), || -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+///     // Launch application logic that relies on `bootstrap.settings` here.
+///     Ok(())
+/// })?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Errors
+/// Returns an error when bootstrap preparation fails or when subprocess orchestration
+/// cannot be configured.
+pub fn bootstrap_for_tests() -> BootstrapResult<TestBootstrapSettings> {
+    orchestrate_bootstrap()
+}
+
+fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
+    if let Err(err) = color_eyre::install() {
+        tracing::debug!("color_eyre already installed: {err}");
+    }
+
+    let privileges = detect_execution_privileges();
+    let cfg = PgEnvCfg::load().context("failed to load configuration via OrthoConfig")?;
+    let settings = cfg.to_settings()?;
+    let worker_binary = worker_binary_from_env()?;
+    let execution_mode = determine_execution_mode(privileges, worker_binary.as_ref())?;
+    let shutdown_timeout = shutdown_timeout_from_env()?;
+    let prepared = prepare_bootstrap(privileges, settings, &cfg)?;
+
+    Ok(TestBootstrapSettings {
+        privileges,
+        execution_mode,
+        settings: prepared.settings,
+        environment: prepared.environment,
+        worker_binary,
+        setup_timeout: DEFAULT_SETUP_TIMEOUT,
+        start_timeout: DEFAULT_START_TIMEOUT,
+        shutdown_timeout,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use camino::Utf8PathBuf;
+    use temp_env::with_vars;
+    use tempfile::tempdir;
+
+    #[test]
+    fn orchestrate_bootstrap_respects_env_overrides() {
+        if detect_execution_privileges() == ExecutionPrivileges::Root {
+            tracing::warn!(
+                "skipping orchestrate test because root privileges require PG_EMBEDDED_WORKER"
+            );
+            return;
+        }
+
+        let runtime = tempdir().expect("runtime dir");
+        let data = tempdir().expect("data dir");
+        let runtime_path =
+            Utf8PathBuf::from_path_buf(runtime.path().to_path_buf()).expect("runtime dir utf8");
+        let data_path =
+            Utf8PathBuf::from_path_buf(data.path().to_path_buf()).expect("data dir utf8");
+
+        let settings = with_vars(
+            [
+                ("PG_RUNTIME_DIR", Some(runtime_path.as_str())),
+                ("PG_DATA_DIR", Some(data_path.as_str())),
+                ("PG_SUPERUSER", Some("bootstrap_test")),
+                ("PG_PASSWORD", Some("bootstrap_test_pw")),
+                ("PG_EMBEDDED_WORKER", None),
+            ],
+            || orchestrate_bootstrap().expect("bootstrap to succeed"),
+        );
+
+        assert_paths(&settings, &runtime_path, &data_path);
+        assert_identity(&settings, "bootstrap_test", "bootstrap_test_pw");
+        assert_environment(&settings, &runtime_path);
+    }
+
+    #[test]
+    fn run_succeeds_with_customised_paths() {
+        if detect_execution_privileges() == ExecutionPrivileges::Root {
+            tracing::warn!("skipping run test because root privileges require PG_EMBEDDED_WORKER");
+            return;
+        }
+
+        let runtime = tempdir().expect("runtime dir");
+        let data = tempdir().expect("data dir");
+        let runtime_path =
+            Utf8PathBuf::from_path_buf(runtime.path().to_path_buf()).expect("runtime dir utf8");
+        let data_path =
+            Utf8PathBuf::from_path_buf(data.path().to_path_buf()).expect("data dir utf8");
+
+        with_vars(
+            [
+                ("PG_RUNTIME_DIR", Some(runtime_path.as_str())),
+                ("PG_DATA_DIR", Some(data_path.as_str())),
+                ("PG_SUPERUSER", Some("bootstrap_run")),
+                ("PG_PASSWORD", Some("bootstrap_run_pw")),
+                ("PG_EMBEDDED_WORKER", None),
+            ],
+            || {
+                run().expect("run should bootstrap successfully");
+
+                let cache_dir = runtime_path.join("cache");
+                let run_dir = runtime_path.join("run");
+                assert!(cache_dir.exists(), "cache directory should be created");
+                assert!(run_dir.exists(), "runtime directory should be created");
+            },
+        );
+    }
+
+    fn assert_paths(
+        settings: &TestBootstrapSettings,
+        runtime_path: &Utf8PathBuf,
+        data_path: &Utf8PathBuf,
+    ) {
+        let observed_install =
+            Utf8PathBuf::from_path_buf(settings.settings.installation_dir.clone())
+                .expect("installation dir utf8");
+        let observed_data =
+            Utf8PathBuf::from_path_buf(settings.settings.data_dir.clone()).expect("data dir utf8");
+
+        assert_eq!(observed_install.as_path(), runtime_path.as_path());
+        assert_eq!(observed_data.as_path(), data_path.as_path());
+    }
+
+    fn assert_identity(
+        settings: &TestBootstrapSettings,
+        expected_user: &str,
+        expected_password: &str,
+    ) {
+        assert_eq!(settings.settings.username, expected_user);
+        assert_eq!(settings.settings.password, expected_password);
+        assert_eq!(settings.privileges, ExecutionPrivileges::Unprivileged);
+        assert_eq!(settings.execution_mode, ExecutionMode::InProcess);
+        assert!(settings.worker_binary.is_none());
+    }
+
+    fn assert_environment(settings: &TestBootstrapSettings, runtime_path: &Utf8PathBuf) {
+        let env_pairs = settings.environment.to_env();
+        let pgpass = runtime_path.join(".pgpass");
+        assert!(env_pairs.contains(&("PGPASSFILE".into(), Some(pgpass.as_str().into()))));
+        assert_eq!(settings.environment.home.as_path(), runtime_path.as_path());
+    }
+}
