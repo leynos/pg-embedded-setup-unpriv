@@ -1,7 +1,9 @@
 use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::{Context, eyre};
+#[cfg(feature = "diesel-support")]
+use color_eyre::eyre::WrapErr;
 
 use crate::TestBootstrapSettings;
+#[cfg(feature = "diesel-support")]
 use crate::error::BootstrapResult;
 
 /// Provides ergonomic accessors for connection-oriented cluster metadata.
@@ -159,8 +161,8 @@ impl<'cluster> TestClusterConnection<'cluster> {
 
         let url = self.database_url(database);
         diesel::PgConnection::establish(&url)
-            .wrap_err_with(|| format!("failed to connect to {database} via Diesel"))
-            .map_err(|err| crate::error::BootstrapError::from(eyre!(err)))
+            .wrap_err(format!("failed to connect to {database} via Diesel"))
+            .map_err(crate::error::BootstrapError::from)
     }
 }
 
