@@ -3,13 +3,13 @@
 
 use std::cell::RefCell;
 
-use std::ffi::{OsStr, OsString};
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use diesel::prelude::*;
 use diesel::sql_types::Integer;
 use pg_embedded_setup_unpriv::{ConnectionMetadata, TestCluster};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
+use std::ffi::{OsStr, OsString};
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs;

@@ -191,8 +191,7 @@ impl Drop for TestCluster {
         let context = Self::stop_context(&self.bootstrap.settings);
 
         if self.is_managed_via_worker {
-            let invoker =
-                ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
+            let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
             if let Err(err) = invoker.invoke_as_root(WorkerOperation::Stop) {
                 Self::warn_stop_failure(&context, &err);
             }

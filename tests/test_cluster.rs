@@ -7,14 +7,12 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use camino::Utf8PathBuf;
 #[cfg(feature = "privileged-tests")]
 use camino::Utf8Path;
+use camino::Utf8PathBuf;
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 #[cfg(feature = "privileged-tests")]
 use nix::unistd::geteuid;
-#[cfg(feature = "privileged-tests")]
-use std::fs;
 use pg_embedded_setup_unpriv::BootstrapError;
 use pg_embedded_setup_unpriv::test_support::{
     RunRootOperationHookInstallError, capture_warn_logs, drain_hook_install_logs,
@@ -26,10 +24,12 @@ use pg_embedded_setup_unpriv::{
 };
 use postgresql_embedded::Settings;
 #[cfg(feature = "privileged-tests")]
+use std::fs;
+#[cfg(feature = "privileged-tests")]
 use std::os::unix::fs::PermissionsExt;
-use tokio::runtime::{Builder, Runtime};
 #[cfg(feature = "privileged-tests")]
 use tempfile::tempdir;
+use tokio::runtime::{Builder, Runtime};
 
 fn test_runtime() -> Result<Runtime> {
     Builder::new_current_thread()
@@ -223,7 +223,7 @@ fn installing_hook_twice_returns_error() -> Result<()> {
 #[cfg(feature = "privileged-tests")]
 #[test]
 fn worker_setup_times_out_when_helper_hangs() -> Result<()> {
-    let Some(worker_path) = hanging_worker_binary() else {
+    let Some(worker_path_str) = hanging_worker_binary() else {
         return Ok(());
     };
 
@@ -232,7 +232,8 @@ fn worker_setup_times_out_when_helper_hangs() -> Result<()> {
         return Ok(());
     }
 
-    run_hanging_worker_timeout_test(Utf8PathBuf::from(worker_path))
+    let worker_path = Utf8Path::new(worker_path_str);
+    run_hanging_worker_timeout_test(worker_path)
 }
 
 #[cfg(feature = "privileged-tests")]
@@ -245,10 +246,10 @@ fn hanging_worker_binary() -> Option<&'static str> {
 }
 
 #[cfg(feature = "privileged-tests")]
-fn run_hanging_worker_timeout_test(worker_path: Utf8PathBuf) -> Result<()> {
+fn run_hanging_worker_timeout_test(worker_path: &Utf8Path) -> Result<()> {
     let runtime = test_runtime()?;
     let mut bootstrap = dummy_settings(ExecutionPrivileges::Root);
-    let (_staging_dir, staged_worker) = stage_worker_for_nobody(worker_path.as_ref())?;
+    let (_staging_dir, staged_worker) = stage_worker_for_nobody(worker_path)?;
     bootstrap.worker_binary = Some(staged_worker);
     bootstrap.setup_timeout = Duration::from_secs(1);
     bootstrap.start_timeout = Duration::from_secs(1);
@@ -277,9 +278,7 @@ fn run_hanging_worker_timeout_test(worker_path: Utf8PathBuf) -> Result<()> {
 }
 
 #[cfg(feature = "privileged-tests")]
-fn stage_worker_for_nobody(
-    worker_path: &Utf8Path,
-) -> Result<(tempfile::TempDir, Utf8PathBuf)> {
+fn stage_worker_for_nobody(worker_path: &Utf8Path) -> Result<(tempfile::TempDir, Utf8PathBuf)> {
     let staging_dir = tempdir().context("create worker staging directory")?;
     let staged_path = staging_dir.path().join("pg_worker_hang");
     fs::copy(worker_path, &staged_path).context("copy worker binary for staging")?;
