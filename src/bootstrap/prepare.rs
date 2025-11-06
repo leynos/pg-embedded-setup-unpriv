@@ -63,6 +63,7 @@ fn bootstrap_with_root(
 
     let timezone = prepare_timezone_env()?;
     let xdg = prepare_xdg_dirs(&paths.install_dir)?;
+    ensure_xdg_dirs_owned_by_user(&xdg, &nobody_user)?;
 
     ensure_pgpass_for_user(&paths.password_file, &nobody_user)?;
 
@@ -200,16 +201,48 @@ fn ensure_pgpass_permissions(path: &Utf8PathBuf) -> BootstrapResult<()> {
     }
 }
 
+/// Create the XDG cache and runtime directories with the expected
+/// permissions.
+///
+/// The cache surface only stores extracted binaries and log files, so it
+/// remains group/world-readable (0o755) to make debugging easier when the
+/// helper runs inside CI sandboxes. The runtime directory, however, holds the
+/// `PostgreSQL` socket, `postmaster.pid`, and `.pgpass`, so it is locked down
+/// to user-only access (0o700) to avoid leaking credentials or allowing other
+/// processes to tamper with the instance.
+///
+/// # Examples
+///
+/// ```ignore
+/// use camino::Utf8PathBuf;
+/// use crate::bootstrap::prepare::prepare_xdg_dirs;
+///
+/// let install_dir = Utf8PathBuf::from("/tmp/test-install");
+/// let dirs = prepare_xdg_dirs(&install_dir).expect("xdg dirs");
+/// assert_eq!(dirs.cache, install_dir.join("cache"));
+/// assert_eq!(dirs.runtime, install_dir.join("run"));
+/// ```
 fn prepare_xdg_dirs(install_dir: &Utf8PathBuf) -> BootstrapResult<XdgDirs> {
     let cache = install_dir.join("cache");
     let runtime = install_dir.join("run");
+    // Cache files are harmless to share, so grant read access for debugging.
     ensure_dir_with_mode(&cache, 0o755)?;
+    // Runtime dir holds sockets/pids; clamp to user-only for safety.
     ensure_dir_with_mode(&runtime, 0o700)?;
     Ok(XdgDirs {
         home: install_dir.clone(),
         cache,
         runtime,
     })
+}
+
+#[cfg(unix)]
+fn ensure_xdg_dirs_owned_by_user(xdg: &XdgDirs, user: &User) -> BootstrapResult<()> {
+    // The cache/run directories are created by the root worker, so explicitly
+    // hand them to the unprivileged user to keep custom install dirs usable.
+    ensure_dir_for_user(&xdg.cache, user, 0o755)?;
+    ensure_dir_for_user(&xdg.runtime, user, 0o700)?;
+    Ok(())
 }
 
 #[cfg(unix)]
