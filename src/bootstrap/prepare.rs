@@ -18,7 +18,7 @@ use crate::privileges::{
     default_paths_for, ensure_dir_for_user, ensure_tree_owned_by_user, make_data_dir_private,
 };
 #[cfg(unix)]
-use nix::unistd::{Uid, User, chown, geteuid};
+use nix::unistd::{Uid, User, fchown, geteuid};
 
 pub(super) fn prepare_bootstrap(
     privileges: super::mode::ExecutionPrivileges,
@@ -268,18 +268,44 @@ fn ensure_install_dir_for_user(path: &Utf8PathBuf, user: &User) -> BootstrapResu
 
 #[cfg(unix)]
 fn ensure_pgpass_for_user(path: &Utf8PathBuf, user: &User) -> BootstrapResult<()> {
-    match chown(path.as_std_path(), Some(user.uid), Some(user.gid)) {
-        Ok(()) => {}
-        Err(nix::errno::Errno::ENOENT) => return Ok(()),
+    use nix::sys::stat::{Mode, fchmod};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    // Refuse to follow symlinks or other indirections before changing
+    // ownership/mode so an attacker cannot redirect the helper to a
+    // privileged target in between operations.
+    let file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(false)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path.as_std_path())
+    {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(err) => {
             return Err(BootstrapError::from(color_eyre::eyre::eyre!(
-                "chown {} failed: {err}",
+                "open {} failed: {err}",
                 path.as_str()
             )));
         }
-    }
+    };
 
-    ensure_pgpass_permissions(path)
+    let fd = file.as_raw_fd();
+    fchown(fd, Some(user.uid), Some(user.gid)).map_err(|err| {
+        BootstrapError::from(color_eyre::eyre::eyre!(
+            "fchown {} failed: {err}",
+            path.as_str()
+        ))
+    })?;
+    fchmod(fd, Mode::from_bits_truncate(0o600)).map_err(|err| {
+        BootstrapError::from(color_eyre::eyre::eyre!(
+            "fchmod {} failed: {err}",
+            path.as_str()
+        ))
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]
