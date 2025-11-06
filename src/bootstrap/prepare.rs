@@ -204,7 +204,9 @@ fn ensure_pgpass_permissions(path: &Utf8PathBuf) -> BootstrapResult<()> {
 fn prepare_xdg_dirs(install_dir: &Utf8PathBuf) -> BootstrapResult<XdgDirs> {
     let cache = install_dir.join("cache");
     let runtime = install_dir.join("run");
+    // Cache files are harmless to share, so grant read access for debugging.
     ensure_dir_with_mode(&cache, 0o755)?;
+    // Runtime dir holds sockets/pids; clamp to user-only for safety.
     ensure_dir_with_mode(&runtime, 0o700)?;
     Ok(XdgDirs {
         home: install_dir.clone(),
