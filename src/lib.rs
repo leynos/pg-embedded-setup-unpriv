@@ -156,11 +156,11 @@ pub use bootstrap::{
     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
     bootstrap_for_tests, detect_execution_privileges, run,
 };
-pub use cluster::TestCluster;
 #[doc(hidden)]
 pub use cluster::WorkerInvoker;
 #[doc(hidden)]
 pub use cluster::WorkerOperation;
+pub use cluster::{ConnectionMetadata, TestCluster, TestClusterConnection};
 #[doc(hidden)]
 pub use error::BootstrapResult;
 pub use error::PgEmbeddedError as Error;

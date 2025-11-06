@@ -226,6 +226,27 @@ zone env, password file handling, etc.) so that tests do not repeat those steps
 (see docs/next-steps.md). This makes starting a test database **trivial** –
 essentially one line in the test setup.
 
+### Implementation update (2025-11-06)
+
+- Added `TestCluster::connection()`, which exposes a lightweight
+  `TestClusterConnection` helper for querying host, port, credentials, and the
+  generated `.pgpass` file without cloning the underlying bootstrap struct.
+  `ConnectionMetadata` captures an owned snapshot so callers can persist the
+  values beyond the guard's lifetime.
+- Introduced the opt-in `diesel-support` Cargo feature. When enabled the new
+  helper exposes `diesel_connection()` for establishing a
+  `diesel::PgConnection` with a single call. The helper preserves the crate's
+  default of keeping Diesel optional for consumers that do not need it, while
+  the project's `make test` target exercises the code path via `--all-features`.
+- Augmented the behavioural suite with `rstest-bdd` scenarios that execute
+  real SQL against the embedded instance. One scenario issues `SELECT 42` and
+  proves the helper returns live data, while the unhappy-path scenario drives a
+  malformed query and asserts that Diesel's descriptive error bubbles up
+  through the helper.
+- Added focused unit tests around the new metadata struct so regressions in
+  URL rendering or `.pgpass` propagation surface without needing to boot
+  PostgreSQL.
+
 ### Ephemeral ports and isolation
 
 To allow the same tests to run concurrently (especially under `nextest`, which

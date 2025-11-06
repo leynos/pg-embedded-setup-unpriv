@@ -8,9 +8,13 @@ use std::sync::{
 use std::time::Duration;
 
 use camino::Utf8PathBuf;
-use color_eyre::eyre::{Result, ensure, eyre};
+#[cfg(feature = "privileged-tests")]
+use camino::Utf8Path;
+use color_eyre::eyre::{Context, Result, ensure, eyre};
 #[cfg(feature = "privileged-tests")]
 use nix::unistd::geteuid;
+#[cfg(feature = "privileged-tests")]
+use std::fs;
 use pg_embedded_setup_unpriv::BootstrapError;
 use pg_embedded_setup_unpriv::test_support::{
     RunRootOperationHookInstallError, capture_warn_logs, drain_hook_install_logs,
@@ -21,7 +25,11 @@ use pg_embedded_setup_unpriv::{
     WorkerInvoker, WorkerOperation,
 };
 use postgresql_embedded::Settings;
+#[cfg(feature = "privileged-tests")]
+use std::os::unix::fs::PermissionsExt;
 use tokio::runtime::{Builder, Runtime};
+#[cfg(feature = "privileged-tests")]
+use tempfile::tempdir;
 
 fn test_runtime() -> Result<Runtime> {
     Builder::new_current_thread()
@@ -240,7 +248,8 @@ fn hanging_worker_binary() -> Option<&'static str> {
 fn run_hanging_worker_timeout_test(worker_path: Utf8PathBuf) -> Result<()> {
     let runtime = test_runtime()?;
     let mut bootstrap = dummy_settings(ExecutionPrivileges::Root);
-    bootstrap.worker_binary = Some(worker_path);
+    let (_staging_dir, staged_worker) = stage_worker_for_nobody(worker_path.as_ref())?;
+    bootstrap.worker_binary = Some(staged_worker);
     bootstrap.setup_timeout = Duration::from_secs(1);
     bootstrap.start_timeout = Duration::from_secs(1);
 
@@ -265,4 +274,21 @@ fn run_hanging_worker_timeout_test(worker_path: Utf8PathBuf) -> Result<()> {
         "expected timeout warning log, got {logs:?}",
     );
     Ok(())
+}
+
+#[cfg(feature = "privileged-tests")]
+fn stage_worker_for_nobody(
+    worker_path: &Utf8Path,
+) -> Result<(tempfile::TempDir, Utf8PathBuf)> {
+    let staging_dir = tempdir().context("create worker staging directory")?;
+    let staged_path = staging_dir.path().join("pg_worker_hang");
+    fs::copy(worker_path, &staged_path).context("copy worker binary for staging")?;
+    let mut permissions = fs::metadata(&staged_path)
+        .context("read staged worker metadata")?
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&staged_path, permissions).context("update staged worker permissions")?;
+    let staged_utf8 =
+        Utf8PathBuf::from_path_buf(staged_path).map_err(|_| eyre!("worker path not UTF-8"))?;
+    Ok((staging_dir, staged_utf8))
 }
