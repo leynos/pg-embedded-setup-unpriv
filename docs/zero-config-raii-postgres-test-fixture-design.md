@@ -336,6 +336,22 @@ integration tests highly concise and consistent across projects, since everyone
 can use the same fixture name and behaviour. The fixture will handle both root
 and non-root cases identically (abstracted behind `TestCluster`).
 
+### Decision (2025-11-07): default-on `rstest` fixture
+
+- Added a `rstest-fixtures` cargo feature (enabled by default) that pulls in the
+  `rstest = 0.18` dependency for downstream tests. Consumers who do not use
+  `rstest` can set `default-features = false` to omit it, or re-enable the
+  feature explicitly when needed.
+- Implemented `test_support::test_cluster`, an `#[fixture]` annotated helper
+  that simply returns `TestCluster::new()`. Documentation now includes a
+  doctest and README excerpt demonstrating zero-setup integration tests.
+- Authored `tests/test_cluster_fixture.rs` with `rstest-bdd` coverage. The
+  happy-path scenario ensures the fixture binds PostgreSQL to the sandbox
+  directories and restores the environment after drop, while the second
+  scenario validates that missing timezone data surfaces as an actionable
+  error. Additional unit tests exercise both the injected happy path and the
+  failing path inside a custom sandbox.
+
 - **Parallel test runners:** Using `cargo nextest` (or even running
   `cargo test -- --test-threads=n`), multiple tests may run concurrently. We
   have addressed this by using ephemeral ports and separate data directories as

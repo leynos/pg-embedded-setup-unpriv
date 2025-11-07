@@ -150,6 +150,32 @@ assert!(url.starts_with("postgresql://"));
 # }
 ```
 
+### rstest fixture
+
+The crate publishes `pg_embedded_setup_unpriv::test_support::test_cluster`, an
+`rstest` fixture that boots a `TestCluster` and injects it into tests without
+manual setup. The helper is enabled by the default `rstest-fixtures` feature,
+so downstream crates only need to declare their own `rstest = "0.18"`
+development dependency to opt in. Tests stay concise: request the fixture by
+name and issue queries against the returned guard.
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+use pg_embedded_setup_unpriv::test_support::test_cluster;
+use rstest::rstest;
+
+#[rstest]
+fn inserts_rows(test_cluster: TestCluster) -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    let metadata = test_cluster.connection().metadata();
+    assert_eq!(metadata.superuser(), "postgres");
+    Ok(())
+}
+```
+
+Disable the fixture with `default-features = false` when the dependency should
+not pull in `rstest`, or re-enable it explicitly with
+`features = ["rstest-fixtures"]`.
+
 ## Privilege detection and idempotence
 
 - `pg_embedded_setup_unpriv` detects its effective user ID at runtime. Root

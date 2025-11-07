@@ -10,7 +10,13 @@
 mod errors;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod filesystem;
-#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+#[cfg(any(
+    doc,
+    test,
+    feature = "cluster-unit-tests",
+    feature = "dev-worker",
+    feature = "rstest-fixtures"
+))]
 mod fixtures;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod hook;
@@ -25,8 +31,16 @@ pub use errors::{bootstrap_error, privilege_error};
 pub use filesystem::{
     CapabilityTempDir, ambient_dir_and_path, ensure_dir_exists, metadata, set_permissions,
 };
-#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+#[cfg(any(
+    doc,
+    test,
+    feature = "cluster-unit-tests",
+    feature = "dev-worker",
+    feature = "rstest-fixtures"
+))]
 pub use fixtures::{dummy_environment, dummy_settings, test_runtime};
+#[cfg(feature = "rstest-fixtures")]
+pub use fixtures::{test_cluster, try_test_cluster};
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use hook::{
     HookGuard, RunRootOperationHook, RunRootOperationHookInstallError, drain_hook_install_logs,
