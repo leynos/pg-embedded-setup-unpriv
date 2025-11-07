@@ -243,7 +243,7 @@ essentially one line in the test setup.
   proves the helper returns live data, while the unhappy-path scenario drives a
   malformed query and asserts that Diesel's descriptive error bubbles up
   through the helper.
-- Added focused unit tests around the new metadata struct so regressions in
+- Added focused unit tests around the new metadata struct, so regressions in
   URL rendering or `.pgpass` propagation surface without needing to boot
   PostgreSQL.
 

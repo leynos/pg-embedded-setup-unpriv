@@ -13,7 +13,7 @@ use postgresql_embedded::Settings;
 /// Builds a single-threaded Tokio runtime for synchronous tests.
 ///
 /// # Examples
-/// ```ignore
+/// ```rust
 /// use pg_embedded_setup_unpriv::test_support::test_runtime;
 ///
 /// # fn demo() -> color_eyre::eyre::Result<()> {
@@ -21,6 +21,7 @@ use postgresql_embedded::Settings;
 /// # drop(runtime);
 /// # Ok(())
 /// # }
+/// # demo().unwrap();
 /// ```
 pub fn test_runtime() -> Result<Runtime> {
     Builder::new_current_thread()
@@ -32,7 +33,7 @@ pub fn test_runtime() -> Result<Runtime> {
 /// Creates a deterministic sandboxed environment description for tests.
 ///
 /// # Examples
-/// ```ignore
+/// ```rust
 /// use pg_embedded_setup_unpriv::test_support::dummy_environment;
 ///
 /// let env = dummy_environment();
@@ -53,7 +54,7 @@ pub fn dummy_environment() -> TestBootstrapEnvironment {
 /// Synthesises bootstrap settings for unit tests targeting the invoker logic.
 ///
 /// # Examples
-/// ```ignore
+/// ```rust
 /// use pg_embedded_setup_unpriv::test_support::dummy_settings;
 /// use pg_embedded_setup_unpriv::ExecutionPrivileges;
 ///
