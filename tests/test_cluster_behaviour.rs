@@ -19,13 +19,11 @@ mod env_snapshot;
 mod sandbox;
 #[path = "support/serial.rs"]
 mod serial;
-#[path = "support/skip.rs"]
-mod skip;
 
 use env_snapshot::EnvSnapshot;
+use pg_embedded_setup_unpriv::test_support::cluster_skip_message;
 use sandbox::TestSandbox;
 use serial::{ScenarioSerialGuard, serial_guard};
-use skip::skip_message;
 
 struct ClusterWorld {
     sandbox: TestSandbox,
@@ -85,7 +83,7 @@ impl ClusterWorld {
         let debug = format!("{err:?}");
         self.error = Some(message.clone());
         self.cluster = None;
-        if let Some(reason) = skip_message("SKIP-TEST-CLUSTER", &message, Some(&debug)) {
+        if let Some(reason) = cluster_skip_message(&message, Some(&debug)) {
             self.mark_skip(reason);
         }
     }

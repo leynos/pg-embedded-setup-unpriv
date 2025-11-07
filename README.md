@@ -78,23 +78,17 @@ inside your own launcher.
 
 The crate ships an `rstest` fixture, `test_support::test_cluster`, so test
 modules can request a ready `TestCluster` without invoking constructors
-manually. Bring the fixture into scope and declare a parameter named
-`test_cluster` to opt into automatic setup and teardown.
+manually. See the
+[canonical `rstest` fixture example](docs/examples/ rstest-fixture-example.md)
+for the complete snippet detailing how to import the fixture and declare a
+`test_cluster: TestCluster` parameter that opts into automatic setup and
+teardown.
 
-```rust,no_run
-use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
-use rstest::rstest;
-
-#[rstest]
-fn migrates_schema(test_cluster: TestCluster) {
-    let url = test_cluster.connection().database_url("postgres");
-    assert!(url.starts_with("postgresql://"));
-}
-```
-
-Because the fixture handles environment preparation, tests stay declarative and
-can focus on behaviours instead of bootstrap plumbing. When a bootstrap failure
-occurs the fixture panics with a `SKIP-TEST-CLUSTER` prefix so higher-level
+- Because the fixture handles environment preparation, tests stay declarative
+  and
+- can focus on behaviours instead of bootstrap plumbing. When a bootstrap
+  failure
+- occurs the fixture panics with a `SKIP-TEST-CLUSTER` prefix, so higher-level
 behaviour tests can convert known transient errors into soft skips.
 
 ## Next steps

@@ -179,15 +179,13 @@ the body of `test_add_to_basket`.
 ### Consuming fixtures from dependencies
 
 Because `rstest-bdd` reuses `rstest` fixtures, you can import fixtures defined
-in dependent crates. For example, `pg_embedded_setup_unpriv` publishes a
-`test_support::test_cluster` fixture that yields a running PostgreSQL instance.
-Bring the fixture into scope and declare a `test_cluster: TestCluster`
-parameter in any scenario or step that needs database access:
+in dependent crates. The
+[canonical `rstest` example](examples/ rstest-fixture-example.md) shows how to
+import `pg_embedded_setup_unpriv::test_support::test_cluster`. Once that import
+is in scope you can declare a `test_cluster: TestCluster` parameter in any
+scenario or step that needs database access:
 
 ```rust,no_run
-use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
-use rstest_bdd_macros::{scenario, then};
-
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 0)]
 fn embed_cluster(test_cluster: TestCluster) {
     assert!(test_cluster.settings().data_dir.exists());
