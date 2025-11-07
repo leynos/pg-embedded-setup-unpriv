@@ -93,7 +93,7 @@ path = "tests/settings.rs"
 
 [dependencies]
 postgresql_embedded = { version = "0.20.0", features = ["tokio"] }
-nix = { version = "0.28", default-features = false, features = ["user", "fs"] }
+nix = { version = "0.30", default-features = false, features = ["user", "fs"] }
 color-eyre = "0.6"
 tokio = { version = "1", features = ["rt", "macros", "time", "fs"] }
 serde = { version = "1", features = ["derive"] }
