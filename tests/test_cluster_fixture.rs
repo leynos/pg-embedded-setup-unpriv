@@ -13,14 +13,16 @@ use std::{
 };
 
 use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::{ensure, Context, Result, eyre};
+use color_eyre::eyre::{Context, Result, ensure, eyre};
 use libc::pid_t;
-use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
+use pg_embedded_setup_unpriv::{TestCluster, test_support::test_cluster};
 use rstest::{fixture, rstest};
 use rstest_bdd_macros::{given, scenario, then, when};
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs;
+#[path = "support/cluster_skip.rs"]
+mod cluster_skip;
 #[path = "support/env.rs"]
 mod env;
 #[path = "support/sandbox.rs"]
@@ -30,10 +32,30 @@ mod serial;
 #[path = "support/skip.rs"]
 mod skip;
 
+use cluster_skip::cluster_skip_message;
 use env::ScopedEnvVars;
 use sandbox::TestSandbox;
-use serial::{serial_guard, ScenarioSerialGuard};
-use skip::{cluster_skip_message, SKIP_TEST_CLUSTER_PREFIX};
+use serial::{ScenarioSerialGuard, serial_guard};
+
+fn set_env_var<K, V>(key: K, value: V)
+where
+    K: AsRef<OsStr>,
+    V: AsRef<OsStr>,
+{
+    // Safety: nightly toolchains mark environment mutation as unsafe because it
+    // touches process-global state. Tests serialise these calls via the sandbox
+    // guards so we can mutate the environment deterministically.
+    unsafe { std::env::set_var(key, value) };
+}
+
+fn remove_env_var<K>(key: K)
+where
+    K: AsRef<OsStr>,
+{
+    // Safety: see `set_env_var` above; we only mutate the environment whilst
+    // the guard is active and no references escape.
+    unsafe { std::env::remove_var(key) };
+}
 
 struct EnvIsolationGuard {
     snapshot: Vec<(OsString, OsString)>,
@@ -54,11 +76,11 @@ impl Drop for EnvIsolationGuard {
         let current_keys: Vec<OsString> = std::env::vars_os().map(|(key, _)| key).collect();
         for key in current_keys {
             if !saved_keys.contains(&key) {
-                std::env::remove_var(&key);
+                remove_env_var(&key);
             }
         }
         for (key, value) in &self.snapshot {
-            std::env::set_var(key, value);
+            set_env_var(key, value);
         }
     }
 }
@@ -127,7 +149,7 @@ fn fixture_reuses_cluster_environment(_serial_guard: ScenarioSerialGuard) -> Res
 fn fixture_environment_variable_isolation(_serial_guard: ScenarioSerialGuard) -> Result<()> {
     const LEAK_VAR: &str = "RSTEST_CLUSTER_ENV_POLLUTION";
     run_unit_fixture_test("rstest-fixture-env-pollution", |_test_cluster| {
-        std::env::set_var(LEAK_VAR, "polluted_value");
+        set_env_var(LEAK_VAR, "polluted_value");
         Ok(())
     })?;
     ensure!(
@@ -407,9 +429,7 @@ fn then_fixture_reports_permission_error(world: &FixtureWorldFixture) -> Result<
 }
 
 #[then("the fixture reports an invalid configuration error")]
-fn then_fixture_reports_invalid_configuration_error(
-    world: &FixtureWorldFixture,
-) -> Result<()> {
+fn then_fixture_reports_invalid_configuration_error(world: &FixtureWorldFixture) -> Result<()> {
     let world_ref = borrow_world(world)?.borrow();
     if world_ref.is_skipped() {
         return Ok(());
@@ -474,7 +494,10 @@ fn env_for_profile(sandbox: &TestSandbox, profile: FixtureEnvProfile) -> Result<
         }
         FixtureEnvProfile::MissingWorkerBinary => {
             let mut vars = sandbox.env_without_timezone();
-            let fake_worker = sandbox.install_dir().join("missing-worker").join("pg_worker");
+            let fake_worker = sandbox
+                .install_dir()
+                .join("missing-worker")
+                .join("pg_worker");
             override_env_os(
                 &mut vars,
                 "PG_EMBEDDED_WORKER",
@@ -535,7 +558,7 @@ fn read_postmaster_pid(data_dir: &Path) -> Result<Option<pid_t>> {
         return Ok(None);
     }
     let contents = std::fs::read_to_string(&pid_file)
-        .with_context(|| format!("read postmaster pid file at {:?}", pid_file))?;
+        .with_context(|| format!("read postmaster pid file at {}", pid_file.display()))?;
     let Some(first_line) = contents.lines().next() else {
         return Ok(None);
     };
@@ -547,17 +570,17 @@ fn read_postmaster_pid(data_dir: &Path) -> Result<Option<pid_t>> {
 }
 
 fn wait_for_process_exit(pid: Option<pid_t>) -> Result<()> {
-    let Some(pid) = pid else {
+    let Some(child_pid) = pid else {
         return Ok(());
     };
     for _ in 0..100 {
-        if !process_is_running(pid) {
+        if !process_is_running(child_pid) {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(50));
     }
     Err(eyre!(format!(
-        "PostgreSQL process {pid} should exit after the fixture drops"
+        "PostgreSQL process {child_pid} should exit after the fixture drops"
     )))
 }
 
@@ -581,8 +604,8 @@ fn process_is_running(pid: pid_t) -> bool {
     if rc == 0 {
         return true;
     }
-    match std::io::Error::last_os_error().raw_os_error() {
-        Some(code) if code == libc::ESRCH => false,
-        _ => true,
-    }
+    !matches!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(code) if code == libc::ESRCH
+    )
 }
