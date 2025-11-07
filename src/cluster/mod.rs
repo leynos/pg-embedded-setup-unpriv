@@ -76,7 +76,7 @@ impl TestCluster {
         if !is_managed_via_worker {
             // Capture runtime mutations such as dynamically assigned ports so connection
             // metadata reflects the live cluster rather than the pre-bootstrap defaults.
-            bootstrap.settings = embedded.settings().clone();
+            bootstrap.settings.port = embedded.settings().port;
         }
         let postgres = if is_managed_via_worker {
             None
