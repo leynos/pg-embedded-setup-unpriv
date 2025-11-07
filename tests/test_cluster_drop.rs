@@ -18,13 +18,11 @@ mod env_snapshot;
 mod sandbox;
 #[path = "support/serial.rs"]
 mod serial;
-#[path = "support/skip.rs"]
-mod skip;
 
 use env_snapshot::EnvSnapshot;
+use pg_embedded_setup_unpriv::test_support::cluster_skip_message;
 use sandbox::TestSandbox;
 use serial::{ScenarioSerialGuard, serial_guard};
-use skip::skip_message;
 
 fn run_cluster_lifecycle_test() -> std::result::Result<Utf8PathBuf, Report> {
     let before_cluster = EnvSnapshot::capture();
@@ -67,7 +65,7 @@ fn should_skip_test(result: &std::result::Result<Utf8PathBuf, Report>) -> bool {
     };
     let message = err.to_string();
     let debug = format!("{err:?}");
-    skip_message("SKIP-TEST-CLUSTER", &message, Some(&debug))
+    cluster_skip_message(&message, Some(&debug))
         .map(|reason| {
             tracing::warn!("{reason}");
         })

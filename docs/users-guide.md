@@ -113,29 +113,19 @@ drop, demonstrating that no orphaned processes remain.
 ### Using the `rstest` fixture
 
 `pg_embedded_setup_unpriv::test_support::test_cluster` exposes an `rstest`
-fixture that constructs the RAII guard on demand. Import the fixture so it is
-in scope and declare a `test_cluster: TestCluster` parameter inside an
-`#[rstest]` function; the macro injects the running cluster automatically.
-
-```rust,no_run
-use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
-use rstest::rstest;
-
-#[rstest]
-fn runs_migrations(test_cluster: TestCluster) {
-    let metadata = test_cluster.connection().metadata();
-    assert!(metadata.port() > 0);
-}
-```
+fixture that constructs the RAII guard on demand. Import the fixture and
+declare a `test_cluster: TestCluster` parameter exactly as shown in the
+[canonical `rstest` example](examples/rstest-fixture-example.md); the macro
+injects the running cluster automatically.
 
 The fixture integrates with `rstest-bdd` v0.1.0-alpha4 so behaviour tests can
-remain declarative as well:
+remain declarative as well. With the canonical fixture import in scope you can
+declare the parameter directly inside BDD scenarios:
 
 ```rust,no_run
-use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
 use rstest_bdd_macros::scenario;
 
-#[scenario(path = "tests/features/test_cluster.feature", index = 0)]
+#[scenario(path = "tests/features/test_cluster_fixture.feature", index = 0)]
 fn coverage(test_cluster: TestCluster) {
     let _ = test_cluster.environment();
 }
@@ -144,7 +134,7 @@ fn coverage(test_cluster: TestCluster) {
 If PostgreSQL cannot start, the fixture panics with a
 `SKIP-TEST-CLUSTER`-prefixed message that retains the original error. Unit
 tests fail immediately, while behaviour tests can convert known transient
-conditions into soft skips via the shared `skip_message` helper.
+conditions into soft skips via the shared `cluster_skip_message` helper.
 
 ### Connection helpers and Diesel integration
 

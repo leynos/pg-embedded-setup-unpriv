@@ -42,6 +42,7 @@ pub struct TestCluster {
     bootstrap: TestBootstrapSettings,
     is_managed_via_worker: bool,
     env_vars: Vec<(String, Option<String>)>,
+    worker_env_guard: Option<ScopedEnv>,
     _env_guard: ScopedEnv,
 }
 
@@ -76,7 +77,7 @@ impl TestCluster {
         if !is_managed_via_worker {
             // Capture runtime mutations such as dynamically assigned ports so connection
             // metadata reflects the live cluster rather than the pre-bootstrap defaults.
-            bootstrap.settings.port = embedded.settings().port;
+            bootstrap.settings = embedded.settings().clone();
         }
         let postgres = if is_managed_via_worker {
             None
@@ -90,6 +91,7 @@ impl TestCluster {
             bootstrap,
             is_managed_via_worker,
             env_vars,
+            worker_env_guard: None,
             _env_guard: env_guard,
         })
     }
@@ -130,6 +132,14 @@ impl TestCluster {
     #[must_use]
     pub fn connection(&self) -> TestClusterConnection {
         TestClusterConnection::new(&self.bootstrap)
+    }
+
+    /// Retains a `PG_EMBEDDED_WORKER` guard so worker-managed clusters can
+    /// complete lifecycle operations whilst the environment override remains
+    /// active.
+    pub(crate) fn with_worker_env_guard(mut self, guard: Option<ScopedEnv>) -> Self {
+        self.worker_env_guard = guard;
+        self
     }
 
     fn stop_context(settings: &Settings) -> String {

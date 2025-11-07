@@ -13,6 +13,8 @@ use crate::{
     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
     TestCluster, env::ScopedEnv,
 };
+
+use super::skip::format_skip_reason;
 use postgresql_embedded::Settings;
 
 /// Builds a single-threaded Tokio runtime for synchronous tests.
@@ -105,11 +107,18 @@ pub fn dummy_settings(privileges: ExecutionPrivileges) -> TestBootstrapSettings 
 #[must_use]
 pub fn test_cluster() -> TestCluster {
     let worker_guard = ensure_worker_env();
-    let cluster = TestCluster::new().unwrap_or_else(|err| {
-        panic!("SKIP-TEST-CLUSTER: test_cluster fixture failed to start PostgreSQL: {err:?}")
-    });
-    drop(worker_guard);
-    cluster
+    match TestCluster::new() {
+        Ok(cluster) => cluster.with_worker_env_guard(worker_guard),
+        Err(err) => {
+            drop(worker_guard);
+            panic!(
+                "{}",
+                format_skip_reason(format!(
+                    "test_cluster fixture failed to start PostgreSQL: {err:?}"
+                ))
+            )
+        }
+    }
 }
 
 fn ensure_worker_env() -> Option<ScopedEnv> {
@@ -119,7 +128,8 @@ fn ensure_worker_env() -> Option<ScopedEnv> {
 
     let worker = worker_binary().unwrap_or_else(|| {
         panic!(
-            "SKIP-TEST-CLUSTER: PG_EMBEDDED_WORKER is not set and pg_worker binary was not found"
+            "{}",
+            format_skip_reason("PG_EMBEDDED_WORKER is not set and pg_worker binary was not found")
         )
     });
 

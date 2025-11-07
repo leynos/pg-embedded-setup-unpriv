@@ -20,12 +20,10 @@ mod env;
 mod env_snapshot;
 #[path = "support/sandbox.rs"]
 mod sandbox;
-#[path = "support/skip.rs"]
-mod skip;
 
 use env_snapshot::EnvSnapshot;
+use pg_embedded_setup_unpriv::test_support::skip_message_with_prefix;
 use sandbox::TestSandbox;
-use skip::skip_message;
 
 #[derive(Debug)]
 struct BootstrapWorld {
@@ -96,7 +94,7 @@ impl BootstrapWorld {
                 let message = err.to_string();
                 let debug = format!("{err:?}");
                 if let Some(reason) =
-                    skip_message("SKIP-BOOTSTRAP-FOR-TESTS", &message, Some(&debug))
+                    skip_message_with_prefix("SKIP-BOOTSTRAP-FOR-TESTS", &message, Some(&debug))
                 {
                     self.mark_skip(reason);
                     Ok(())

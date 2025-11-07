@@ -328,7 +328,7 @@ will leverage that (see postgresql-embedded README).
   `tests/test_cluster_fixture.rs` suite, which combines direct `#[rstest]`
   tests with `rstest-bdd` (v0.1.0-alpha4) scenarios that cover both successful
   bootstraps and timezone failures. The fixture panics with a
-  `SKIP-TEST-CLUSTER` prefix so behavioural tests can convert known external
+  `SKIP-TEST-CLUSTER` prefix, so behavioural tests can convert known external
   issues into soft skips.
 
 ```rust

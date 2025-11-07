@@ -18,15 +18,13 @@ mod cap_fs_bootstrap;
 mod env;
 #[path = "support/serial.rs"]
 mod serial;
-#[path = "support/skip.rs"]
-mod skip;
 
 use cap_fs_bootstrap::{remove_tree, set_permissions};
 use env::{build_env, with_scoped_env};
-use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
-use pg_embedded_setup_unpriv::test_support::metadata;
+use pg_embedded_setup_unpriv::test_support::{
+    CapabilityTempDir, metadata, skip_message_with_prefix,
+};
 use serial::{ScenarioSerialGuard, serial_guard};
-use skip::skip_message;
 
 #[derive(Debug)]
 struct BootstrapSandbox {
@@ -183,7 +181,7 @@ impl BootstrapSandbox {
             Err(err) => {
                 let message = err.to_string();
                 let debug = format!("{err:?}");
-                skip_message("SKIP-BOOTSTRAP", &message, Some(&debug)).map_or_else(
+                skip_message_with_prefix("SKIP-BOOTSTRAP", &message, Some(&debug)).map_or_else(
                     || {
                         tracing::warn!("SKIP-BOOTSTRAP-FAILURE: {message}");
                         Err(err.into())
