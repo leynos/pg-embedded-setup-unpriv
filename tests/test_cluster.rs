@@ -241,7 +241,10 @@ fn run_hanging_worker_timeout_test(worker_path: &Utf8Path) -> Result<()> {
 #[cfg(feature = "privileged-tests")]
 fn stage_worker_for_nobody(worker_path: &Utf8Path) -> Result<(tempfile::TempDir, Utf8PathBuf)> {
     let staging_dir = tempdir().context("create worker staging directory")?;
-    let staged_path = staging_dir.path().join("pg_worker_hang");
+    let filename = worker_path
+        .file_name()
+        .ok_or_else(|| eyre!("worker path must include a filename"))?;
+    let staged_path = staging_dir.path().join(filename);
     fs::copy(worker_path, &staged_path).context("copy worker binary for staging")?;
     let mut permissions = fs::metadata(&staged_path)
         .context("read staged worker metadata")?

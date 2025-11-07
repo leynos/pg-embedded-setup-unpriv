@@ -11,6 +11,17 @@ use crate::{ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBo
 use postgresql_embedded::Settings;
 
 /// Builds a single-threaded Tokio runtime for synchronous tests.
+///
+/// # Examples
+/// ```ignore
+/// use pg_embedded_setup_unpriv::test_support::test_runtime;
+///
+/// # fn demo() -> color_eyre::eyre::Result<()> {
+/// let runtime = test_runtime()?;
+/// # drop(runtime);
+/// # Ok(())
+/// # }
+/// ```
 pub fn test_runtime() -> Result<Runtime> {
     Builder::new_current_thread()
         .enable_all()
@@ -19,6 +30,14 @@ pub fn test_runtime() -> Result<Runtime> {
 }
 
 /// Creates a deterministic sandboxed environment description for tests.
+///
+/// # Examples
+/// ```ignore
+/// use pg_embedded_setup_unpriv::test_support::dummy_environment;
+///
+/// let env = dummy_environment();
+/// assert_eq!(env.timezone, "UTC");
+/// ```
 #[must_use]
 pub fn dummy_environment() -> TestBootstrapEnvironment {
     TestBootstrapEnvironment {
@@ -32,6 +51,15 @@ pub fn dummy_environment() -> TestBootstrapEnvironment {
 }
 
 /// Synthesises bootstrap settings for unit tests targeting the invoker logic.
+///
+/// # Examples
+/// ```ignore
+/// use pg_embedded_setup_unpriv::test_support::dummy_settings;
+/// use pg_embedded_setup_unpriv::ExecutionPrivileges;
+///
+/// let settings = dummy_settings(ExecutionPrivileges::Unprivileged);
+/// assert_eq!(settings.privileges, ExecutionPrivileges::Unprivileged);
+/// ```
 #[must_use]
 pub fn dummy_settings(privileges: ExecutionPrivileges) -> TestBootstrapSettings {
     TestBootstrapSettings {
