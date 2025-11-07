@@ -1296,6 +1296,30 @@ logic to these generated tests. This allows `rstest` to focus on test structure
 and data provision, while `test-with` provides an orthogonal layer of control
 over test execution conditions.
 
+### D. Case study: Zero-config Postgres fixture
+
+The `pg_embedded_setup_unpriv` crate publishes `test_support::test_cluster`, an
+`rstest` fixture that boots an embedded PostgreSQL cluster and tears it down
+automatically. Import the fixture and declare a `test_cluster: TestCluster`
+parameter to receive a ready database in any `#[rstest]` function:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
+use rstest::rstest;
+
+#[rstest]
+fn smoke(test_cluster: TestCluster) {
+    let url = test_cluster.connection().database_url("postgres");
+    assert!(url.starts_with("postgresql://"));
+}
+```
+
+The crate validates this fixture with standard `#[rstest]` tests and
+behavioural suites powered by `rstest-bdd` v0.1.0-alpha4, covering both the
+happy path and failure cases such as missing timezone data. The fixture panics
+with a `SKIP-TEST-CLUSTER` prefix so downstream tests can translate known
+bootstrap issues into skips when appropriate.
+
 ## XI. Conclusion and Further Resources
 
 `rstest` significantly enhances the testing experience in Rust by providing a

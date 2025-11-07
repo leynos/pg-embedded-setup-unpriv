@@ -32,9 +32,9 @@
 
 ### Step: Integrate with test frameworks
 
-- [ ] **Task:** Publish an `rstest` fixture (or equivalent) that yields a ready
+- [x] **Task:** Publish an `rstest` fixture (or equivalent) that yields a ready
   `TestCluster`, demonstrated in example tests showing zero explicit setup.
-- [ ] **Task:** Document usage patterns in README excerpts and doctests so the
+- [x] **Task:** Document usage patterns in README excerpts and doctests so the
   fixture becomes the default path for new integration tests.
 
 ## Phase 3: Enhance visibility and platform coverage
