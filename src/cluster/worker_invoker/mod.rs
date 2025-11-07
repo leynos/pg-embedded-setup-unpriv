@@ -22,6 +22,21 @@ pub struct WorkerInvoker<'a> {
 impl<'a> WorkerInvoker<'a> {
     /// Creates an invoker bound to a runtime, bootstrap configuration, and
     /// derived environment variables.
+    ///
+    /// # Examples
+    /// ```ignore
+    /// use pg_embedded_setup_unpriv::{ExecutionPrivileges, WorkerInvoker};
+    /// use pg_embedded_setup_unpriv::test_support::{dummy_settings, test_runtime};
+    ///
+    /// # fn demo() -> color_eyre::eyre::Result<()> {
+    /// let runtime = test_runtime()?;
+    /// let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
+    /// let env = bootstrap.environment.to_env();
+    /// let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env);
+    /// # let _ = invoker;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub const fn new(
         runtime: &'a Runtime,
         bootstrap: &'a TestBootstrapSettings,
@@ -41,6 +56,23 @@ impl<'a> WorkerInvoker<'a> {
     ///
     /// Returns a [`BootstrapError`] when the worker invocation fails or when
     /// the in-process operation surfaces an error.
+    ///
+    /// # Examples
+    /// ```ignore
+    /// use pg_embedded_setup_unpriv::{ExecutionPrivileges, WorkerInvoker, WorkerOperation};
+    /// use pg_embedded_setup_unpriv::test_support::{dummy_settings, test_runtime};
+    ///
+    /// # fn demo() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let runtime = test_runtime()?;
+    /// let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
+    /// let env = bootstrap.environment.to_env();
+    /// let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env);
+    /// invoker.invoke(WorkerOperation::Setup, async {
+    ///     Ok::<(), postgresql_embedded::Error>(())
+    /// })?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn invoke<Fut>(&self, operation: WorkerOperation, in_process_op: Fut) -> BootstrapResult<()>
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,

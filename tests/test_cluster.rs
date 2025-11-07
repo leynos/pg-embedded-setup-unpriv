@@ -15,39 +15,16 @@ use color_eyre::eyre::{Context, Result, ensure, eyre};
 use nix::unistd::geteuid;
 use pg_embedded_setup_unpriv::BootstrapError;
 use pg_embedded_setup_unpriv::test_support::{
-    RunRootOperationHookInstallError, capture_warn_logs, drain_hook_install_logs,
-    install_run_root_operation_hook,
+    RunRootOperationHookInstallError, capture_warn_logs, drain_hook_install_logs, dummy_settings,
+    install_run_root_operation_hook, test_runtime,
 };
-use pg_embedded_setup_unpriv::{
-    ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
-    WorkerInvoker, WorkerOperation,
-};
-use postgresql_embedded::Settings;
+use pg_embedded_setup_unpriv::{ExecutionPrivileges, WorkerInvoker, WorkerOperation};
 #[cfg(feature = "privileged-tests")]
 use std::fs;
 #[cfg(feature = "privileged-tests")]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(feature = "privileged-tests")]
 use tempfile::tempdir;
-use tokio::runtime::{Builder, Runtime};
-
-fn test_runtime() -> Result<Runtime> {
-    Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err: std::io::Error| eyre!(err))
-}
-
-fn dummy_environment() -> TestBootstrapEnvironment {
-    TestBootstrapEnvironment {
-        home: Utf8PathBuf::from("/tmp/pg-home"),
-        xdg_cache_home: Utf8PathBuf::from("/tmp/pg-cache"),
-        xdg_runtime_dir: Utf8PathBuf::from("/tmp/pg-run"),
-        pgpass_file: Utf8PathBuf::from("/tmp/.pgpass"),
-        tz_dir: Some(Utf8PathBuf::from("/usr/share/zoneinfo")),
-        timezone: "UTC".into(),
-    }
-}
 
 /// Serialises tests that install the run-root-operation hook.
 ///
@@ -58,22 +35,6 @@ fn serialise_hook_tests() -> std::sync::MutexGuard<'static, ()> {
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-fn dummy_settings(privileges: ExecutionPrivileges) -> TestBootstrapSettings {
-    TestBootstrapSettings {
-        privileges,
-        execution_mode: match privileges {
-            ExecutionPrivileges::Unprivileged => ExecutionMode::InProcess,
-            ExecutionPrivileges::Root => ExecutionMode::Subprocess,
-        },
-        settings: Settings::default(),
-        environment: dummy_environment(),
-        worker_binary: None,
-        setup_timeout: Duration::from_secs(180),
-        start_timeout: Duration::from_secs(60),
-        shutdown_timeout: Duration::from_secs(15),
-    }
 }
 
 #[test]

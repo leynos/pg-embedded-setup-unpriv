@@ -1,51 +1,14 @@
 use super::*;
+use crate::ExecutionPrivileges;
 use crate::test_support::{
-    RunRootOperationHookInstallError, drain_hook_install_logs, install_run_root_operation_hook,
+    RunRootOperationHookInstallError, drain_hook_install_logs, dummy_settings,
+    install_run_root_operation_hook, test_runtime,
 };
-use crate::{ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings};
-use camino::Utf8PathBuf;
 use color_eyre::eyre::{Result, ensure, eyre};
-use postgresql_embedded::Settings;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use std::time::Duration;
-use tokio::runtime::{Builder, Runtime};
-
-fn test_runtime() -> Result<Runtime> {
-    Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| eyre!(err))
-}
-
-fn dummy_environment() -> TestBootstrapEnvironment {
-    TestBootstrapEnvironment {
-        home: Utf8PathBuf::from("/tmp/pg-home"),
-        xdg_cache_home: Utf8PathBuf::from("/tmp/pg-cache"),
-        xdg_runtime_dir: Utf8PathBuf::from("/tmp/pg-run"),
-        pgpass_file: Utf8PathBuf::from("/tmp/.pgpass"),
-        tz_dir: Some(Utf8PathBuf::from("/usr/share/zoneinfo")),
-        timezone: "UTC".into(),
-    }
-}
-
-fn dummy_settings(privileges: ExecutionPrivileges) -> TestBootstrapSettings {
-    TestBootstrapSettings {
-        privileges,
-        execution_mode: match privileges {
-            ExecutionPrivileges::Unprivileged => ExecutionMode::InProcess,
-            ExecutionPrivileges::Root => ExecutionMode::Subprocess,
-        },
-        settings: Settings::default(),
-        environment: dummy_environment(),
-        worker_binary: None,
-        setup_timeout: Duration::from_secs(180),
-        start_timeout: Duration::from_secs(60),
-        shutdown_timeout: Duration::from_secs(15),
-    }
-}
 
 #[test]
 fn unprivileged_operations_execute_in_process() -> Result<()> {

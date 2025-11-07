@@ -231,7 +231,7 @@ essentially one line in the test setup.
 - Added `TestCluster::connection()`, which exposes a lightweight
   `TestClusterConnection` helper for querying host, port, credentials, and the
   generated `.pgpass` file without cloning the underlying bootstrap struct.
-  `ConnectionMetadata` captures an owned snapshot so callers can persist the
+  `ConnectionMetadata` captures an owned snapshot, so callers can persist the
   values beyond the guard's lifetime.
 - Introduced the opt-in `diesel-support` Cargo feature. When enabled, the new
   helper exposes `diesel_connection()` for establishing a
