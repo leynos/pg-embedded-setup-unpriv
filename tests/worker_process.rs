@@ -14,9 +14,9 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::{Context, eyre};
 use pg_embedded_setup_unpriv::worker_process_test_api::{
-    WorkerRequest, disable_privilege_drop_for_tests, render_failure_for_tests, run,
+    WorkerOperation, WorkerRequest, disable_privilege_drop_for_tests, render_failure_for_tests, run,
 };
-use pg_embedded_setup_unpriv::{BootstrapError, BootstrapResult, WorkerOperation};
+use pg_embedded_setup_unpriv::{BootstrapError, BootstrapResult};
 use postgresql_embedded::Settings;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;

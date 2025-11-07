@@ -33,6 +33,7 @@ nix = { version = "0.28", default-features = false, features = ["user", "fs"] }
 color-eyre = "0.6"
 tokio = { version = "1", features = ["rt", "macros"] }
 serde = { version = "1", features = ["derive"] }
+diesel = { version = "2", default-features = false, features = ["postgres"], optional = true }
 ortho_config = { version = "0.5.0", features = ["json5", "yaml", "toml"] }
 clap = { version = "4", features = ["derive"] }
 figment = { version = "0.10", features = ["env"] }
@@ -48,7 +49,8 @@ libc = "0.2"
 wait-timeout = "0.2"
 tracing = { version = "0.1", features = ["std"] }
 tracing-subscriber = { version = "0.3", features = ["fmt"], optional = true }
-openssl-sys = { version = "0.9.110" }
+openssl-sys = { version = "0.9.110", features = ["vendored"] }
+pq-sys = { version = "0.7.4", optional = true, features = ["bundled"] }
 
 [features]
 toml = []
@@ -57,6 +59,7 @@ yaml = []
 privileged-tests = []
 cluster-unit-tests = ["dep:tracing-subscriber"]
 dev-worker = []
+diesel-support = ["dep:diesel", "dep:pq-sys"]
 
 [workspace.lints.rust]
 unknown_lints             = "deny"

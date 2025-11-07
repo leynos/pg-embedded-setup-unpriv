@@ -16,15 +16,20 @@
 //! # }
 //! ```
 
+mod connection;
+mod worker_invoker;
+
+pub use self::connection::{ConnectionMetadata, TestClusterConnection};
+pub use self::worker_invoker::WorkerInvoker;
+
+use self::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use crate::bootstrap_for_tests;
 use crate::env::ScopedEnv;
 use crate::error::{BootstrapError, BootstrapResult};
-use crate::worker_process::{self, WorkerRequest};
 use crate::{ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings};
-use color_eyre::eyre::{Context, eyre};
+use color_eyre::eyre::Context;
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::fmt::Display;
-use std::future::Future;
 use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
 use tokio::time;
@@ -38,139 +43,6 @@ pub struct TestCluster {
     is_managed_via_worker: bool,
     env_vars: Vec<(String, Option<String>)>,
     _env_guard: ScopedEnv,
-}
-
-/// Executes worker operations whilst respecting configured privileges.
-#[derive(Debug)]
-#[doc(hidden)]
-pub struct WorkerInvoker<'a> {
-    runtime: &'a Runtime,
-    bootstrap: &'a TestBootstrapSettings,
-    env_vars: &'a [(String, Option<String>)],
-}
-
-impl<'a> WorkerInvoker<'a> {
-    /// Creates an invoker bound to a runtime, bootstrap configuration, and
-    /// derived environment variables.
-    ///
-    /// See [`TestCluster::new`] for usage in context.
-    pub const fn new(
-        runtime: &'a Runtime,
-        bootstrap: &'a TestBootstrapSettings,
-        env_vars: &'a [(String, Option<String>)],
-    ) -> Self {
-        Self {
-            runtime,
-            bootstrap,
-            env_vars,
-        }
-    }
-
-    /// Executes an operation either in-process or via the privileged worker,
-    /// depending on the configured privilege level.
-    ///
-    /// # Errors
-    /// Returns a [`BootstrapError`] when the worker invocation fails or when
-    /// the in-process operation returns an error.
-    ///
-    /// See [`TestCluster::new`] for concrete usage examples.
-    pub fn invoke<Fut>(&self, operation: WorkerOperation, in_process_op: Fut) -> BootstrapResult<()>
-    where
-        Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
-    {
-        match self.bootstrap.privileges {
-            ExecutionPrivileges::Unprivileged => {
-                self.invoke_unprivileged(in_process_op, operation.error_context())
-            }
-            ExecutionPrivileges::Root => self.invoke_as_root(operation),
-        }
-    }
-
-    fn invoke_unprivileged<Fut>(&self, future: Fut, ctx: &'static str) -> BootstrapResult<()>
-    where
-        Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
-    {
-        self.runtime
-            .block_on(future)
-            .context(ctx)
-            .map_err(BootstrapError::from)
-    }
-
-    fn invoke_as_root(&self, operation: WorkerOperation) -> BootstrapResult<()> {
-        #[cfg(any(test, feature = "cluster-unit-tests"))]
-        {
-            let hook_slot = crate::test_support::run_root_operation_hook()
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .clone();
-            if let Some(hook) = hook_slot {
-                return hook(self.bootstrap, self.env_vars, operation);
-            }
-        }
-
-        match self.bootstrap.execution_mode {
-            crate::ExecutionMode::InProcess => Err(BootstrapError::from(eyre!(concat!(
-                "ExecutionMode::InProcess is unsafe for root because process-wide ",
-                "UID/GID changes race in multi-threaded tests; switch to ",
-                "ExecutionMode::Subprocess"
-            )))),
-            crate::ExecutionMode::Subprocess => {
-                #[cfg(not(all(
-                    unix,
-                    any(
-                        target_os = "linux",
-                        target_os = "android",
-                        target_os = "freebsd",
-                        target_os = "openbsd",
-                        target_os = "dragonfly",
-                    ),
-                )))]
-                {
-                    return Err(BootstrapError::from(eyre!(
-                        "privilege drop not supported on this target; refusing to run as root: {}",
-                        operation.error_context()
-                    )));
-                }
-
-                #[cfg(all(
-                    unix,
-                    any(
-                        target_os = "linux",
-                        target_os = "android",
-                        target_os = "freebsd",
-                        target_os = "openbsd",
-                        target_os = "dragonfly",
-                    ),
-                ))]
-                {
-                    return self.spawn_worker(operation);
-                }
-
-                #[expect(unreachable_code, reason = "cfg guard ensures all targets handled")]
-                Err(BootstrapError::from(eyre!(
-                    "privilege drop support unexpectedly unavailable"
-                )))
-            }
-        }
-    }
-
-    fn spawn_worker(&self, operation: WorkerOperation) -> BootstrapResult<()> {
-        let worker = self.bootstrap.worker_binary.as_ref().ok_or_else(|| {
-            BootstrapError::from(eyre!(
-                "PG_EMBEDDED_WORKER must be set when using ExecutionMode::Subprocess"
-            ))
-        })?;
-
-        let request = WorkerRequest::new(
-            worker,
-            &self.bootstrap.settings,
-            self.env_vars,
-            operation,
-            operation.timeout(self.bootstrap),
-        );
-
-        worker_process::run(&request)
-    }
 }
 
 impl TestCluster {
@@ -195,12 +67,12 @@ impl TestCluster {
         let privileges = bootstrap.privileges;
         let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
 
-        let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env_vars);
+        let invoker = ClusterWorkerInvoker::new(&runtime, &bootstrap, &env_vars);
 
         invoker.invoke(WorkerOperation::Setup, async { embedded.setup().await })?;
         invoker.invoke(WorkerOperation::Start, async { embedded.start().await })?;
 
-        let is_managed_via_worker = matches!(privileges, crate::ExecutionPrivileges::Root);
+        let is_managed_via_worker = matches!(privileges, ExecutionPrivileges::Root);
         let postgres = if is_managed_via_worker {
             None
         } else {
@@ -230,6 +102,29 @@ impl TestCluster {
     /// Returns the bootstrap metadata captured when the cluster was started.
     pub const fn bootstrap(&self) -> &TestBootstrapSettings {
         &self.bootstrap
+    }
+
+    /// Returns helper methods for constructing connection artefacts.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    /// let metadata = cluster.connection().metadata();
+    /// println!(
+    ///     "postgresql://{}:***@{}:{}/postgres",
+    ///     metadata.superuser(),
+    ///     metadata.host(),
+    ///     metadata.port(),
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn connection(&self) -> TestClusterConnection {
+        TestClusterConnection::new(&self.bootstrap)
     }
 
     fn stop_context(settings: &Settings) -> String {
@@ -296,7 +191,7 @@ impl Drop for TestCluster {
         let context = Self::stop_context(&self.bootstrap.settings);
 
         if self.is_managed_via_worker {
-            let invoker = WorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
+            let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
             if let Err(err) = invoker.invoke_as_root(WorkerOperation::Stop) {
                 Self::warn_stop_failure(&context, &err);
             }
@@ -343,5 +238,5 @@ mod drop_logging_tests {
 }
 
 #[cfg(all(test, not(feature = "cluster-unit-tests")))]
-#[path = "../tests/test_cluster.rs"]
+#[path = "../../tests/test_cluster.rs"]
 mod tests;

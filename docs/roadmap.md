@@ -26,7 +26,7 @@
 - [x] **Task:** Create the `TestCluster` RAII struct with `new` and `Drop`
   implementations that guarantee cluster startup and teardown, evidenced by
   tests ensuring no processes remain after scope exit.
-- [ ] **Task:** Expose connection metadata and helper methods (for example a
+- [x] **Task:** Expose connection metadata and helper methods (for example a
   Diesel connection constructor) with documentation examples and smoke tests
   that execute simple SQL statements.
 

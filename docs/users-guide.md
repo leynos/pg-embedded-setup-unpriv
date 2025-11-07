@@ -75,24 +75,23 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
 }
 ```
 
-`bootstrap_for_tests()` ensures that
-`PGPASSFILE`, `HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`, and `TZ` are
-populated with deterministic defaults. When a timezone database can be
-discovered (currently on Unix-like hosts) the helper also sets `TZDIR`;
-otherwise it leaves any caller-provided value untouched so platform-specific
-defaults remain available. If the system timezone database is missing the
-helper returns an error advising the caller to install `tzdata` or set `TZDIR`
-explicitly, making the dependency visible during test startup rather than when
-PostgreSQL launches.
+`bootstrap_for_tests()` ensures that `PGPASSFILE`, `HOME`, `XDG_CACHE_HOME`,
+`XDG_RUNTIME_DIR`, and `TZ` are populated with deterministic defaults. When a
+timezone database can be discovered (currently on Unix-like hosts) the helper
+also sets `TZDIR`; otherwise it leaves any caller-provided value untouched so
+platform-specific defaults remain available. If the system timezone database is
+missing, the helper returns an error advising the caller to install `tzdata` or
+set `TZDIR` explicitly, making the dependency visible during test startup
+rather than when PostgreSQL launches.
 
-## RAII test clusters
+## Resource Acquisition Is Initialization (RAII) test clusters
 
-`pg_embedded_setup_unpriv::TestCluster` wraps `bootstrap_for_tests()` with an
-RAII lifecycle. Constructing the guard starts PostgreSQL using the discovered
-settings, applies the environment produced by the bootstrap helper, and exposes
-the configuration to callers. Dropping the guard stops the instance and
-restores the prior process environment, so subsequent tests start from a clean
-slate.
+`pg_embedded_setup_unpriv::TestCluster` wraps `bootstrap_for_tests()` with a
+Resource Acquisition Is Initialization (RAII) lifecycle. Constructing the guard
+starts PostgreSQL using the discovered settings, applies the environment
+produced by the bootstrap helper, and exposes the configuration to callers.
+Dropping the guard stops the instance and restores the prior process
+environment, so subsequent tests start from a clean slate.
 
 ```rust,no_run
 use pg_embedded_setup_unpriv::{TestCluster, error::BootstrapResult};
@@ -110,6 +109,46 @@ The guard keeps `PGPASSFILE`, `TZ`, `TZDIR`, and the XDG directories populated
 for the duration of its lifetime, making synchronous tests usable without extra
 setup. Unit and behavioural tests assert that `postmaster.pid` disappears after
 drop, demonstrating that no orphaned processes remain.
+
+### Connection helpers and Diesel integration
+
+`TestCluster::connection()` exposes `TestClusterConnection`, a lightweight view
+over the running cluster's connection metadata. Use it to read the host, port,
+superuser name, generated password, or the `.pgpass` path without cloning the
+entire bootstrap struct. When you need to persist those values beyond the guard
+you can call `metadata()` to obtain an owned `ConnectionMetadata`.
+
+Enable the `diesel-support` feature to call `diesel_connection()` and obtain a
+ready-to-use `diesel::PgConnection`. The default feature set keeps Diesel
+optional for consumers, while `make test` already enables `--all-features` so
+the helper is exercised by the smoke tests.
+
+```rust,no_run
+use diesel::prelude::*;
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+let connection = cluster.connection();
+let url = connection.database_url("postgres");
+assert!(url.starts_with("postgresql://"));
+
+#[cfg(feature = "diesel-support")]
+{
+    let mut diesel_conn = connection.diesel_connection("postgres")?;
+    #[derive(QueryableByName)]
+    struct ValueRow {
+        #[diesel(sql_type = diesel::sql_types::Integer)]
+        value: i32,
+    }
+
+    let rows: Vec<ValueRow> = diesel::sql_query("SELECT 1 AS value")
+        .load(&mut diesel_conn)?;
+    assert_eq!(rows[0].value, 1);
+}
+# Ok(())
+# }
+```
 
 ## Privilege detection and idempotence
 

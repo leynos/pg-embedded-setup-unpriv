@@ -1575,6 +1575,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
+name = "openssl-src"
+version = "300.5.4+3.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a507b3792995dae9b0df8a1c1e3771e8418b7c2d9f0baeba32e6fe8b06c7cb72"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "openssl-sys"
 version = "0.9.110"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1582,6 +1591,7 @@ checksum = "0a9f0075ba3c21b09f8e8b2026584b1d18d49388648f2fbbf3c97ea8deced8e2"
 dependencies = [
  "cc",
  "libc",
+ "openssl-src",
  "pkg-config",
  "vcpkg",
 ]
@@ -1805,6 +1815,7 @@ dependencies = [
  "openssl-sys",
  "ortho_config",
  "postgresql_embedded",
+ "pq-sys",
  "rstest",
  "rstest-bdd",
  "rstest-bdd-macros",
@@ -1917,6 +1928,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pq-src"
+version = "0.3.10+libpq-18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56ef39ce621f4993d6084fdcd4cbf1e01c84bdba53109cfad095d2cf441b85b9"
+dependencies = [
+ "cc",
+ "openssl-sys",
+]
+
+[[package]]
 name = "pq-sys"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1924,6 +1945,7 @@ checksum = "089d5dc8f44104b719912ad4478fd558b59a431ce19ef9101f637be8c656b90a"
 dependencies = [
  "libc",
  "pkg-config",
+ "pq-src",
  "vcpkg",
 ]
 

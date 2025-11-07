@@ -35,7 +35,7 @@ pub mod worker_process_test_api {
     use camino::Utf8Path;
     use postgresql_embedded::Settings;
 
-    use crate::WorkerOperation;
+    pub use crate::cluster::WorkerOperation;
     use crate::worker_process;
 
     #[cfg(all(
@@ -156,11 +156,13 @@ pub use bootstrap::{
     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
     bootstrap_for_tests, detect_execution_privileges, run,
 };
-pub use cluster::TestCluster;
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 #[doc(hidden)]
 pub use cluster::WorkerInvoker;
+#[cfg(any(test, feature = "cluster-unit-tests"))]
 #[doc(hidden)]
 pub use cluster::WorkerOperation;
+pub use cluster::{ConnectionMetadata, TestCluster, TestClusterConnection};
 #[doc(hidden)]
 pub use error::BootstrapResult;
 pub use error::PgEmbeddedError as Error;
