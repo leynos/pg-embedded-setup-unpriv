@@ -55,7 +55,7 @@ impl TestCluster {
     /// Returns an error if the bootstrap configuration cannot be prepared or if starting the
     /// embedded cluster fails.
     pub fn new() -> BootstrapResult<Self> {
-        let bootstrap = bootstrap_for_tests()?;
+        let mut bootstrap = bootstrap_for_tests()?;
         let runtime = Builder::new_current_thread()
             .enable_all()
             .build()
@@ -73,6 +73,11 @@ impl TestCluster {
         invoker.invoke(WorkerOperation::Start, async { embedded.start().await })?;
 
         let is_managed_via_worker = matches!(privileges, ExecutionPrivileges::Root);
+        if !is_managed_via_worker {
+            // Capture runtime mutations such as dynamically assigned ports so connection
+            // metadata reflects the live cluster rather than the pre-bootstrap defaults.
+            bootstrap.settings.port = embedded.settings().port;
+        }
         let postgres = if is_managed_via_worker {
             None
         } else {
