@@ -552,8 +552,9 @@ fn sandbox_root_path(sandbox: &TestSandbox) -> Result<PathBuf> {
     Ok(root.to_path_buf().into_std_path_buf())
 }
 
-fn read_postmaster_pid(data_dir: &Path) -> Result<Option<pid_t>> {
-    let pid_file = data_dir.join("postmaster.pid");
+fn read_postmaster_pid(data_dir: impl AsRef<Path>) -> Result<Option<pid_t>> {
+    let data_dir_ref = data_dir.as_ref();
+    let pid_file = data_dir_ref.join("postmaster.pid");
     if !pid_file.exists() {
         return Ok(None);
     }
@@ -584,8 +585,9 @@ fn wait_for_process_exit(pid: Option<pid_t>) -> Result<()> {
     )))
 }
 
-fn wait_for_pid_file_removal(data_dir: &Path) -> Result<()> {
-    let pid_file = data_dir.join("postmaster.pid");
+fn wait_for_pid_file_removal(data_dir: impl AsRef<Path>) -> Result<()> {
+    let data_dir_ref = data_dir.as_ref();
+    let pid_file = data_dir_ref.join("postmaster.pid");
     for _ in 0..100 {
         if !pid_file.exists() {
             return Ok(());
@@ -594,7 +596,7 @@ fn wait_for_pid_file_removal(data_dir: &Path) -> Result<()> {
     }
     Err(eyre!(format!(
         "postmaster.pid should be removed from {:?} once PostgreSQL stops",
-        data_dir
+        data_dir_ref
     )))
 }
 
