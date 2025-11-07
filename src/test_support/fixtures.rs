@@ -108,8 +108,7 @@ pub fn test_cluster() -> TestCluster {
     let cluster = TestCluster::new().unwrap_or_else(|err| {
         panic!("SKIP-TEST-CLUSTER: test_cluster fixture failed to start PostgreSQL: {err:?}")
     });
-    drop(worker_guard);
-    cluster
+    cluster.with_worker_guard(worker_guard)
 }
 
 fn ensure_worker_env() -> Option<ScopedEnv> {

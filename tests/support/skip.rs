@@ -5,6 +5,9 @@
 //! formatting logic here ensures new tests can inherit the same defensive
 //! behaviour without duplicating arrays of magic strings.
 
+/// Canonical prefix for soft skip messages emitted by the TestCluster helpers.
+pub(crate) const SKIP_TEST_CLUSTER_PREFIX: &str = "SKIP-TEST-CLUSTER";
+
 /// Message substrings that signal an external failure which should skip tests
 /// gracefully.
 pub(crate) const DEFAULT_SKIP_CONDITIONS: &[(&str, &str)] = &[
@@ -52,4 +55,9 @@ pub(crate) fn skip_message(prefix: &str, message: &str, debug: Option<&str>) -> 
             message_lc.contains(&needle_lc) || debug_lc.contains(&needle_lc)
         })
         .map(|(_, reason)| format!("{prefix}: {reason}: {message}"))
+}
+
+/// Convenience helper for formatting fixture skip reasons with the shared prefix.
+pub(crate) fn cluster_skip_message(message: &str, debug: Option<&str>) -> Option<String> {
+    skip_message(SKIP_TEST_CLUSTER_PREFIX, message, debug)
 }

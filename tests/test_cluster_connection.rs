@@ -24,7 +24,7 @@ mod skip;
 
 use sandbox::TestSandbox;
 use serial::{ScenarioSerialGuard, serial_guard};
-use skip::skip_message;
+use skip::cluster_skip_message;
 
 #[derive(QueryableByName, Debug, PartialEq, Eq)]
 struct ValueRow {
@@ -91,7 +91,7 @@ impl ConnectionWorld {
         self.metadata = None;
         self.selected_value = None;
         self.query_error = None;
-        if let Some(reason) = skip_message("SKIP-TEST-CLUSTER", &message, Some(&debug)) {
+        if let Some(reason) = cluster_skip_message(&message, Some(&debug)) {
             self.mark_skip(reason);
         }
     }
