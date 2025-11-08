@@ -94,37 +94,11 @@ fn then_fixture_yields_cluster(world: &FixtureWorldFixture) -> Result<()> {
     Ok(())
 }
 
-#[then("the fixture reports a missing timezone error")]
-fn then_fixture_reports_timezone_error(world: &FixtureWorldFixture) -> Result<()> {
-    let world_ref = borrow_world(world)?.borrow();
-    if world_ref.is_skipped() {
-        return Ok(());
-    }
-    let message = world_ref.panic_message()?;
-    ensure!(
-        message.contains("time zone"),
-        "expected a timezone error but observed: {message}",
-    );
-    Ok(())
-}
-
-#[then("the fixture reports a missing worker binary error")]
-fn then_fixture_reports_missing_worker_binary_error(world: &FixtureWorldFixture) -> Result<()> {
-    let world_ref = borrow_world(world)?.borrow();
-    if world_ref.is_skipped() {
-        return Ok(());
-    }
-    let message = world_ref.panic_message()?;
-    ensure!(
-        message.contains("worker binary") || message.contains("No such file"),
-        "expected a missing worker binary error but observed: {message}",
-    );
-    Ok(())
-}
-
-#[then("the fixture reports a non-executable worker binary error")]
-fn then_fixture_reports_non_executable_worker_binary_error(
+/// Ensures the recorded panic message contains at least one of the expected keywords.
+fn assert_panic_message_contains(
     world: &FixtureWorldFixture,
+    expected_keywords: &[&str],
+    error_description: &str,
 ) -> Result<()> {
     let world_ref = borrow_world(world)?.borrow();
     if world_ref.is_skipped() {
@@ -132,57 +106,62 @@ fn then_fixture_reports_non_executable_worker_binary_error(
     }
     let message = world_ref.panic_message()?;
     ensure!(
-        message.contains("Permission denied")
-            || message.contains("not executable")
-            || message.contains("Operation not permitted"),
-        "expected a non-executable worker binary error but observed: {message}",
+        expected_keywords.iter().any(|keyword| message.contains(keyword)),
+        "expected {error_description} but observed: {message}"
     );
     Ok(())
+}
+
+#[then("the fixture reports a missing timezone error")]
+fn then_fixture_reports_timezone_error(world: &FixtureWorldFixture) -> Result<()> {
+    assert_panic_message_contains(world, &["time zone"], "timezone error")
+}
+
+#[then("the fixture reports a missing worker binary error")]
+fn then_fixture_reports_missing_worker_binary_error(world: &FixtureWorldFixture) -> Result<()> {
+    assert_panic_message_contains(
+        world,
+        &["worker binary", "No such file"],
+        "missing worker binary error",
+    )
+}
+
+#[then("the fixture reports a non-executable worker binary error")]
+fn then_fixture_reports_non_executable_worker_binary_error(
+    world: &FixtureWorldFixture,
+) -> Result<()> {
+    assert_panic_message_contains(
+        world,
+        &["Permission denied", "not executable", "Operation not permitted"],
+        "non-executable worker binary error",
+    )
 }
 
 #[then("the fixture reports a permission error")]
 fn then_fixture_reports_permission_error(world: &FixtureWorldFixture) -> Result<()> {
-    let world_ref = borrow_world(world)?.borrow();
-    if world_ref.is_skipped() {
-        return Ok(());
-    }
-    let message = world_ref.panic_message()?;
-    ensure!(
-        message.contains("Permission") || message.contains("permission"),
-        "expected a permission error but observed: {message}",
-    );
-    Ok(())
+    assert_panic_message_contains(
+        world,
+        &["Permission", "permission"],
+        "permission error",
+    )
 }
 
 #[then("the fixture reports a read-only permission error")]
 fn then_fixture_reports_read_only_permission_error(world: &FixtureWorldFixture) -> Result<()> {
-    let world_ref = borrow_world(world)?.borrow();
-    if world_ref.is_skipped() {
-        return Ok(());
-    }
-    let message = world_ref.panic_message()?;
-    ensure!(
-        message.contains("read-only")
-            || message.contains("Read-only file system")
-            || message.contains("cannot write")
-            || message.contains("write permission"),
-        "expected a read-only permission error but observed: {message}",
-    );
-    Ok(())
+    assert_panic_message_contains(
+        world,
+        &["read-only", "Read-only file system", "cannot write", "write permission"],
+        "read-only permission error",
+    )
 }
 
 #[then("the fixture reports an invalid configuration error")]
 fn then_fixture_reports_invalid_configuration_error(world: &FixtureWorldFixture) -> Result<()> {
-    let world_ref = borrow_world(world)?.borrow();
-    if world_ref.is_skipped() {
-        return Ok(());
-    }
-    let message = world_ref.panic_message()?;
-    ensure!(
-        message.contains("configuration") || message.contains("invalid"),
-        "expected a configuration error but observed: {message}",
-    );
-    Ok(())
+    assert_panic_message_contains(
+        world,
+        &["configuration", "invalid"],
+        "configuration error",
+    )
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 0)]
