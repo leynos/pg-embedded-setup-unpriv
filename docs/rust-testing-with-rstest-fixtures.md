@@ -1317,7 +1317,7 @@ fn smoke(test_cluster: TestCluster) {
 The crate validates this fixture with standard `#[rstest]` tests and
 behavioural suites powered by `rstest-bdd` v0.1.0-alpha4, covering both the
 happy path and failure cases such as missing timezone data. The fixture panics
-with a `SKIP-TEST-CLUSTER` prefix so downstream tests can translate known
+with a `SKIP-TEST-CLUSTER` prefix, so downstream tests can translate known
 bootstrap issues into skips when appropriate.
 
 ## XI. Conclusion and Further Resources

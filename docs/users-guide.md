@@ -75,14 +75,15 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
 }
 ```
 
-`bootstrap_for_tests()` ensures that `PGPASSFILE`, `HOME`, `XDG_CACHE_HOME`,
-`XDG_RUNTIME_DIR`, and `TZ` are populated with deterministic defaults. When a
-timezone database can be discovered (currently on Unix-like hosts) the helper
-also sets `TZDIR`; otherwise it leaves any caller-provided value untouched so
-platform-specific defaults remain available. If the system timezone database is
-missing, the helper returns an error advising the caller to install `tzdata` or
-set `TZDIR` explicitly, making the dependency visible during test startup
-rather than when PostgreSQL launches.
+`bootstrap_for_tests()` ensures that
+`PGPASSFILE`, `HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`, and `TZ` are
+populated with deterministic defaults. When a timezone database can be
+discovered (currently on Unix-like hosts) the helper also sets `TZDIR`;
+otherwise it leaves any caller-provided value untouched so platform-specific
+defaults remain available. If the system timezone database is missing, the
+helper returns an error advising the caller to install `tzdata` or set `TZDIR`
+explicitly, making the dependency visible during test startup rather than when
+PostgreSQL launches.
 
 ## Resource Acquisition Is Initialization (RAII) test clusters
 
@@ -135,7 +136,7 @@ remain declarative as well:
 use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
 use rstest_bdd_macros::scenario;
 
-#[scenario(path = "tests/features/test_cluster.feature", index = 0)]
+#[scenario(path = "tests/features/test_cluster_fixture.feature", index = 0)]
 fn coverage(test_cluster: TestCluster) {
     let _ = test_cluster.environment();
 }
