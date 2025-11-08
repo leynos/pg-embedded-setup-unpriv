@@ -20,6 +20,7 @@ mod connection;
 mod worker_invoker;
 
 pub use self::connection::{ConnectionMetadata, TestClusterConnection};
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use self::worker_invoker::WorkerInvoker;
 
 use self::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;

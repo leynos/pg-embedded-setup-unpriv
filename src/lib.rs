@@ -156,7 +156,7 @@ pub use bootstrap::{
     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
     bootstrap_for_tests, detect_execution_privileges, run,
 };
-#[cfg(any(test, feature = "cluster-unit-tests"))]
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[doc(hidden)]
 pub use cluster::WorkerInvoker;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
