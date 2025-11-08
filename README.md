@@ -30,10 +30,10 @@ from `postgresql_embedded::Settings::default()` are used.
   PostgreSQL to stop during teardown. Defaults to `15` seconds and accepts
   values between `1` and `600`.
 
-You may also provide these values through a configuration file named `pg.toml`,
-`pg.yaml`, or `pg.json5` (depending on enabled features) located in any path
-recognised by `ortho_config`, or through CLI flags if you wrap the binary
-inside your own launcher.
+You may also provide these values through a configuration file named
+`pg.toml`, `pg.yaml`, or `pg.json5` (depending on enabled features) located in
+any path recognised by `ortho_config`, or through CLI flags if you wrap the
+binary inside your own launcher.
 
 ## Root usage and worker binary
 
@@ -178,7 +178,6 @@ diagnostics to French via `rstest_bdd::select_localizations` and fails if the
 embedded assets are missing. Run `make test` (or the focused
 `cargo test localized_diagnostics`) in CI to ensure every target platform loads
 the lazy localization payload correctly.
-
 ## Next steps
 
 After the bootstrap completes you can start PostgreSQL with
