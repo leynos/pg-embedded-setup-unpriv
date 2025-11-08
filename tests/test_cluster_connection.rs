@@ -13,6 +13,8 @@ use std::ffi::{OsStr, OsString};
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs;
+#[path = "support/cluster_skip.rs"]
+mod cluster_skip;
 #[path = "support/env.rs"]
 mod env;
 #[path = "support/sandbox.rs"]
@@ -22,9 +24,9 @@ mod serial;
 #[path = "support/skip.rs"]
 mod skip;
 
+use cluster_skip::cluster_skip_message;
 use sandbox::TestSandbox;
 use serial::{ScenarioSerialGuard, serial_guard};
-use skip::skip_message;
 
 #[derive(QueryableByName, Debug, PartialEq, Eq)]
 struct ValueRow {
@@ -91,7 +93,7 @@ impl ConnectionWorld {
         self.metadata = None;
         self.selected_value = None;
         self.query_error = None;
-        if let Some(reason) = skip_message("SKIP-TEST-CLUSTER", &message, Some(&debug)) {
+        if let Some(reason) = cluster_skip_message(&message, Some(&debug)) {
             self.mark_skip(reason);
         }
     }
@@ -239,7 +241,8 @@ fn when_diesel_runs_malformed_sql(world: &ConnectionWorldFixture) -> Result<()> 
         .connection()
         .diesel_connection("postgres")
         .map_err(|err| eyre!(err))?;
-    match diesel::sql_query("SELECT FROM broken").execute(&mut connection) {
+    // Intentionally misspell SELECT so PostgreSQL raises a syntax error before planning.
+    match diesel::sql_query("SELEC 1").execute(&mut connection) {
         Ok(_) => Err(eyre!("malformed query unexpectedly succeeded")),
         Err(err) => {
             world_cell.borrow_mut().record_query_error(err.to_string());

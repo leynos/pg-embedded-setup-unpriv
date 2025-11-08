@@ -320,21 +320,28 @@ delegating to the worker helper when root privileges are detected so lifecycle
 commands run as `nobody`. The underlying crate supports both patterns, so we
 will leverage that (see postgresql-embedded README).
 
-- **rstest fixtures:** We plan to publish built-in *fixtures* for the rstest
-  framework (see docs/next-steps.md). For example, the library can expose:
+- **rstest fixtures:** The crate now ships a built-in `rstest` fixture exposed
+  as `pg_embedded_setup_unpriv::test_support::test_cluster`. When imported into
+  a test module, any `#[rstest]` function that declares a
+  `test_cluster: TestCluster` parameter receives a ready instance without
+  invoking `TestCluster::start()` manually. The fixture is validated by the
+  `tests/test_cluster_fixture.rs` suite, which combines direct `#[rstest]`
+  tests with `rstest-bdd` (v0.1.0-alpha4) scenarios that cover both successful
+  bootstraps and timezone failures. The fixture panics with a
+  `SKIP-TEST-CLUSTER` prefix, so behavioural tests can convert known external
+  issues into soft skips.
 
 ```rust
 #[fixture]
 pub fn test_cluster() -> TestCluster {
-    TestCluster::start().unwrap()
+    TestCluster::new().unwrap()
 }
 ```
 
-This allows tests to simply declare `fn my_test(cluster: TestCluster) { ... }`
-and get a running DB instance injected automatically. This will make
-integration tests highly concise and consistent across projects, since everyone
-can use the same fixture name and behaviour. The fixture will handle both root
-and non-root cases identically (abstracted behind `TestCluster`).
+This allows tests to declare `fn my_test(test_cluster: TestCluster) { ... }`
+and get a running DB instance injected automatically. This keeps integration
+tests concise and consistent across projects, with unified behaviour for both
+root and unprivileged execution paths.
 
 - **Parallel test runners:** Using `cargo nextest` (or even running
   `cargo test -- --test-threads=n`), multiple tests may run concurrently. We

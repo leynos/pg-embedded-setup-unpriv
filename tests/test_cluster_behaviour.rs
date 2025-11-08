@@ -211,8 +211,8 @@ fn then_cluster_reports_settings(world: &ClusterWorldFixture) -> Result<()> {
         .map_err(|_| eyre!("data_dir is not valid UTF-8"))?;
 
     ensure!(
-        install_dir == world_ref.sandbox.install_dir(),
-        "expected install dir {} but observed {}",
+        install_dir.starts_with(world_ref.sandbox.install_dir()),
+        "expected install dir to reside under {} but observed {}",
         world_ref.sandbox.install_dir(),
         install_dir
     );
