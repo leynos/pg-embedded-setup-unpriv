@@ -30,10 +30,10 @@ from `postgresql_embedded::Settings::default()` are used.
   PostgreSQL to stop during teardown. Defaults to `15` seconds and accepts
   values between `1` and `600`.
 
-You may also provide these values through a configuration file named `pg.toml`,
-`pg.yaml`, or `pg.json5` (depending on enabled features) located in any path
-recognised by `ortho_config`, or through CLI flags if you wrap the binary
-inside your own launcher.
+You may also provide these values through a configuration file named
+`pg.toml`, `pg.yaml`, or `pg.json5` (depending on enabled features) located in
+any path recognised by `ortho_config`, or through CLI flags if you wrap the
+binary inside your own launcher.
 
 ## Running the setup helper
 
@@ -73,6 +73,29 @@ inside your own launcher.
 - **Invalid `TimeZone` parameter** – The embedded cluster requires access to
   the system timezone database. Install your distribution's `tzdata` (or
   equivalent) package inside the container or VM running the tool.
+
+## Integration testing with `rstest`
+
+The crate ships an `rstest` fixture, `test_support::test_cluster`, so test
+modules can request a ready `TestCluster` without invoking constructors
+manually. Bring the fixture into scope and declare a parameter named
+`test_cluster` to opt into automatic setup and teardown.
+
+```rust,no_run
+use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
+use rstest::rstest;
+
+#[rstest]
+fn migrates_schema(test_cluster: TestCluster) {
+    let url = test_cluster.connection().database_url("postgres");
+    assert!(url.starts_with("postgresql://"));
+}
+```
+
+Because the fixture handles environment preparation, tests stay declarative and
+can focus on behaviours instead of bootstrap plumbing. When a bootstrap failure
+occurs the fixture panics with a `SKIP-TEST-CLUSTER` prefix, so higher-level
+behaviour tests can convert known transient errors into soft skips.
 
 ## Next steps
 

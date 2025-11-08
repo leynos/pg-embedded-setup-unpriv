@@ -93,8 +93,8 @@ during discovery and do not cause errors if present.
 
 `ortho_config` re-exports its parsing dependencies, so consumers do not need to
 declare them directly. Access `figment`, `uncased`, `xdg` (on Unix-like and
-Redox targets), and the optional parsers (`figment_json5`, `json5`,
-`serde_yaml`, `toml`) via `ortho_config::` paths.
+Redox targets), and the optional parsers
+(`figment_json5`, `json5`, `serde_yaml`, `toml`) via `ortho_config::` paths.
 
 ## Migrating from earlier versions
 
@@ -335,9 +335,9 @@ struct CliArgs {
 ```
 
 The example above exposes the flag as `--config` and the environment variables
-`<PREFIX>CONFIG_PATH` and `CONFIG_PATH`. Without this field, `--config-path`,
-`<PREFIX>CONFIG_PATH` and `CONFIG_PATH` remain available but hidden from help
-output.
+`<PREFIX>CONFIG_PATH` and `CONFIG_PATH`. Without this field,
+`--config-path`, `<PREFIX>CONFIG_PATH` and `CONFIG_PATH` remain available but
+hidden from help output.
 
 ### Source precedence
 
@@ -382,9 +382,10 @@ CLI values.
 Environment variables are upper‑cased and use underscores. The struct‑level
 prefix (if supplied) is prepended without any separator, and nested fields are
 separated by double underscores. For the `AppConfig` and `DatabaseConfig`
-example above, valid environment variables include `APP_LOG_LEVEL`, `APP_PORT`,
-`APP_DATABASE__URL` and `APP_DATABASE__POOL_SIZE`. If the nested struct has its
-own prefix (`DB`), then the environment variable becomes `APP_DB_URL`.
+example above, valid environment variables include
+`APP_LOG_LEVEL`, `APP_PORT`, `APP_DATABASE__URL` and `APP_DATABASE__POOL_SIZE`.
+If the nested struct has its own prefix (`DB`), then the environment variable
+becomes `APP_DB_URL`.
 
 Comma-separated values such as `DDLINT_RULES=A,B,C` are parsed as lists. The
 loader converts these strings into arrays before merging, so array fields
@@ -525,19 +526,20 @@ setting. Global options such as `--recipient` or `--salutation` are parsed via
 variables beneath any CLI overrides. The `greet` subcommand adds optional
 behaviour like a preamble (`--preamble "Good morning"`) or custom punctuation
 while reusing the merged global configuration. The `take-leave` subcommand
-combines switches and optional arguments (`--wave`, `--gift`,
-`--channel email`, `--remind-in 15`) alongside greeting adjustments
-(`--preamble "Until next time"`, `--punctuation ?`) to describe how the
-farewell should unfold. Each subcommand struct derives `OrthoConfig` so
+combines switches and optional arguments
+(`--wave`, `--gift`, `--channel email`, `--remind-in 15`) alongside greeting
+adjustments (`--preamble "Until next time"`, `--punctuation ?`) to describe how
+the farewell should unfold. Each subcommand struct derives `OrthoConfig` so
 defaults from `[cmds.greet]` or `[cmds.take-leave]` merge automatically when
 `load_and_merge()` is called.
 
 Behavioural tests in `examples/hello_world/tests` exercise scenarios such as
 `hello_world greet --preamble "Good morning"` and running
-`hello_world --is-excited take-leave` with `--gift biscuits`, `--remind-in 15`,
-`--channel email`, and `--wave`. These end-to-end checks verify that CLI
-arguments override configuration files and that validation errors surface
-cleanly when callers provide blank strings or conflicting switches.
+`hello_world --is-excited take-leave` with
+`--gift biscuits`, `--remind-in 15`, `--channel email`, and `--wave`. These
+end-to-end checks verify that CLI arguments override configuration files and
+that validation errors surface cleanly when callers provide blank strings or
+conflicting switches.
 
 Sample configuration files live in `examples/hello_world/config`. The
 `baseline.toml` defaults underpin both the automated tests and the demo

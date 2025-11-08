@@ -176,6 +176,28 @@ verbatim. The `#[scenario]` macro binds the test function to the first scenario
 in the specified feature file and runs all registered steps before executing
 the body of `test_add_to_basket`.
 
+### Consuming fixtures from dependencies
+
+Because `rstest-bdd` reuses `rstest` fixtures, you can import fixtures defined
+in dependent crates. For example, `pg_embedded_setup_unpriv` publishes a
+`test_support::test_cluster` fixture that yields a running PostgreSQL instance.
+Bring the fixture into scope and declare a `test_cluster: TestCluster`
+parameter in any scenario or step that needs database access:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
+use rstest_bdd_macros::{scenario, then};
+
+#[scenario(path = "tests/features/test_cluster_fixture.feature", index = 0)]
+fn embed_cluster(test_cluster: TestCluster) {
+    assert!(test_cluster.settings().data_dir.exists());
+}
+```
+
+This keeps behaviour tests declarative: the fixture handles bootstrap,
+environment management, and teardown automatically, while steps focus on the
+observable outcomes.
+
 ### Inferred step patterns
 
 Step macros may omit the pattern string or provide a string literal containing
@@ -315,23 +337,24 @@ Best practices for writing effective scenarios include:
 
 - **Use placeholders for dynamic values.** Pattern strings may include
   `format!`-style placeholders such as `{count:u32}`. Type hints narrow the
-  match. Numeric hints support all Rust primitives (`u8..u128`, `i8..i128`,
-  `usize`, `isize`, `f32`, `f64`). Floating-point hints accept integers,
-  decimal forms with optional leading or trailing digits, scientific notation
-  (for example, `1e3`, `-1E-9`), and the special values `NaN`, `inf`, and
-  `Infinity` (matched case-insensitively). Matching is anchored: the entire
-  step text must match the pattern; partial matches do not succeed. Escape
-  literal braces with `{{` and `}}`. Use `\` to match a single backslash. A
-  trailing `\` or any other backslash escape is treated literally, so `\d`
-  matches the two-character sequence `\d`. Nested braces inside placeholders
-  are not supported. Placeholders follow `{name[:type]}`; `name` must start
-  with a letter or underscore and may contain letters, digits, or underscores
-  (`[A-Za-z_][A-Za-z0-9_]*`). Whitespace within the type hint is ignored (for
-  example, `{count: u32}` and `{count:u32}` are both accepted), but whitespace
-  is not allowed between the name and the colon. Prefer the compact form
-  `{count:u32}` in new code. When a pattern contains no placeholders, the step
-  text must match exactly. Unknown type hints are treated as generic
-  placeholders and capture any non-newline text greedily.
+  match. Numeric hints support all Rust primitives
+  (`u8..u128`, `i8..i128`, `usize`, `isize`, `f32`, `f64`). Floating-point
+  hints accept integers, decimal forms with optional leading or trailing
+  digits, scientific notation (for example, `1e3`, `-1E-9`), and the special
+  values `NaN`, `inf`, and `Infinity` (matched case-insensitively). Matching is
+  anchored: the entire step text must match the pattern; partial matches do not
+  succeed. Escape literal braces with `{{` and `}}`. Use
+  `\` to match a single backslash. A trailing `\` or any other backslash escape
+  is treated literally, so `\d` matches the two-character sequence `\d`. Nested
+  braces inside placeholders are not supported. Placeholders follow
+  `{name[:type]}`; `name` must start with a letter or underscore and may
+  contain letters, digits, or underscores (`[A-Za-z_][A-Za-z0-9_]*`).
+  Whitespace within the type hint is ignored (for example, `{count: u32}` and
+  `{count:u32}` are both accepted), but whitespace is not allowed between the
+  name and the colon. Prefer the compact form `{count:u32}` in new code. When a
+  pattern contains no placeholders, the step text must match exactly. Unknown
+  type hints are treated as generic placeholders and capture any non-newline
+  text greedily.
 
 ## Data tables and Docstrings
 

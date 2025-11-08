@@ -42,6 +42,7 @@ pub struct TestCluster {
     bootstrap: TestBootstrapSettings,
     is_managed_via_worker: bool,
     env_vars: Vec<(String, Option<String>)>,
+    worker_guard: Option<ScopedEnv>,
     _env_guard: ScopedEnv,
 }
 
@@ -55,7 +56,7 @@ impl TestCluster {
     /// Returns an error if the bootstrap configuration cannot be prepared or if starting the
     /// embedded cluster fails.
     pub fn new() -> BootstrapResult<Self> {
-        let bootstrap = bootstrap_for_tests()?;
+        let mut bootstrap = bootstrap_for_tests()?;
         let runtime = Builder::new_current_thread()
             .enable_all()
             .build()
@@ -73,6 +74,11 @@ impl TestCluster {
         invoker.invoke(WorkerOperation::Start, async { embedded.start().await })?;
 
         let is_managed_via_worker = matches!(privileges, ExecutionPrivileges::Root);
+        if !is_managed_via_worker {
+            // Capture runtime mutations such as dynamically assigned ports so connection
+            // metadata reflects the live cluster rather than the pre-bootstrap defaults.
+            bootstrap.settings = embedded.settings().clone();
+        }
         let postgres = if is_managed_via_worker {
             None
         } else {
@@ -85,8 +91,20 @@ impl TestCluster {
             bootstrap,
             is_managed_via_worker,
             env_vars,
+            worker_guard: None,
             _env_guard: env_guard,
         })
+    }
+
+    /// Extends the cluster lifetime to cover additional scoped environment guards.
+    ///
+    /// Primarily used by fixtures that need to ensure `PG_EMBEDDED_WORKER` remains set for the
+    /// duration of the cluster lifetime.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_worker_guard(mut self, worker_guard: Option<ScopedEnv>) -> Self {
+        self.worker_guard = worker_guard;
+        self
     }
 
     /// Returns the prepared `PostgreSQL` settings for the running cluster.
@@ -145,6 +163,59 @@ impl TestCluster {
         tracing::warn!(
             "SKIP-TEST-CLUSTER: stop() timed out after {timeout_secs}s ({context}); proceeding with drop"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::*;
+    use crate::ExecutionPrivileges;
+    use crate::test_support::{dummy_settings, scoped_env};
+
+    #[test]
+    fn with_worker_guard_restores_environment() {
+        const KEY: &str = "PG_EMBEDDED_WORKER_GUARD_TEST";
+        let baseline = std::env::var(KEY).ok();
+        let guard = scoped_env(vec![(OsString::from(KEY), Some(OsString::from("guarded")))]);
+        let cluster = dummy_cluster().with_worker_guard(Some(guard));
+        assert_eq!(
+            std::env::var(KEY).as_deref(),
+            Ok("guarded"),
+            "worker guard should remain active whilst the cluster runs",
+        );
+        drop(cluster);
+        match baseline {
+            Some(value) => assert_eq!(
+                std::env::var(KEY).as_deref(),
+                Ok(value.as_str()),
+                "worker guard should restore the previous value"
+            ),
+            None => assert!(
+                std::env::var(KEY).is_err(),
+                "worker guard should unset the variable once the cluster drops"
+            ),
+        }
+    }
+
+    fn dummy_cluster() -> TestCluster {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
+        let env_vars = bootstrap.environment.to_env();
+        let env_guard = ScopedEnv::apply(&env_vars);
+        TestCluster {
+            runtime,
+            postgres: None,
+            bootstrap,
+            is_managed_via_worker: false,
+            env_vars,
+            worker_guard: None,
+            _env_guard: env_guard,
+        }
     }
 }
 
@@ -207,7 +278,7 @@ impl Drop for TestCluster {
                 Err(_) => Self::warn_stop_timeout(timeout_secs, &context),
             }
         }
-        // `env_guard` drops after this block, restoring the environment.
+        // Environment guards drop after this block, restoring the process state.
     }
 }
 

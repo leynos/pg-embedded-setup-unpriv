@@ -10,6 +10,8 @@ use std::{thread, time::Duration};
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs;
+#[path = "support/cluster_skip.rs"]
+mod cluster_skip;
 #[path = "support/env.rs"]
 mod env;
 #[path = "support/env_snapshot.rs"]
@@ -21,10 +23,10 @@ mod serial;
 #[path = "support/skip.rs"]
 mod skip;
 
+use cluster_skip::cluster_skip_message;
 use env_snapshot::EnvSnapshot;
 use sandbox::TestSandbox;
 use serial::{ScenarioSerialGuard, serial_guard};
-use skip::skip_message;
 
 fn run_cluster_lifecycle_test() -> std::result::Result<Utf8PathBuf, Report> {
     let before_cluster = EnvSnapshot::capture();
@@ -67,7 +69,7 @@ fn should_skip_test(result: &std::result::Result<Utf8PathBuf, Report>) -> bool {
     };
     let message = err.to_string();
     let debug = format!("{err:?}");
-    skip_message("SKIP-TEST-CLUSTER", &message, Some(&debug))
+    cluster_skip_message(&message, Some(&debug))
         .map(|reason| {
             tracing::warn!("{reason}");
         })
