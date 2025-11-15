@@ -1991,6 +1991,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uncased",
+ "unic-langid",
  "wait-timeout",
  "xdg",
 ]

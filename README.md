@@ -30,10 +30,10 @@ from `postgresql_embedded::Settings::default()` are used.
   PostgreSQL to stop during teardown. Defaults to `15` seconds and accepts
   values between `1` and `600`.
 
-You may also provide these values through a configuration file named
-`pg.toml`, `pg.yaml`, or `pg.json5` (depending on enabled features) located in
-any path recognised by `ortho_config`, or through CLI flags if you wrap the
-binary inside your own launcher.
+You may also provide these values through a configuration file named `pg.toml`,
+`pg.yaml`, or `pg.json5` (depending on enabled features) located in any path
+recognised by `ortho_config`, or through CLI flags if you wrap the binary
+inside your own launcher.
 
 ## Running the setup helper
 
@@ -96,6 +96,16 @@ Because the fixture handles environment preparation, tests stay declarative and
 can focus on behaviours instead of bootstrap plumbing. When a bootstrap failure
 occurs the fixture panics with a `SKIP-TEST-CLUSTER` prefix, so higher-level
 behaviour tests can convert known transient errors into soft skips.
+
+## Behaviour-driven diagnostics
+
+Behavioural coverage relies on `rstest-bdd` (Behaviour-Driven Development, BDD)
+v0.1.0, which now bundles Fluent localisation files. The test suite includes
+`tests/localized_diagnostics.rs`, a Dutch Gherkin scenario that switches
+diagnostics to French via `rstest_bdd::select_localizations` and fails if the
+embedded assets are missing. Run `make test` (or the focused
+`cargo test localized_diagnostics`) in CI to ensure every target platform loads
+the lazy localisation payload correctly.
 
 ## Next steps
 

@@ -35,10 +35,11 @@ ID:
   normalization as the root flow. This guarantees identical layout regardless
   of privileges.
 
-- Behavioural tests implemented with `rstest-bdd` cover both flows. The
-  scenarios share a reusable sandbox that records the detected privileges, runs
-  bootstrap as either root or `nobody`, and asserts ownership plus double-run
-  idempotence for the privileged path.
+- Behavioural tests implemented with `rstest-bdd` (Behaviour-Driven
+  Development, BDD) cover both flows. The scenarios share a reusable sandbox
+  that records the detected privileges, runs bootstrap as either root or
+  `nobody`, and asserts ownership plus double-run idempotence for the
+  privileged path.
 
 - Filesystem work now routes through `cap-std` with `camino` path handling so
   bootstrap always honours capability-based sandboxing and fails fast when
@@ -260,6 +261,10 @@ essentially one line in the test setup.
 - Recorded this dependency uplift to keep the design doc aligned with the tool
   chain choices and to signpost downstream crates that they can safely rely on
   the 0.1.0 APIs when authoring their own scenarios.
+- Added a Dutch `rstest-bdd` scenario (`tests/localized_diagnostics.rs`) that
+  switches diagnostics to French via `select_localizations`. The test is part
+  of `make test`, giving CI a deterministic signal that localisation bundles
+  ship correctly on every target platform.
 
 ### Ephemeral ports and isolation
 
