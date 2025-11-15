@@ -16,6 +16,8 @@ use rstest_bdd_macros::{given, scenario, then, when};
 mod cap_fs_bootstrap;
 #[path = "support/env.rs"]
 mod env;
+#[path = "support/scenario.rs"]
+mod scenario;
 #[path = "support/serial.rs"]
 mod serial;
 #[path = "support/skip.rs"]
@@ -25,6 +27,7 @@ use cap_fs_bootstrap::{remove_tree, set_permissions};
 use env::{build_env, with_scoped_env};
 use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
 use pg_embedded_setup_unpriv::test_support::metadata;
+use scenario::expect_fixture;
 use serial::{ScenarioSerialGuard, serial_guard};
 use skip::skip_message;
 
@@ -314,21 +317,13 @@ fn then_detected_root(sandbox: &BootstrapSandboxFixture) -> Result<()> {
 }
 
 #[scenario(path = "tests/features/bootstrap_privileges.feature", index = 0)]
-fn bootstrap_as_unprivileged(
-    serial_guard: ScenarioSerialGuard,
-    sandbox: BootstrapSandboxFixture,
-) -> Result<()> {
+fn bootstrap_as_unprivileged(serial_guard: ScenarioSerialGuard, sandbox: BootstrapSandboxFixture) {
     let _guard = serial_guard;
-    let _ = sandbox?;
-    Ok(())
+    let _ = expect_fixture(sandbox, "bootstrap privileges sandbox");
 }
 
 #[scenario(path = "tests/features/bootstrap_privileges.feature", index = 1)]
-fn bootstrap_as_root(
-    serial_guard: ScenarioSerialGuard,
-    sandbox: BootstrapSandboxFixture,
-) -> Result<()> {
+fn bootstrap_as_root(serial_guard: ScenarioSerialGuard, sandbox: BootstrapSandboxFixture) {
     let _guard = serial_guard;
-    let _ = sandbox?;
-    Ok(())
+    let _ = expect_fixture(sandbox, "bootstrap privileges sandbox");
 }

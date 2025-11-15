@@ -168,40 +168,55 @@ fn then_fixture_reports_invalid_configuration_error(world: &FixtureWorldFixture)
 fn scenario_fixture_happy_path(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    expect_scenario_success(
+        "fixture happy path",
+        execute_scenario(serial_guard, world),
+    );
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 1)]
 fn scenario_fixture_missing_timezone(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    expect_scenario_success(
+        "fixture missing timezone",
+        execute_scenario(serial_guard, world),
+    );
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 2)]
 fn scenario_fixture_missing_worker(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    expect_scenario_success(
+        "fixture missing worker",
+        execute_scenario(serial_guard, world),
+    );
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 3)]
 fn scenario_fixture_non_exec_worker(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    expect_scenario_success(
+        "fixture non executable worker",
+        execute_scenario(serial_guard, world),
+    );
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 4)]
 fn scenario_fixture_read_only_permissions(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    expect_scenario_success(
+        "fixture read only permissions",
+        execute_scenario(serial_guard, world),
+    );
 }
 
 fn execute_scenario(
@@ -211,4 +226,8 @@ fn execute_scenario(
     let _guard = serial_guard;
     let _ = world?;
     Ok(())
+}
+
+fn expect_scenario_success(label: &str, result: Result<()>) {
+    result.unwrap_or_else(|err| panic!("{label} scenario failed: {err:?}"));
 }

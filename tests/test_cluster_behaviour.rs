@@ -17,6 +17,8 @@ mod env;
 mod env_snapshot;
 #[path = "support/sandbox.rs"]
 mod sandbox;
+#[path = "support/scenario.rs"]
+mod scenario;
 #[path = "support/serial.rs"]
 mod serial;
 #[path = "support/skip.rs"]
@@ -24,6 +26,7 @@ mod skip;
 
 use env_snapshot::EnvSnapshot;
 use sandbox::TestSandbox;
+use scenario::expect_fixture;
 use serial::{ScenarioSerialGuard, serial_guard};
 use skip::skip_message;
 
@@ -304,21 +307,13 @@ fn then_cluster_reports_timezone_error(world: &ClusterWorldFixture) -> Result<()
 }
 
 #[scenario(path = "tests/features/test_cluster.feature", index = 0)]
-fn scenario_cluster_lifecycle(
-    serial_guard: ScenarioSerialGuard,
-    world: ClusterWorldFixture,
-) -> Result<()> {
+fn scenario_cluster_lifecycle(serial_guard: ScenarioSerialGuard, world: ClusterWorldFixture) {
     let _guard = serial_guard;
-    let _ = world?;
-    Ok(())
+    let _ = expect_fixture(world, "cluster lifecycle world");
 }
 
 #[scenario(path = "tests/features/test_cluster.feature", index = 1)]
-fn scenario_cluster_timezone_error(
-    serial_guard: ScenarioSerialGuard,
-    world: ClusterWorldFixture,
-) -> Result<()> {
+fn scenario_cluster_timezone_error(serial_guard: ScenarioSerialGuard, world: ClusterWorldFixture) {
     let _guard = serial_guard;
-    let _ = world?;
-    Ok(())
+    let _ = expect_fixture(world, "cluster timezone world");
 }
