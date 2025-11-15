@@ -329,13 +329,11 @@ fn then_timezone_error(world: &BootstrapWorldFixture) -> Result<()> {
 }
 
 #[scenario(path = "tests/features/bootstrap_for_tests.feature", index = 0)]
-fn bootstrap_for_tests_defaults(world: Result<RefCell<BootstrapWorld>>) -> Result<()> {
-    let _ = world?;
-    Ok(())
+fn bootstrap_for_tests_defaults(world: BootstrapWorldFixture) {
+    let _ = world.expect("bootstrap fixture construction failed");
 }
 
 #[scenario(path = "tests/features/bootstrap_for_tests.feature", index = 1)]
-fn bootstrap_for_tests_missing_timezone(world: Result<RefCell<BootstrapWorld>>) -> Result<()> {
-    let _ = world?;
-    Ok(())
+fn bootstrap_for_tests_missing_timezone(world: BootstrapWorldFixture) {
+    let _ = world.expect("bootstrap fixture construction failed");
 }

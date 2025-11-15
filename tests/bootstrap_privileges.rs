@@ -314,21 +314,13 @@ fn then_detected_root(sandbox: &BootstrapSandboxFixture) -> Result<()> {
 }
 
 #[scenario(path = "tests/features/bootstrap_privileges.feature", index = 0)]
-fn bootstrap_as_unprivileged(
-    serial_guard: ScenarioSerialGuard,
-    sandbox: BootstrapSandboxFixture,
-) -> Result<()> {
+fn bootstrap_as_unprivileged(serial_guard: ScenarioSerialGuard, sandbox: BootstrapSandboxFixture) {
     let _guard = serial_guard;
-    let _ = sandbox?;
-    Ok(())
+    let _ = sandbox.expect("bootstrap sandbox fixture failed");
 }
 
 #[scenario(path = "tests/features/bootstrap_privileges.feature", index = 1)]
-fn bootstrap_as_root(
-    serial_guard: ScenarioSerialGuard,
-    sandbox: BootstrapSandboxFixture,
-) -> Result<()> {
+fn bootstrap_as_root(serial_guard: ScenarioSerialGuard, sandbox: BootstrapSandboxFixture) {
     let _guard = serial_guard;
-    let _ = sandbox?;
-    Ok(())
+    let _ = sandbox.expect("bootstrap sandbox fixture failed");
 }

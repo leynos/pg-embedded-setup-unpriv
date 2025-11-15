@@ -168,40 +168,40 @@ fn then_fixture_reports_invalid_configuration_error(world: &FixtureWorldFixture)
 fn scenario_fixture_happy_path(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    execute_scenario(serial_guard, world).expect("fixture happy path scenario")
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 1)]
 fn scenario_fixture_missing_timezone(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    execute_scenario(serial_guard, world).expect("fixture missing timezone scenario")
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 2)]
 fn scenario_fixture_missing_worker(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    execute_scenario(serial_guard, world).expect("fixture missing worker scenario")
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 3)]
 fn scenario_fixture_non_exec_worker(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    execute_scenario(serial_guard, world).expect("fixture non executable worker scenario")
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 4)]
 fn scenario_fixture_read_only_permissions(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    execute_scenario(serial_guard, world).expect("fixture read only permissions scenario")
 }
 
 fn execute_scenario(

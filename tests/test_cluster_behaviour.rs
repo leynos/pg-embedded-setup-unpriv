@@ -304,21 +304,13 @@ fn then_cluster_reports_timezone_error(world: &ClusterWorldFixture) -> Result<()
 }
 
 #[scenario(path = "tests/features/test_cluster.feature", index = 0)]
-fn scenario_cluster_lifecycle(
-    serial_guard: ScenarioSerialGuard,
-    world: ClusterWorldFixture,
-) -> Result<()> {
+fn scenario_cluster_lifecycle(serial_guard: ScenarioSerialGuard, world: ClusterWorldFixture) {
     let _guard = serial_guard;
-    let _ = world?;
-    Ok(())
+    let _ = world.expect("cluster world fixture failed");
 }
 
 #[scenario(path = "tests/features/test_cluster.feature", index = 1)]
-fn scenario_cluster_timezone_error(
-    serial_guard: ScenarioSerialGuard,
-    world: ClusterWorldFixture,
-) -> Result<()> {
+fn scenario_cluster_timezone_error(serial_guard: ScenarioSerialGuard, world: ClusterWorldFixture) {
     let _guard = serial_guard;
-    let _ = world?;
-    Ok(())
+    let _ = world.expect("cluster world fixture failed");
 }

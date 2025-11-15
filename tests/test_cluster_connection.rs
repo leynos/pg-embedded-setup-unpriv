@@ -307,31 +307,19 @@ fn then_query_error_reported(world: &ConnectionWorldFixture) -> Result<()> {
 }
 
 #[scenario(path = "tests/features/test_cluster_connection.feature", index = 0)]
-fn scenario_connection_metadata(
-    serial_guard: ScenarioSerialGuard,
-    world: ConnectionWorldFixture,
-) -> Result<()> {
+fn scenario_connection_metadata(serial_guard: ScenarioSerialGuard, world: ConnectionWorldFixture) {
     let _guard = serial_guard;
-    let _ = world?;
-    Ok(())
+    let _ = world.expect("connection world fixture failed");
 }
 
 #[scenario(path = "tests/features/test_cluster_connection.feature", index = 1)]
-fn scenario_diesel_query(
-    serial_guard: ScenarioSerialGuard,
-    world: ConnectionWorldFixture,
-) -> Result<()> {
+fn scenario_diesel_query(serial_guard: ScenarioSerialGuard, world: ConnectionWorldFixture) {
     let _guard = serial_guard;
-    let _ = world?;
-    Ok(())
+    let _ = world.expect("connection world fixture failed");
 }
 
 #[scenario(path = "tests/features/test_cluster_connection.feature", index = 2)]
-fn scenario_diesel_error(
-    serial_guard: ScenarioSerialGuard,
-    world: ConnectionWorldFixture,
-) -> Result<()> {
+fn scenario_diesel_error(serial_guard: ScenarioSerialGuard, world: ConnectionWorldFixture) {
     let _guard = serial_guard;
-    let _ = world?;
-    Ok(())
+    let _ = world.expect("connection world fixture failed");
 }
