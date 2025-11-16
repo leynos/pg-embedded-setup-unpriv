@@ -252,7 +252,7 @@ essentially one line in the test setup.
 
 - Adopted the general-availability `rstest-bdd` 0.1.0 release (and the matching
   macro crate) so behavioural coverage for privilege detection and Diesel flows
-  no longer depends on the alpha channel. The Fluent-backed localisation layer
+  no longer depends on the alpha channel. The Fluent-backed localization layer
   bundled with 0.1.0 keeps diagnostics actionable without bespoke plumbing in
   our fixture.
 - Accepted the new i18n dependencies pulled in by `rstest-bdd` 0.1.0. They load
@@ -263,7 +263,7 @@ essentially one line in the test setup.
   the 0.1.0 APIs when authoring their own scenarios.
 - Added a Dutch `rstest-bdd` scenario (`tests/localized_diagnostics.rs`) that
   switches diagnostics to French via `select_localizations`. The test is part
-  of `make test`, giving CI a deterministic signal that localisation bundles
+  of `make test`, giving CI a deterministic signal that localization bundles
   ship correctly on every target platform.
 
 ### Ephemeral ports and isolation

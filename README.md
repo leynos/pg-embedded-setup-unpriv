@@ -100,12 +100,12 @@ behaviour tests can convert known transient errors into soft skips.
 ## Behaviour-driven diagnostics
 
 Behavioural coverage relies on `rstest-bdd` (Behaviour-Driven Development, BDD)
-v0.1.0, which now bundles Fluent localisation files. The test suite includes
+v0.1.0, which now bundles Fluent localization files. The test suite includes
 `tests/localized_diagnostics.rs`, a Dutch Gherkin scenario that switches
 diagnostics to French via `rstest_bdd::select_localizations` and fails if the
 embedded assets are missing. Run `make test` (or the focused
 `cargo test localized_diagnostics`) in CI to ensure every target platform loads
-the lazy localisation payload correctly.
+the lazy localization payload correctly.
 
 ## Next steps
 

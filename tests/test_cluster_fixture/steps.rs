@@ -8,6 +8,10 @@ use super::{
     serial::ScenarioSerialGuard,
     world::{FixtureEnvProfile, FixtureWorldFixture, borrow_world, env_for_profile},
 };
+#[path = "../support/scenario.rs"]
+mod scenario;
+
+use scenario::expect_fixture;
 
 #[given("the rstest fixture uses the default environment")]
 fn given_default_fixture(world: &FixtureWorldFixture) -> Result<()> {
@@ -169,9 +173,9 @@ fn scenario_fixture_happy_path(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
 ) {
-    expect_scenario_success(
-        "fixture happy path",
+    expect_fixture(
         execute_scenario(serial_guard, world),
+        "fixture happy path",
     );
 }
 
@@ -180,9 +184,9 @@ fn scenario_fixture_missing_timezone(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
 ) {
-    expect_scenario_success(
-        "fixture missing timezone",
+    expect_fixture(
         execute_scenario(serial_guard, world),
+        "fixture missing timezone",
     );
 }
 
@@ -191,9 +195,9 @@ fn scenario_fixture_missing_worker(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
 ) {
-    expect_scenario_success(
-        "fixture missing worker",
+    expect_fixture(
         execute_scenario(serial_guard, world),
+        "fixture missing worker",
     );
 }
 
@@ -202,9 +206,9 @@ fn scenario_fixture_non_exec_worker(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
 ) {
-    expect_scenario_success(
-        "fixture non executable worker",
+    expect_fixture(
         execute_scenario(serial_guard, world),
+        "fixture non executable worker",
     );
 }
 
@@ -213,9 +217,9 @@ fn scenario_fixture_read_only_permissions(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
 ) {
-    expect_scenario_success(
-        "fixture read only permissions",
+    expect_fixture(
         execute_scenario(serial_guard, world),
+        "fixture read only permissions",
     );
 }
 
@@ -226,8 +230,4 @@ fn execute_scenario(
     let _guard = serial_guard;
     let _ = world?;
     Ok(())
-}
-
-fn expect_scenario_success(label: &str, result: Result<()>) {
-    result.unwrap_or_else(|err| panic!("{label} scenario failed: {err:?}"));
 }

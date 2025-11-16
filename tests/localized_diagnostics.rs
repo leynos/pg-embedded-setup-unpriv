@@ -24,7 +24,7 @@ type LocalizedWorldFixture = Result<RefCell<LocalizedWorld>>;
 fn borrow_world(world: &LocalizedWorldFixture) -> Result<&RefCell<LocalizedWorld>> {
     world
         .as_ref()
-        .map_err(|err| eyre!(format!("localized diagnostics fixture failed: {err}")))
+        .map_err(|err| eyre!("localized diagnostics fixture failed: {err}"))
 }
 
 #[fixture]
