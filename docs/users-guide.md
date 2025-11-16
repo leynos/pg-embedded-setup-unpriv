@@ -75,15 +75,14 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
 }
 ```
 
-`bootstrap_for_tests()` ensures that
-`PGPASSFILE`, `HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`, and `TZ` are
-populated with deterministic defaults. When a timezone database can be
-discovered (currently on Unix-like hosts) the helper also sets `TZDIR`;
-otherwise it leaves any caller-provided value untouched so platform-specific
-defaults remain available. If the system timezone database is missing, the
-helper returns an error advising the caller to install `tzdata` or set `TZDIR`
-explicitly, making the dependency visible during test startup rather than when
-PostgreSQL launches.
+`bootstrap_for_tests()` ensures that `PGPASSFILE`, `HOME`, `XDG_CACHE_HOME`,
+`XDG_RUNTIME_DIR`, and `TZ` are populated with deterministic defaults. When a
+timezone database can be discovered (currently on Unix-like hosts) the helper
+also sets `TZDIR`; otherwise it leaves any caller-provided value untouched so
+platform-specific defaults remain available. If the system timezone database is
+missing, the helper returns an error advising the caller to install `tzdata` or
+set `TZDIR` explicitly, making the dependency visible during test startup
+rather than when PostgreSQL launches.
 
 ## Resource Acquisition Is Initialization (RAII) test clusters
 
@@ -129,8 +128,8 @@ fn runs_migrations(test_cluster: TestCluster) {
 }
 ```
 
-The fixture integrates with `rstest-bdd` v0.1.0-alpha4 so behaviour tests can
-remain declarative as well:
+The fixture integrates with `rstest-bdd`, a Behaviour-Driven Development (BDD)
+crate, so behaviour tests can remain declarative as well:
 
 ```rust,no_run
 use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};

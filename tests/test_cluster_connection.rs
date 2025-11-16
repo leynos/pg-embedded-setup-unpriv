@@ -19,6 +19,8 @@ mod cluster_skip;
 mod env;
 #[path = "support/sandbox.rs"]
 mod sandbox;
+#[path = "support/scenario.rs"]
+mod scenario;
 #[path = "support/serial.rs"]
 mod serial;
 #[path = "support/skip.rs"]
@@ -26,6 +28,7 @@ mod skip;
 
 use cluster_skip::cluster_skip_message;
 use sandbox::TestSandbox;
+use scenario::expect_fixture;
 use serial::{ScenarioSerialGuard, serial_guard};
 
 #[derive(QueryableByName, Debug, PartialEq, Eq)]
@@ -307,31 +310,19 @@ fn then_query_error_reported(world: &ConnectionWorldFixture) -> Result<()> {
 }
 
 #[scenario(path = "tests/features/test_cluster_connection.feature", index = 0)]
-fn scenario_connection_metadata(
-    serial_guard: ScenarioSerialGuard,
-    world: ConnectionWorldFixture,
-) -> Result<()> {
+fn scenario_connection_metadata(serial_guard: ScenarioSerialGuard, world: ConnectionWorldFixture) {
     let _guard = serial_guard;
-    let _ = world?;
-    Ok(())
+    let _ = expect_fixture(world, "connection metadata world");
 }
 
 #[scenario(path = "tests/features/test_cluster_connection.feature", index = 1)]
-fn scenario_diesel_query(
-    serial_guard: ScenarioSerialGuard,
-    world: ConnectionWorldFixture,
-) -> Result<()> {
+fn scenario_diesel_query(serial_guard: ScenarioSerialGuard, world: ConnectionWorldFixture) {
     let _guard = serial_guard;
-    let _ = world?;
-    Ok(())
+    let _ = expect_fixture(world, "connection Diesel world");
 }
 
 #[scenario(path = "tests/features/test_cluster_connection.feature", index = 2)]
-fn scenario_diesel_error(
-    serial_guard: ScenarioSerialGuard,
-    world: ConnectionWorldFixture,
-) -> Result<()> {
+fn scenario_diesel_error(serial_guard: ScenarioSerialGuard, world: ConnectionWorldFixture) {
     let _guard = serial_guard;
-    let _ = world?;
-    Ok(())
+    let _ = expect_fixture(world, "connection Diesel error world");
 }
