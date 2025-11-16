@@ -8,6 +8,10 @@ use super::{
     serial::ScenarioSerialGuard,
     world::{FixtureEnvProfile, FixtureWorldFixture, borrow_world, env_for_profile},
 };
+#[path = "../support/scenario.rs"]
+mod scenario;
+
+use scenario::expect_fixture;
 
 #[given("the rstest fixture uses the default environment")]
 fn given_default_fixture(world: &FixtureWorldFixture) -> Result<()> {
@@ -168,40 +172,55 @@ fn then_fixture_reports_invalid_configuration_error(world: &FixtureWorldFixture)
 fn scenario_fixture_happy_path(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    expect_fixture(
+        execute_scenario(serial_guard, world),
+        "fixture happy path",
+    );
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 1)]
 fn scenario_fixture_missing_timezone(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    expect_fixture(
+        execute_scenario(serial_guard, world),
+        "fixture missing timezone",
+    );
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 2)]
 fn scenario_fixture_missing_worker(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    expect_fixture(
+        execute_scenario(serial_guard, world),
+        "fixture missing worker",
+    );
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 3)]
 fn scenario_fixture_non_exec_worker(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    expect_fixture(
+        execute_scenario(serial_guard, world),
+        "fixture non executable worker",
+    );
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 4)]
 fn scenario_fixture_read_only_permissions(
     serial_guard: ScenarioSerialGuard,
     world: FixtureWorldFixture,
-) -> Result<()> {
-    execute_scenario(serial_guard, world)
+) {
+    expect_fixture(
+        execute_scenario(serial_guard, world),
+        "fixture read only permissions",
+    );
 }
 
 fn execute_scenario(
