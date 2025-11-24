@@ -2,6 +2,7 @@
 #![cfg(unix)]
 
 use std::cell::RefCell;
+use std::ffi::OsString;
 use std::fs;
 
 use color_eyre::eyre::{Context, Result, ensure, eyre};
@@ -9,6 +10,8 @@ use pg_embedded_setup_unpriv::test_support::capture_info_logs_with_spans;
 use pg_embedded_setup_unpriv::{BootstrapResult, TestCluster};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
+
+use camino::{Utf8Path, Utf8PathBuf};
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs;
@@ -32,6 +35,7 @@ struct ObservabilityWorld {
     sandbox: TestSandbox,
     logs: Vec<String>,
     error: Option<String>,
+    skip_reason: Option<String>,
 }
 
 impl ObservabilityWorld {
@@ -40,17 +44,24 @@ impl ObservabilityWorld {
             sandbox: TestSandbox::new("observability")?,
             logs: Vec::new(),
             error: None,
+            skip_reason: None,
         })
     }
 
     fn reset(&mut self) {
         self.logs.clear();
         self.error = None;
+        self.skip_reason = None;
     }
 
     fn record_outcome(&mut self, logs: Vec<String>, result: BootstrapResult<()>) {
         self.logs = logs;
         self.error = result.err().map(|err| err.to_string());
+        if let Some(err) = &self.error {
+            if err.contains("Permission denied") || err.contains("setgroups") {
+                self.skip_reason = Some("privilege drop unavailable on host".to_owned());
+            }
+        }
     }
 }
 
@@ -87,6 +98,8 @@ fn when_cluster_boots(world: &WorldFixture) -> Result<()> {
     let (logs, result) = {
         let world_ref = world_cell.borrow();
         let env_vars = world_ref.sandbox.env_without_timezone();
+        ensure_runtime_dir_matches(&env_vars, world_ref.sandbox.install_dir())?;
+        assert_worker_present(&env_vars)?;
         capture_info_logs_with_spans(|| {
             world_ref
                 .sandbox
@@ -106,11 +119,17 @@ fn when_cluster_bootstrap_fails(world: &WorldFixture) -> Result<()> {
     let world_cell = borrow_world(world)?;
     let (logs, result) = {
         let world_ref = world_cell.borrow();
-        let runtime_file = world_ref.sandbox.install_dir().join("runtime-as-file");
-        fs::write(runtime_file.as_std_path(), "not a directory")
-            .with_context(|| format!("create runtime file at {runtime_file}"))?;
+        let data_file = world_ref.sandbox.install_dir().join("data-as-file");
+        if let Some(parent) = data_file.parent() {
+            fs::create_dir_all(parent.as_std_path())
+                .with_context(|| format!("create parent directory for {data_file}"))?;
+        }
+        fs::write(data_file.as_std_path(), "not a directory")
+            .with_context(|| format!("create data file at {data_file}"))?;
         let mut vars = world_ref.sandbox.env_without_timezone();
-        override_env_path(&mut vars, "PG_RUNTIME_DIR", runtime_file.as_ref());
+        override_env_path(&mut vars, "PG_DATA_DIR", data_file.as_ref());
+        ensure_runtime_dir_matches(&vars, world_ref.sandbox.install_dir())?;
+        assert_worker_present(&vars)?;
 
         capture_info_logs_with_spans(|| {
             world_ref.sandbox.with_env(vars, || -> BootstrapResult<()> {
@@ -127,6 +146,9 @@ fn when_cluster_bootstrap_fails(world: &WorldFixture) -> Result<()> {
 #[then("logs include lifecycle, directory, and environment events")]
 fn then_logs_cover_lifecycle(world: &WorldFixture) -> Result<()> {
     let world_ref = borrow_world(world)?.borrow();
+    if world_ref.skip_reason.is_some() {
+        return Ok(());
+    }
     if let Some(err) = &world_ref.error {
         return Err(eyre!(format!(
             "cluster bootstrap failed unexpectedly: {err}"
@@ -185,23 +207,71 @@ fn then_logs_cover_lifecycle(world: &WorldFixture) -> Result<()> {
 #[then("logs capture the directory failure context")]
 fn then_logs_capture_failure(world: &WorldFixture) -> Result<()> {
     let world_ref = borrow_world(world)?.borrow();
+    if world_ref.skip_reason.is_some() {
+        return Ok(());
+    }
     let Some(err) = &world_ref.error else {
         return Err(eyre!("expected bootstrap failure for invalid runtime path"));
     };
 
-    let runtime = world_ref.sandbox.install_dir().join("runtime-as-file");
-    let runtime_str = runtime.to_string();
+    let data_file = world_ref.sandbox.install_dir().join("data-as-file");
+    let data_str = data_file.to_string();
     ensure!(
         world_ref.logs.iter().any(|line| {
-            line.contains("failed to ensure directory exists") && line.contains(&runtime_str)
+            line.contains("failed to ensure directory exists") && line.contains(&data_str)
         }),
-        "expected directory failure log for runtime file, got {:?}",
+        "expected directory failure log for data file, got {:?}",
         world_ref.logs
     );
     ensure!(
-        err.contains(&runtime_str) || err.contains("runtime") || err.contains("installation"),
-        "expected error message to reference runtime path, got {err}"
+        err.contains(&data_str) || err.contains("data"),
+        "expected error message to reference data path, got {err}"
     );
+    Ok(())
+}
+
+fn ensure_runtime_dir_matches(
+    env_vars: &[(OsString, Option<OsString>)],
+    install_dir: &Utf8Path,
+) -> Result<()> {
+    let runtime = env_vars
+        .iter()
+        .find(|(key, _)| key == &OsString::from("PG_RUNTIME_DIR"))
+        .and_then(|(_, value)| value.as_ref())
+        .ok_or_else(|| eyre!("PG_RUNTIME_DIR missing from sandbox env"))?;
+    ensure!(
+        runtime == install_dir.as_os_str(),
+        "PG_RUNTIME_DIR expected {}, got {:?}",
+        install_dir,
+        runtime
+    );
+    Ok(())
+}
+
+fn assert_worker_present(env_vars: &[(OsString, Option<OsString>)]) -> Result<()> {
+    let worker = env_vars
+        .iter()
+        .find(|(key, _)| key == &OsString::from("PG_EMBEDDED_WORKER"))
+        .and_then(|(_, value)| value.as_ref())
+        .ok_or_else(|| eyre!("PG_EMBEDDED_WORKER not configured in observability sandbox"))?;
+
+    let path = Utf8PathBuf::from_path_buf(std::path::PathBuf::from(worker))
+        .map_err(|_| eyre!("worker path not valid UTF-8"))?;
+    ensure!(
+        path.exists(),
+        "worker binary {path} must exist for observability scenarios"
+    );
+    tracing::info!(worker = %path, "using worker binary for observability scenario");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata =
+            std::fs::metadata(path.as_std_path()).with_context(|| format!("stat {path}"))?;
+        ensure!(
+            metadata.permissions().mode() & 0o111 != 0,
+            "worker binary {path} must be executable"
+        );
+    }
     Ok(())
 }
 

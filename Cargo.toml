@@ -53,7 +53,7 @@ tempfile = "3"
 libc = "0.2"
 wait-timeout = "0.2"
 tracing = { version = "0.1", features = ["std"] }
-tracing-subscriber = { version = "0.3", features = ["fmt"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 openssl-sys = { version = "0.9.110", features = ["vendored"] }
 pq-sys = { version = "0.7.4", optional = true, features = ["bundled"] }
 rstest = "0.18"
@@ -63,7 +63,7 @@ toml = []
 json5 = []
 yaml = []
 privileged-tests = []
-cluster-unit-tests = ["dep:tracing-subscriber"]
+cluster-unit-tests = []
 dev-worker = []
 diesel-support = ["dep:diesel", "dep:pq-sys"]
 

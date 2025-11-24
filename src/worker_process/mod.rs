@@ -257,10 +257,26 @@ impl<'a> WorkerProcess<'a> {
         Ok(command)
     }
 
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "timeout handling needs explicit branching for diagnostics"
+    )]
     fn run_command_with_timeout(&self, command: &mut Command) -> BootstrapResult<Output> {
-        let mut child = command.spawn().context("failed to spawn worker command")?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(err) => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    operation = self.request.operation.as_str(),
+                    error = %err,
+                    "failed to spawn worker command"
+                );
+                return Err(BootstrapError::from(eyre!(
+                    "failed to spawn worker command: {err}"
+                )));
+            }
+        };
 
-        // Ensure the worker is reaped even if waiting fails unexpectedly.
         let wait_result = match child.wait_timeout(self.request.timeout) {
             Ok(result) => result,
             Err(error) => return Self::handle_wait_error(child, error),

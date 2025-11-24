@@ -13,7 +13,7 @@ mod filesystem;
 mod fixtures;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod hook;
-#[cfg(feature = "cluster-unit-tests")]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod logging;
 mod scoped_env;
 
@@ -29,6 +29,6 @@ pub use hook::{
     HookGuard, RunRootOperationHook, RunRootOperationHookInstallError, drain_hook_install_logs,
     install_run_root_operation_hook, invoke_with_privileges, run_root_operation_hook,
 };
-#[cfg(feature = "cluster-unit-tests")]
+#[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use logging::{capture_info_logs, capture_info_logs_with_spans, capture_warn_logs};
 pub use scoped_env::scoped_env;

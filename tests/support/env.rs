@@ -42,8 +42,36 @@ fn locate_worker_binary() -> Option<OsString> {
     let exe = std::env::current_exe().ok()?;
     let deps_dir = exe.parent()?;
     let target_dir = deps_dir.parent()?;
-    let worker_path = target_dir.join("pg_worker");
-    worker_path.exists().then(|| worker_path.into_os_string())
+
+    // Prefer an un-suffixed binary if one exists (for example when built via `cargo run`).
+    let direct = target_dir.join("pg_worker");
+    if direct.is_file() {
+        return Some(direct.into_os_string());
+    }
+
+    // Fallback: search hashed binaries under target/{profile}/deps.
+    let entries = std::fs::read_dir(deps_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("pg_worker") {
+            continue;
+        }
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("d"))
+        {
+            continue;
+        }
+        if path.is_file() {
+            return Some(path.into_os_string());
+        }
+    }
+
+    None
 }
 
 /// Applies `vars` and returns a guard that keeps them active until dropped.

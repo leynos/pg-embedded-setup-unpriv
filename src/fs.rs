@@ -98,11 +98,29 @@ fn log_dir_created(path: &Utf8Path) {
 
 fn handle_dir_error(path: &Utf8Path, err: std::io::Error) -> Result<()> {
     if err.kind() == ErrorKind::AlreadyExists {
-        log_dir_exists(path);
-        return Ok(());
+        return handle_existing_path(path);
     }
 
     Err(log_dir_creation_failure(path, err)).with_context(|| format!("create {}", path.as_str()))
+}
+
+fn handle_existing_path(path: &Utf8Path) -> Result<()> {
+    match std::fs::metadata(path.as_std_path()) {
+        Ok(metadata) if metadata.is_dir() => {
+            log_dir_exists(path);
+            Ok(())
+        }
+        Ok(_) => Err(log_dir_creation_failure(
+            path,
+            std::io::Error::new(
+                ErrorKind::AlreadyExists,
+                format!("{path} exists but is not a directory"),
+            ),
+        ))
+        .with_context(|| format!("create {}", path.as_str())),
+        Err(meta_err) => Err(log_dir_creation_failure(path, meta_err))
+            .with_context(|| format!("create {}", path.as_str())),
+    }
 }
 
 fn log_dir_exists(path: &Utf8Path) {
