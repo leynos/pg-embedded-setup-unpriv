@@ -104,13 +104,23 @@ pub(crate) fn ensure_tree_owned_by_user<P: AsRef<Utf8Path>>(
     );
     let mut stack = vec![root.as_ref().to_path_buf()];
     while let Some(path_buf) = stack.pop() {
-        let path = path_buf.as_path();
-        if let Some(dir_result) = open_directory_if_exists(path) {
-            let dir = dir_result?;
-            process_directory_entries(path, &dir, user, &mut stack)?;
-        }
+        handle_directory(&path_buf, user, &mut stack)?;
     }
     Ok(())
+}
+
+fn handle_directory(
+    path_buf: &Utf8PathBuf,
+    user: &User,
+    stack: &mut Vec<Utf8PathBuf>,
+) -> PrivilegeResult<()> {
+    let path = path_buf.as_path();
+    let Some(dir_result) = open_directory_if_exists(path) else {
+        return Ok(());
+    };
+
+    let dir = dir_result?;
+    process_directory_entries(path, &dir, user, stack)
 }
 
 fn open_directory_if_exists(path: &Utf8Path) -> Option<PrivilegeResult<Dir>> {

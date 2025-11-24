@@ -74,6 +74,10 @@ impl<'a> WorkerInvoker<'a> {
     /// # Ok(())
     /// # }
     /// ```
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "observability span setup inflates perceived complexity"
+    )]
     pub fn invoke<Fut>(&self, operation: WorkerOperation, in_process_op: Fut) -> BootstrapResult<()>
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
@@ -87,19 +91,36 @@ impl<'a> WorkerInvoker<'a> {
         let _guard = span.enter();
         info!("observability: invoking lifecycle operation");
 
-        let result = match self.bootstrap.privileges {
+        let result = self.dispatch(operation, in_process_op);
+        Self::log_result(&result);
+        result
+    }
+
+    fn dispatch<Fut>(&self, operation: WorkerOperation, in_process_op: Fut) -> BootstrapResult<()>
+    where
+        Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
+    {
+        match self.bootstrap.privileges {
             ExecutionPrivileges::Unprivileged => {
                 self.invoke_unprivileged(in_process_op, operation.error_context())
             }
             ExecutionPrivileges::Root => self.invoke_as_root(operation),
-        };
+        }
+    }
 
-        match &result {
-            Ok(()) => info!("observability: lifecycle operation completed"),
-            Err(err) => tracing::warn!(error = %err, "observability: lifecycle operation failed"),
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "two log branches are necessary for pass/fail diagnostics"
+    )]
+    fn log_result(result: &BootstrapResult<()>) {
+        if result.is_ok() {
+            info!("observability: lifecycle operation completed");
+            return;
         }
 
-        result
+        if let Err(err) = result {
+            tracing::warn!(error = %err, "observability: lifecycle operation failed");
+        }
     }
 
     fn invoke_unprivileged<Fut>(&self, future: Fut, ctx: &'static str) -> BootstrapResult<()>

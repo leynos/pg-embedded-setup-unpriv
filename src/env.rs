@@ -61,20 +61,27 @@ impl ThreadState {
 
     fn enter_scope(&mut self, vars: Vec<(OsString, Option<OsString>)>) -> usize {
         self.acquire_lock_if_needed();
-
         self.depth += 1;
-        let change_summary = summarise_env_changes(&vars);
-        let span = info_span!(
-            "env.scope",
-            depth = self.depth,
-            changes = ?change_summary,
-        );
-        let _guard = span.enter();
+        self.begin_scope(vars)
+    }
 
+    fn begin_scope(&mut self, vars: Vec<(OsString, Option<OsString>)>) -> usize {
+        let _guard = Self::span_for_scope(self.depth, &vars);
         info!("observability: applying scoped environment");
 
         let saved = self.apply_env_vars(vars);
+        self.push_guard(saved)
+    }
 
+    fn span_for_scope(
+        depth: usize,
+        vars: &[(OsString, Option<OsString>)],
+    ) -> tracing::span::EnteredSpan {
+        let change_summary = summarise_env_changes(vars);
+        info_span!("env.scope", depth, changes = ?change_summary).entered()
+    }
+
+    fn push_guard(&mut self, saved: Vec<(OsString, Option<OsString>)>) -> usize {
         let index = self.stack.len();
         self.stack.push(GuardState {
             saved,
@@ -119,7 +126,7 @@ impl ThreadState {
             "ScopedEnv must hold the mutex before mutating the environment",
         );
         let mut saved = Vec::new();
-        for (key, new_value) in vars.into_iter() {
+        for (key, new_value) in vars {
             Self::validate_env_key(&key);
             let previous = Self::apply_single_var(&key, new_value);
             saved.push((key, previous));
@@ -186,14 +193,18 @@ impl ThreadState {
 
         self.finish_scope(index);
 
-        info!(
-            depth = self.depth,
-            "observability: restoring scoped environment"
-        );
+        self.log_restoration_depth();
 
         if self.depth == 0 {
             self.release_outermost_lock();
         }
+    }
+
+    fn log_restoration_depth(&self) {
+        info!(
+            depth = self.depth,
+            "observability: restoring scoped environment"
+        );
     }
 
     fn restore_finished_scopes(&mut self) {
@@ -291,19 +302,24 @@ impl Drop for ScopedEnv {
 fn restore_saved(saved: Vec<(OsString, Option<OsString>)>) {
     let summary = summarise_restore(&saved);
     info!(changes = ?summary, "observability: restoring environment to prior values");
-    for (key, value) in saved.into_iter().rev() {
-        match value {
-            Some(previous) => unsafe {
-                // SAFETY: restoration still holds `ENV_LOCK`, so no other
-                // mutations can observe intermediate states.
-                env::set_var(&key, previous);
-            },
-            None => unsafe {
-                // SAFETY: restoration still holds `ENV_LOCK`, so no other
-                // mutations can observe intermediate states.
-                env::remove_var(&key);
-            },
-        }
+    for entry in saved.into_iter().rev() {
+        restore_entry(entry);
+    }
+}
+
+fn restore_entry(entry: (OsString, Option<OsString>)) {
+    let (key, value) = entry;
+    match value {
+        Some(previous) => unsafe {
+            // SAFETY: restoration still holds `ENV_LOCK`, so no other
+            // mutations can observe intermediate states.
+            env::set_var(&key, previous);
+        },
+        None => unsafe {
+            // SAFETY: restoration still holds `ENV_LOCK`, so no other
+            // mutations can observe intermediate states.
+            env::remove_var(&key);
+        },
     }
 }
 

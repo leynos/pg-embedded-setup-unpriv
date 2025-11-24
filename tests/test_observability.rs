@@ -14,6 +14,10 @@ use pg_embedded_setup_unpriv::{
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
 
+#[path = "support/cap_fs_bootstrap.rs"]
+mod cap_fs;
+#[path = "support/env.rs"]
+mod env;
 #[path = "support/sandbox.rs"]
 mod sandbox;
 #[path = "support/scenario.rs"]
@@ -63,11 +67,10 @@ impl ObservabilityWorld {
     }
 
     fn ensure_not_skipped(&self) -> Result<()> {
-        if let Some(reason) = &self.skip_reason {
-            Err(eyre!(format!("scenario skipped: {reason}")))
-        } else {
-            Ok(())
-        }
+        self.skip_reason.as_ref().map_or_else(
+            || Ok(()),
+            |reason| Err(eyre!(format!("scenario skipped: {reason}"))),
+        )
     }
 
     fn assert_success(&self) -> Result<()> {
@@ -103,13 +106,17 @@ fn borrow_world(world: &ObservabilityWorldFixture) -> Result<&RefCell<Observabil
 
 #[given("a fresh observability sandbox")]
 fn given_sandbox(world: &ObservabilityWorldFixture) -> Result<()> {
-    borrow_world(world)?.borrow().sandbox.reset()
+    let sandbox = borrow_world(world)?;
+    sandbox.borrow().sandbox.reset()?;
+    // Touch the timezone-free env path to exercise observability logs.
+    let _ = sandbox.borrow().sandbox.env_without_timezone();
+    Ok(())
 }
 
 #[given("observability log capture is installed")]
-fn given_log_capture(_world: &ObservabilityWorldFixture) -> Result<()> {
+fn given_log_capture(world: &ObservabilityWorldFixture) -> Result<()> {
     // Logging capture is applied per action via `capture_info_logs`.
-    Ok(())
+    borrow_world(world).map(|_| ())
 }
 
 #[when("a TestCluster boots successfully")]
@@ -119,16 +126,9 @@ fn when_cluster_boots(world: &ObservabilityWorldFixture) -> Result<()> {
         let world_ref = world_cell.borrow();
         capture_info_logs(|| {
             let vars = world_ref.sandbox.base_env();
-            world_ref.sandbox.with_env(vars, || {
-                let cluster = TestCluster::new();
-                match cluster {
-                    Ok(cluster) => {
-                        drop(cluster);
-                        Ok(())
-                    }
-                    Err(err) => Err(Report::from(err)),
-                }
-            })
+            world_ref
+                .sandbox
+                .with_env(vars, || TestCluster::new().map(drop).map_err(Report::from))
         })
     };
 
@@ -140,7 +140,7 @@ fn when_cluster_boots(world: &ObservabilityWorldFixture) -> Result<()> {
 fn when_lifecycle_fails(world: &ObservabilityWorldFixture) -> Result<()> {
     let world_cell = borrow_world(world)?;
     let (logs, result) = capture_info_logs(|| {
-        let runtime = test_runtime().map_err(Report::from)?;
+        let runtime = test_runtime()?;
         let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
         let env_vars = bootstrap.environment.to_env();
         let invoker = WorkerInvoker::new(&runtime, &bootstrap, &env_vars);

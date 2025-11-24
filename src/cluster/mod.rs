@@ -57,43 +57,22 @@ impl TestCluster {
     /// # Errors
     /// Returns an error if the bootstrap configuration cannot be prepared or if starting the
     /// embedded cluster fails.
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "tracing instrumentation adds branches while flow remains linear"
+    )]
     pub fn new() -> BootstrapResult<Self> {
         let mut bootstrap = bootstrap_for_tests()?;
-        let span = tracing::info_span!(
-            "test_cluster.new",
-            privileges = ?bootstrap.privileges,
-            execution_mode = ?bootstrap.execution_mode,
-        );
-        let _guard = span.enter();
+        let _guard = start_cluster_span(&bootstrap);
         info!("observability: starting cluster bootstrap");
-        let runtime = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("failed to create Tokio runtime for TestCluster")
-            .map_err(BootstrapError::from)?;
 
+        let runtime = build_runtime()?;
         let env_vars = bootstrap.environment.to_env();
         info!(keys = ?redacted_env_keys(&env_vars), "observability: applying cluster environment");
         let env_guard = ScopedEnv::apply(&env_vars);
-        let privileges = bootstrap.privileges;
-        let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
 
-        let invoker = ClusterWorkerInvoker::new(&runtime, &bootstrap, &env_vars);
-
-        invoker.invoke(WorkerOperation::Setup, async { embedded.setup().await })?;
-        invoker.invoke(WorkerOperation::Start, async { embedded.start().await })?;
-
-        let is_managed_via_worker = matches!(privileges, ExecutionPrivileges::Root);
-        if !is_managed_via_worker {
-            // Capture runtime mutations such as dynamically assigned ports so connection
-            // metadata reflects the live cluster rather than the pre-bootstrap defaults.
-            bootstrap.settings = embedded.settings().clone();
-        }
-        let postgres = if is_managed_via_worker {
-            None
-        } else {
-            Some(embedded)
-        };
+        let is_managed_via_worker = matches!(bootstrap.privileges, ExecutionPrivileges::Root);
+        let postgres = start_cluster_process(&runtime, &mut bootstrap, &env_vars)?;
 
         info!(
             host = %bootstrap.settings.host,
@@ -284,24 +263,42 @@ impl Drop for TestCluster {
             "observability: stopping cluster",
         );
 
-        if self.is_managed_via_worker {
-            let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
-            if let Err(err) = invoker.invoke_as_root(WorkerOperation::Stop) {
-                Self::warn_stop_failure(&context, &err);
-            }
-        } else if let Some(postgres) = self.postgres.take() {
-            let timeout = self.bootstrap.shutdown_timeout;
-            let timeout_secs = timeout.as_secs();
-            let outcome = self
-                .runtime
-                .block_on(async { time::timeout(timeout, postgres.stop()).await });
-            match outcome {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => Self::warn_stop_failure(&context, &err),
-                Err(_) => Self::warn_stop_timeout(timeout_secs, &context),
-            }
-        }
+        self.stop_cluster(&context);
         // Environment guards drop after this block, restoring the process state.
+    }
+}
+
+impl TestCluster {
+    fn stop_cluster(&mut self, context: &str) {
+        if self.is_managed_via_worker {
+            self.stop_via_worker(context);
+        } else {
+            self.stop_in_process(context);
+        }
+    }
+
+    fn stop_via_worker(&self, context: &str) {
+        let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
+        if let Err(err) = invoker.invoke_as_root(WorkerOperation::Stop) {
+            Self::warn_stop_failure(context, &err);
+        }
+    }
+
+    fn stop_in_process(&mut self, context: &str) {
+        let Some(postgres) = self.postgres.take() else {
+            return;
+        };
+
+        let timeout = self.bootstrap.shutdown_timeout;
+        let timeout_secs = timeout.as_secs();
+        let outcome = self
+            .runtime
+            .block_on(async { time::timeout(timeout, postgres.stop()).await });
+        match outcome {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => Self::warn_stop_failure(context, &err),
+            Err(_) => Self::warn_stop_timeout(timeout_secs, context),
+        }
     }
 }
 
@@ -312,6 +309,42 @@ fn redacted_env_keys(vars: &[(String, Option<String>)]) -> Vec<String> {
             format!("{key}={state}")
         })
         .collect()
+}
+
+fn start_cluster_span(bootstrap: &TestBootstrapSettings) -> tracing::span::EnteredSpan {
+    tracing::info_span!(
+        "test_cluster.new",
+        privileges = ?bootstrap.privileges,
+        execution_mode = ?bootstrap.execution_mode,
+    )
+    .entered()
+}
+
+fn build_runtime() -> BootstrapResult<Runtime> {
+    Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("failed to create Tokio runtime for TestCluster")
+        .map_err(BootstrapError::from)
+}
+
+fn start_cluster_process(
+    runtime: &Runtime,
+    bootstrap: &mut TestBootstrapSettings,
+    env_vars: &[(String, Option<String>)],
+) -> BootstrapResult<Option<PostgreSQL>> {
+    let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
+    let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
+
+    invoker.invoke(WorkerOperation::Setup, async { embedded.setup().await })?;
+    invoker.invoke(WorkerOperation::Start, async { embedded.start().await })?;
+
+    if matches!(bootstrap.privileges, ExecutionPrivileges::Root) {
+        return Ok(None);
+    }
+
+    bootstrap.settings = embedded.settings().clone();
+    Ok(Some(embedded))
 }
 
 #[cfg(all(test, feature = "cluster-unit-tests"))]

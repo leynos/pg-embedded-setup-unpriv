@@ -26,26 +26,37 @@ pub(super) fn prepare_bootstrap(
     settings: Settings,
     cfg: &PgEnvCfg,
 ) -> BootstrapResult<PreparedBootstrap> {
-    let span = info_span!("bootstrap.prepare", privileges = ?privileges);
-    let _guard = span.enter();
-
+    let _guard = prepare_span(privileges);
     info!(
         privileges = ?privileges,
         "observability: preparing bootstrap layout",
     );
-    #[cfg(unix)]
-    {
-        match privileges {
-            super::mode::ExecutionPrivileges::Root => bootstrap_with_root(settings, cfg),
-            super::mode::ExecutionPrivileges::Unprivileged => bootstrap_unprivileged(settings, cfg),
-        }
-    }
+    prepare_platform_bootstrap(privileges, settings, cfg)
+}
 
-    #[cfg(not(unix))]
-    {
-        let _ = privileges;
-        bootstrap_unprivileged(settings, cfg)
+fn prepare_span(privileges: super::mode::ExecutionPrivileges) -> tracing::span::EnteredSpan {
+    info_span!("bootstrap.prepare", privileges = ?privileges).entered()
+}
+
+#[cfg(unix)]
+fn prepare_platform_bootstrap(
+    privileges: super::mode::ExecutionPrivileges,
+    settings: Settings,
+    cfg: &PgEnvCfg,
+) -> BootstrapResult<PreparedBootstrap> {
+    match privileges {
+        super::mode::ExecutionPrivileges::Root => bootstrap_with_root(settings, cfg),
+        super::mode::ExecutionPrivileges::Unprivileged => bootstrap_unprivileged(settings, cfg),
     }
+}
+
+#[cfg(not(unix))]
+fn prepare_platform_bootstrap(
+    _privileges: super::mode::ExecutionPrivileges,
+    settings: Settings,
+    cfg: &PgEnvCfg,
+) -> BootstrapResult<PreparedBootstrap> {
+    bootstrap_unprivileged(settings, cfg)
 }
 
 pub(super) struct PreparedBootstrap {

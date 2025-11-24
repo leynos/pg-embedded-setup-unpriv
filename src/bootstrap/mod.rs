@@ -109,35 +109,61 @@ pub fn bootstrap_for_tests() -> BootstrapResult<TestBootstrapSettings> {
 }
 
 fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
-    if let Err(err) = color_eyre::install() {
-        tracing::debug!("color_eyre already installed: {err}");
-    }
+    install_tracing();
 
+    let inputs = gather_bootstrap_inputs()?;
+    info!(
+        privileges = ?inputs.privileges,
+        execution_mode = ?inputs.execution_mode,
+        worker_binary = ?inputs.worker_binary,
+        shutdown_timeout_secs = inputs.shutdown_timeout.as_secs(),
+        "observability: orchestrating bootstrap",
+    );
+
+    let prepared = prepare_bootstrap(inputs.privileges, inputs.settings, &inputs.cfg)?;
+
+    Ok(TestBootstrapSettings {
+        privileges: inputs.privileges,
+        execution_mode: inputs.execution_mode,
+        settings: prepared.settings,
+        environment: prepared.environment,
+        worker_binary: inputs.worker_binary,
+        setup_timeout: DEFAULT_SETUP_TIMEOUT,
+        start_timeout: DEFAULT_START_TIMEOUT,
+        shutdown_timeout: inputs.shutdown_timeout,
+    })
+}
+
+struct BootstrapInputs {
+    privileges: ExecutionPrivileges,
+    cfg: PgEnvCfg,
+    settings: Settings,
+    worker_binary: Option<camino::Utf8PathBuf>,
+    execution_mode: ExecutionMode,
+    shutdown_timeout: Duration,
+}
+
+fn gather_bootstrap_inputs() -> BootstrapResult<BootstrapInputs> {
     let privileges = detect_execution_privileges();
     let cfg = PgEnvCfg::load().context("failed to load configuration via OrthoConfig")?;
     let settings = cfg.to_settings()?;
     let worker_binary = worker_binary_from_env()?;
     let execution_mode = determine_execution_mode(privileges, worker_binary.as_ref())?;
     let shutdown_timeout = shutdown_timeout_from_env()?;
-    info!(
-        privileges = ?privileges,
-        execution_mode = ?execution_mode,
-        worker_binary = ?worker_binary,
-        shutdown_timeout_secs = shutdown_timeout.as_secs(),
-        "observability: orchestrating bootstrap",
-    );
-    let prepared = prepare_bootstrap(privileges, settings, &cfg)?;
-
-    Ok(TestBootstrapSettings {
+    Ok(BootstrapInputs {
         privileges,
-        execution_mode,
-        settings: prepared.settings,
-        environment: prepared.environment,
+        cfg,
+        settings,
         worker_binary,
-        setup_timeout: DEFAULT_SETUP_TIMEOUT,
-        start_timeout: DEFAULT_START_TIMEOUT,
+        execution_mode,
         shutdown_timeout,
     })
+}
+
+fn install_tracing() {
+    if let Err(err) = color_eyre::install() {
+        tracing::debug!("color_eyre already installed: {err}");
+    }
 }
 
 #[cfg(test)]
