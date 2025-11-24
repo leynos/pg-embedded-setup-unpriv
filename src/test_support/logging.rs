@@ -94,6 +94,7 @@ where
     let mut builder = fmt()
         .with_max_level(max_level)
         .without_time()
+        .with_ansi(false)
         .with_writer(move || BufferWriter {
             buffer: Arc::clone(&writer_buffer),
         });
