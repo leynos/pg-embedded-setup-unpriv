@@ -22,6 +22,10 @@ use nix::unistd::{Uid, User, chown};
 use std::io::ErrorKind;
 use tracing::{info, info_span};
 
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "tracing span setup increases measured complexity in a linear function"
+)]
 pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
     directory: P,
     user: &User,
@@ -39,8 +43,7 @@ pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
     );
     let _entered = span.enter();
     ensure_dir_exists(dir_path)?;
-    chown(dir_path.as_std_path(), Some(user.uid), Some(user.gid))
-        .with_context(|| format!("chown {}", dir_path.as_str()))?;
+    apply_ownership(dir_path, user)?;
     set_permissions(dir_path, mode)?;
     info!(
         target: LOG_TARGET,
@@ -102,6 +105,10 @@ pub fn make_data_dir_private<P: AsRef<Utf8Path>>(dir: P, user: &User) -> Privile
     ensure_dir_for_user(dir, user, 0o700)
 }
 
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "tracing span and traversal bookkeeping inflate complexity despite simple flow"
+)]
 pub(crate) fn ensure_tree_owned_by_user<P: AsRef<Utf8Path>>(
     root: P,
     user: &User,
@@ -115,19 +122,12 @@ pub(crate) fn ensure_tree_owned_by_user<P: AsRef<Utf8Path>>(
         gid = user.gid.as_raw()
     );
     let _entered = span.enter();
-    let mut updated = 0usize;
-    let mut stack = vec![root.as_ref().to_path_buf()];
-    while let Some(path_buf) = stack.pop() {
-        let path = path_buf.as_path();
-        if let Some(dir_result) = open_directory_if_exists(path) {
-            let dir = dir_result?;
-            process_directory_entries(path, &dir, user, &mut stack, &mut updated)?;
-        }
-    }
+    let mut walker = OwnershipWalker::new(user);
+    walker.run(root.as_ref())?;
     info!(
         target: LOG_TARGET,
         root = %root.as_ref(),
-        updated_entries = updated,
+        updated_entries = walker.updated,
         "ensured tree ownership for user"
     );
     Ok(())
@@ -142,28 +142,6 @@ fn open_directory_if_exists(path: &Utf8Path) -> Option<PrivilegeResult<Dir>> {
             Some(Err(PrivilegeError::from(report)))
         }
     }
-}
-
-fn process_directory_entries(
-    path: &Utf8Path,
-    dir: &Dir,
-    user: &User,
-    stack: &mut Vec<Utf8PathBuf>,
-    updated: &mut usize,
-) -> PrivilegeResult<()> {
-    for dir_entry_result in dir
-        .entries()
-        .with_context(|| format!("read_dir {}", path.as_str()))?
-    {
-        let dir_entry = dir_entry_result.with_context(|| format!("iterate {}", path.as_str()))?;
-        let entry_path = resolve_entry_path(path, &dir_entry)?;
-        chown_entry(&entry_path, user)?;
-        *updated += 1;
-        if is_directory(&dir_entry) {
-            stack.push(entry_path);
-        }
-    }
-    Ok(())
 }
 
 fn resolve_entry_path(path: &Utf8Path, entry: &DirEntry) -> PrivilegeResult<Utf8PathBuf> {
@@ -181,6 +159,66 @@ fn chown_entry(path: &Utf8Path, user: &User) -> PrivilegeResult<()> {
 
 fn is_directory(entry: &DirEntry) -> bool {
     entry.file_type().is_ok_and(|ft| ft.is_dir())
+}
+
+fn apply_ownership(path: &Utf8Path, user: &User) -> PrivilegeResult<()> {
+    chown(path.as_std_path(), Some(user.uid), Some(user.gid))
+        .with_context(|| format!("chown {}", path.as_str()))?;
+    Ok(())
+}
+
+struct OwnershipWalker<'a> {
+    user: &'a User,
+    updated: usize,
+}
+
+impl<'a> OwnershipWalker<'a> {
+    const fn new(user: &'a User) -> Self {
+        Self { user, updated: 0 }
+    }
+
+    fn run(&mut self, root: &Utf8Path) -> PrivilegeResult<()> {
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(path_buf) = stack.pop() {
+            self.walk_path(&path_buf, &mut stack)?;
+        }
+        Ok(())
+    }
+
+    fn walk_path(
+        &mut self,
+        path_buf: &Utf8PathBuf,
+        stack: &mut Vec<Utf8PathBuf>,
+    ) -> PrivilegeResult<()> {
+        let path = path_buf.as_path();
+        if let Some(dir_result) = open_directory_if_exists(path) {
+            let dir = dir_result?;
+            self.process_entries(path, &dir, stack)?;
+        }
+        Ok(())
+    }
+
+    fn process_entries(
+        &mut self,
+        path: &Utf8Path,
+        dir: &Dir,
+        stack: &mut Vec<Utf8PathBuf>,
+    ) -> PrivilegeResult<()> {
+        for dir_entry_result in dir
+            .entries()
+            .with_context(|| format!("read_dir {}", path.as_str()))?
+        {
+            let dir_entry =
+                dir_entry_result.with_context(|| format!("iterate {}", path.as_str()))?;
+            let entry_path = resolve_entry_path(path, &dir_entry)?;
+            chown_entry(&entry_path, self.user)?;
+            self.updated += 1;
+            if is_directory(&dir_entry) {
+                stack.push(entry_path);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Retrieves the UID of the `nobody` account, defaulting to 65534 when absent.

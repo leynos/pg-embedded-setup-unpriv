@@ -192,15 +192,30 @@ impl<'a> WorkerProcess<'a> {
     }
 
     fn run(&self) -> BootstrapResult<()> {
-        let span = info_span!(
+        let span = self.worker_span();
+        let _entered = span.enter();
+        let payload_path = self.write_payload()?;
+        let mut command = self.configure_command(payload_path.as_ref())?;
+        self.log_launch(&payload_path);
+
+        let output = self.run_worker(payload_path, &mut command)?;
+        let result = Self::handle_exit(self.request.operation, &output);
+        if result.is_ok() {
+            self.log_success();
+        }
+        result
+    }
+
+    fn worker_span(&self) -> tracing::Span {
+        info_span!(
             target: LOG_TARGET,
             "worker_process",
             operation = self.request.operation.as_str(),
             timeout_secs = self.request.timeout.as_secs()
-        );
-        let _entered = span.enter();
-        let payload_path = self.write_payload()?;
-        let mut command = self.configure_command(payload_path.as_ref())?;
+        )
+    }
+
+    fn log_launch(&self, payload_path: &TempPath) {
         info!(
             target: LOG_TARGET,
             operation = self.request.operation.as_str(),
@@ -208,24 +223,20 @@ impl<'a> WorkerProcess<'a> {
             worker = %self.request.worker,
             "launching worker command"
         );
-        let run_result = self.run_command_with_timeout(&mut command);
-        let cleanup_result = Self::close_payload(payload_path);
+    }
 
-        match (run_result, cleanup_result) {
-            (Ok(output), Ok(())) => {
-                let result = Self::handle_exit(self.request.operation, &output);
-                if result.is_ok() {
-                    info!(
-                        target: LOG_TARGET,
-                        operation = self.request.operation.as_str(),
-                        "worker operation completed successfully"
-                    );
-                }
-                result
-            }
-            (Err(err), Ok(())) | (Ok(_), Err(err)) => Err(err),
-            (Err(run_err), Err(cleanup_err)) => Err(Self::combine_errors(run_err, cleanup_err)),
-        }
+    fn log_success(&self) {
+        info!(
+            target: LOG_TARGET,
+            operation = self.request.operation.as_str(),
+            "worker operation completed successfully"
+        );
+    }
+
+    fn run_worker(&self, payload_path: TempPath, command: &mut Command) -> BootstrapResult<Output> {
+        let run_result = self.run_command_with_timeout(command);
+        let cleanup_result = Self::close_payload(payload_path);
+        Self::merge_results(run_result, cleanup_result)
     }
 
     fn write_payload(&self) -> BootstrapResult<TempPath> {
@@ -367,6 +378,17 @@ impl<'a> WorkerProcess<'a> {
         BootstrapError::from(eyre!(
             "{primary_report}\nSecondary failure whilst removing worker payload: {cleanup_report}"
         ))
+    }
+
+    fn merge_results(
+        run_result: BootstrapResult<Output>,
+        cleanup_result: BootstrapResult<()>,
+    ) -> BootstrapResult<Output> {
+        match (run_result, cleanup_result) {
+            (Ok(output), Ok(())) => Ok(output),
+            (Err(err), Ok(())) | (Ok(_), Err(err)) => Err(err),
+            (Err(run_err), Err(cleanup_err)) => Err(Self::combine_errors(run_err, cleanup_err)),
+        }
     }
 
     fn append_error_context(

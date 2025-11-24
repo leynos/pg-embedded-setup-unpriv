@@ -38,25 +38,8 @@ pub(crate) fn ensure_dir_exists(path: &Utf8Path) -> Result<()> {
         return Ok(());
     }
 
-    match dir.create_dir_all(relative.as_std_path()) {
-        Ok(()) => {
-            info!(target: LOG_TARGET, path = %path, "ensured directory exists");
-            Ok(())
-        }
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => {
-            info!(target: LOG_TARGET, path = %path, "directory already existed");
-            Ok(())
-        }
-        Err(err) => {
-            error!(
-                target: LOG_TARGET,
-                path = %path,
-                error = %err,
-                "failed to ensure directory exists"
-            );
-            Err(err).with_context(|| format!("create {}", path.as_str()))
-        }
-    }
+    let creation_result = dir.create_dir_all(relative.as_std_path());
+    handle_dir_creation(path, creation_result)
 }
 
 /// Applies the provided POSIX mode to the given path when it exists.
@@ -74,23 +57,64 @@ pub(crate) fn set_permissions(path: &Utf8Path, mode: u32) -> Result<()> {
     }
 
     dir.set_permissions(relative.as_std_path(), Permissions::from_mode(mode))
-        .map(|_| {
-            info!(
-                target: LOG_TARGET,
-                path = %path,
-                mode_octal = format_args!("{mode:o}"),
-                "applied permissions"
-            );
-        })
-        .map_err(|err| {
-            error!(
-                target: LOG_TARGET,
-                path = %path,
-                mode_octal = format_args!("{mode:o}"),
-                error = %err,
-                "failed to apply permissions"
-            );
-            err
-        })
+        .map(|()| log_permissions_applied(path, mode))
+        .map_err(|err| log_permission_error(path, mode, err))
         .with_context(|| format!("chmod {}", path.as_str()))
+}
+
+fn handle_dir_creation(path: &Utf8Path, result: std::io::Result<()>) -> Result<()> {
+    match result {
+        Ok(()) => {
+            log_dir_created(path);
+            Ok(())
+        }
+        Err(err) => handle_dir_error(path, err),
+    }
+}
+
+fn log_permissions_applied(path: &Utf8Path, mode: u32) {
+    info!(
+        target: LOG_TARGET,
+        path = %path,
+        mode_octal = format_args!("{mode:o}"),
+        "applied permissions"
+    );
+}
+
+fn log_permission_error(path: &Utf8Path, mode: u32, err: std::io::Error) -> std::io::Error {
+    error!(
+        target: LOG_TARGET,
+        path = %path,
+        mode_octal = format_args!("{mode:o}"),
+        error = %err,
+        "failed to apply permissions"
+    );
+    err
+}
+
+fn log_dir_created(path: &Utf8Path) {
+    info!(target: LOG_TARGET, path = %path, "ensured directory exists");
+}
+
+fn handle_dir_error(path: &Utf8Path, err: std::io::Error) -> Result<()> {
+    if err.kind() == ErrorKind::AlreadyExists {
+        log_dir_exists(path);
+        return Ok(());
+    }
+
+    Err(log_dir_creation_failure(path, err)).with_context(|| format!("create {}", path.as_str()))
+}
+
+fn log_dir_exists(path: &Utf8Path) {
+    info!(target: LOG_TARGET, path = %path, "directory already existed");
+}
+
+fn log_dir_creation_failure(path: &Utf8Path, err: std::io::Error) -> std::io::Error {
+    error!(
+        target: LOG_TARGET,
+        path = %path,
+        error = %err,
+        "failed to ensure directory exists"
+    );
+    err
 }

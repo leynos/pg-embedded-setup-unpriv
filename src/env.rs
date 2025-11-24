@@ -267,25 +267,9 @@ impl ScopedEnv {
     }
 
     fn apply_owned(vars: Vec<(OsString, Option<OsString>)>) -> Self {
-        let (summary, change_count) = summarise_env(&vars);
-        let changes = summary.join(", ");
-        let span = info_span!(
-            target: LOG_TARGET,
-            "scoped_env",
-            change_count,
-            changes = %changes
-        );
-        let _entered = span.enter();
-        let index = THREAD_STATE.with(|cell| {
-            let mut state = cell.borrow_mut();
-            state.enter_scope(vars)
-        });
-        info!(
-            target: LOG_TARGET,
-            change_count,
-            changes = %changes,
-            "applied scoped environment variables"
-        );
+        let (changes, change_count) = describe_env_changes(&vars);
+        let span = scoped_env_span(change_count, &changes);
+        let index = enter_scope_with_logging(vars, &span, change_count, &changes);
         Self {
             index,
             span,
@@ -336,6 +320,40 @@ fn summarise_env(vars: &[(OsString, Option<OsString>)]) -> (Vec<String>, usize) 
         .collect::<Vec<String>>();
     let change_count = summary.len();
     (summary, change_count)
+}
+
+fn describe_env_changes(vars: &[(OsString, Option<OsString>)]) -> (String, usize) {
+    let (summary, change_count) = summarise_env(vars);
+    (summary.join(", "), change_count)
+}
+
+fn scoped_env_span(change_count: usize, changes: &str) -> tracing::Span {
+    info_span!(
+        target: LOG_TARGET,
+        "scoped_env",
+        change_count,
+        changes = %changes
+    )
+}
+
+fn enter_scope_with_logging(
+    vars: Vec<(OsString, Option<OsString>)>,
+    span: &tracing::Span,
+    change_count: usize,
+    changes: &str,
+) -> usize {
+    let _entered = span.enter();
+    let index = THREAD_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        state.enter_scope(vars)
+    });
+    info!(
+        target: LOG_TARGET,
+        change_count,
+        changes = %changes,
+        "applied scoped environment variables"
+    );
+    index
 }
 
 #[cfg(test)]

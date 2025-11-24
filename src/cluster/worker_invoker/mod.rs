@@ -79,50 +79,11 @@ impl<'a> WorkerInvoker<'a> {
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
-        let span = info_span!(
-            target: LOG_TARGET,
-            "lifecycle_operation",
-            operation = operation.as_str(),
-            privileges = ?self.bootstrap.privileges,
-            mode = ?self.bootstrap.execution_mode
-        );
+        let span = self.lifecycle_span(operation);
         let _entered = span.enter();
-        let result = match self.bootstrap.privileges {
-            ExecutionPrivileges::Unprivileged => {
-                info!(
-                    target: LOG_TARGET,
-                    operation = operation.as_str(),
-                    "running lifecycle operation in-process"
-                );
-                self.invoke_unprivileged(in_process_op, operation.error_context())
-            }
-            ExecutionPrivileges::Root => {
-                info!(
-                    target: LOG_TARGET,
-                    operation = operation.as_str(),
-                    worker = self
-                        .bootstrap
-                        .worker_binary
-                        .as_ref()
-                        .map(std::string::String::as_str),
-                    "dispatching lifecycle operation via worker"
-                );
-                self.invoke_as_root(operation)
-            }
-        };
-        match &result {
-            Ok(()) => info!(
-                target: LOG_TARGET,
-                operation = operation.as_str(),
-                "lifecycle operation completed"
-            ),
-            Err(err) => info!(
-                target: LOG_TARGET,
-                operation = operation.as_str(),
-                error = %err,
-                "lifecycle operation failed"
-            ),
-        }
+
+        let result = self.dispatch(operation, in_process_op);
+        Self::log_outcome(operation, &result);
         result
     }
 
@@ -134,6 +95,78 @@ impl<'a> WorkerInvoker<'a> {
             .block_on(future)
             .context(ctx)
             .map_err(BootstrapError::from)
+    }
+
+    fn dispatch<Fut>(&self, operation: WorkerOperation, in_process_op: Fut) -> BootstrapResult<()>
+    where
+        Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
+    {
+        match self.bootstrap.privileges {
+            ExecutionPrivileges::Unprivileged => self.run_in_process(operation, in_process_op),
+            ExecutionPrivileges::Root => self.run_via_worker(operation),
+        }
+    }
+
+    fn run_in_process<Fut>(
+        &self,
+        operation: WorkerOperation,
+        in_process_op: Fut,
+    ) -> BootstrapResult<()>
+    where
+        Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
+    {
+        info!(
+            target: LOG_TARGET,
+            operation = operation.as_str(),
+            "running lifecycle operation in-process"
+        );
+        self.invoke_unprivileged(in_process_op, operation.error_context())
+    }
+
+    fn run_via_worker(&self, operation: WorkerOperation) -> BootstrapResult<()> {
+        info!(
+            target: LOG_TARGET,
+            operation = operation.as_str(),
+            worker = self
+                .bootstrap
+                .worker_binary
+                .as_ref()
+                .map(|path| path.as_str()),
+            "dispatching lifecycle operation via worker"
+        );
+        self.invoke_as_root(operation)
+    }
+
+    fn lifecycle_span(&self, operation: WorkerOperation) -> tracing::Span {
+        info_span!(
+            target: LOG_TARGET,
+            "lifecycle_operation",
+            operation = operation.as_str(),
+            privileges = ?self.bootstrap.privileges,
+            mode = ?self.bootstrap.execution_mode
+        )
+    }
+
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "tracing structured logging expands into branching helpers"
+    )]
+    fn log_outcome(operation: WorkerOperation, result: &BootstrapResult<()>) {
+        if let Err(err) = result {
+            info!(
+                target: LOG_TARGET,
+                operation = operation.as_str(),
+                error = %err,
+                "lifecycle operation failed"
+            );
+            return;
+        }
+
+        info!(
+            target: LOG_TARGET,
+            operation = operation.as_str(),
+            "lifecycle operation completed"
+        );
     }
 
     pub(super) fn invoke_as_root(&self, operation: WorkerOperation) -> BootstrapResult<()> {

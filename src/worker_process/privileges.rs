@@ -82,69 +82,7 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
             target_os = "dragonfly",
         ),
     ))]
-    {
-        let span = info_span!(
-            target: LOG_TARGET,
-            "privilege_drop",
-            payload = %payload_path.display()
-        );
-        let _entered = span.enter();
-        if skip_privilege_drop_for_tests() {
-            info!(
-                target: LOG_TARGET,
-                payload = %payload_path.display(),
-                "skipping privilege drop for tests"
-            );
-            return Ok(());
-        }
-
-        let user = User::from_name("nobody")
-            .context("failed to resolve user 'nobody'")?
-            .ok_or_else(|| eyre!("user 'nobody' not found"))?;
-        let uid = user.uid.as_raw();
-        let gid = user.gid.as_raw();
-
-        info!(
-            target: LOG_TARGET,
-            payload = %payload_path.display(),
-            uid,
-            gid,
-            "preparing worker payload for privilege drop"
-        );
-
-        chown(
-            payload_path,
-            Some(Uid::from_raw(uid)),
-            Some(Gid::from_raw(gid)),
-        )
-        .context("failed to chown worker payload to nobody")?;
-
-        unsafe {
-            // SAFETY: This closure executes immediately before `exec` whilst the process
-            // still owns elevated credentials. The synchronous UID/GID demotion mirrors the
-            // previous inlined implementation in `TestCluster::spawn_worker` and keeps the
-            // privilege adjustments ordered: groups, gid, then uid.
-            command.pre_exec(move || {
-                if libc::setgroups(0, std::ptr::null()) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::setgid(gid) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::setuid(uid) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        info!(
-            target: LOG_TARGET,
-            payload = %payload_path.display(),
-            uid,
-            gid,
-            "configured worker command to drop privileges"
-        );
-    }
+    return apply_unix(payload_path, command);
 
     #[cfg(not(all(
         unix,
@@ -157,15 +95,8 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
         ),
     )))]
     {
-        let _ = payload_path;
-        let _ = command;
-        info!(
-            target: LOG_TARGET,
-            "privilege drop unsupported on this platform; worker command left unchanged"
-        );
+        apply_noop(payload_path, command)
     }
-
-    Ok(())
 }
 
 #[cfg(all(
@@ -179,6 +110,155 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
     ),
 ))]
 static SKIP_PRIVILEGE_DROP: AtomicBool = AtomicBool::new(false);
+
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+))]
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "tracing spans and early-return logging inflate complexity while flow is linear"
+)]
+fn apply_unix(payload_path: &Path, command: &mut Command) -> BootstrapResult<()> {
+    let span = info_span!(
+        target: LOG_TARGET,
+        "privilege_drop",
+        payload = %payload_path.display()
+    );
+    let _entered = span.enter();
+
+    if skip_privilege_drop(payload_path) {
+        return Ok(());
+    }
+
+    let (uid, gid) = resolve_nobody_ids()?;
+    chown_payload(payload_path, uid, gid)?;
+    configure_pre_exec(command, uid, gid);
+
+    info!(
+        target: LOG_TARGET,
+        payload = %payload_path.display(),
+        uid,
+        gid,
+        "configured worker command to drop privileges"
+    );
+    Ok(())
+}
+
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+))]
+fn skip_privilege_drop(payload_path: &Path) -> bool {
+    if skip_privilege_drop_for_tests() {
+        info!(
+            target: LOG_TARGET,
+            payload = %payload_path.display(),
+            "skipping privilege drop for tests"
+        );
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+))]
+fn resolve_nobody_ids() -> BootstrapResult<(u32, u32)> {
+    let user = User::from_name("nobody")
+        .context("failed to resolve user 'nobody'")?
+        .ok_or_else(|| eyre!("user 'nobody' not found"))?;
+    Ok((user.uid.as_raw(), user.gid.as_raw()))
+}
+
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+))]
+fn chown_payload(payload_path: &Path, uid: u32, gid: u32) -> BootstrapResult<()> {
+    chown(
+        payload_path,
+        Some(Uid::from_raw(uid)),
+        Some(Gid::from_raw(gid)),
+    )
+    .context("failed to chown worker payload to nobody")?;
+    Ok(())
+}
+
+#[cfg(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+))]
+fn configure_pre_exec(command: &mut Command, uid: u32, gid: u32) {
+    unsafe {
+        // SAFETY: This closure executes immediately before `exec` whilst the process
+        // still owns elevated credentials. The synchronous UID/GID demotion mirrors the
+        // previous inlined implementation in `TestCluster::spawn_worker` and keeps the
+        // privilege adjustments ordered: groups, gid, then uid.
+        command.pre_exec(move || {
+            if libc::setgroups(0, std::ptr::null()) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::setgid(gid) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::setuid(uid) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+)))]
+fn apply_noop(_payload_path: &Path, _command: &mut Command) -> BootstrapResult<()> {
+    info!(
+        target: LOG_TARGET,
+        "privilege drop unsupported on this platform; worker command left unchanged"
+    );
+    Ok(())
+}
 
 #[cfg(all(
     unix,

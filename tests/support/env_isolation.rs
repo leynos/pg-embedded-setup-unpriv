@@ -1,3 +1,7 @@
+#![expect(
+    dead_code,
+    reason = "utility helpers kept for optional env isolation scenarios"
+)]
 //! Environment helpers for isolating test scenarios.
 
 use std::collections::HashSet;
