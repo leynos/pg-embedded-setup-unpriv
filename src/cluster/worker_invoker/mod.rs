@@ -3,6 +3,7 @@ use std::future::Future;
 
 use color_eyre::eyre::{Context, eyre};
 use tokio::runtime::Runtime;
+use tracing::info;
 
 use crate::error::{BootstrapError, BootstrapResult};
 use crate::worker_process::{self, WorkerRequest};
@@ -77,12 +78,28 @@ impl<'a> WorkerInvoker<'a> {
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
-        match self.bootstrap.privileges {
+        let span = tracing::info_span!(
+            "postgres.lifecycle",
+            operation = operation.as_str(),
+            privileges = ?self.bootstrap.privileges,
+            execution_mode = ?self.bootstrap.execution_mode,
+        );
+        let _guard = span.enter();
+        info!("observability: invoking lifecycle operation");
+
+        let result = match self.bootstrap.privileges {
             ExecutionPrivileges::Unprivileged => {
                 self.invoke_unprivileged(in_process_op, operation.error_context())
             }
             ExecutionPrivileges::Root => self.invoke_as_root(operation),
+        };
+
+        match &result {
+            Ok(()) => info!("observability: lifecycle operation completed"),
+            Err(err) => tracing::warn!(error = %err, "observability: lifecycle operation failed"),
         }
+
+        result
     }
 
     fn invoke_unprivileged<Fut>(&self, future: Fut, ctx: &'static str) -> BootstrapResult<()>
@@ -142,6 +159,11 @@ impl<'a> WorkerInvoker<'a> {
                     ),
                 ))]
                 {
+                    info!(
+                        worker = ?self.bootstrap.worker_binary,
+                        operation = operation.as_str(),
+                        "observability: dispatching lifecycle operation via worker",
+                    );
                     return self.spawn_worker(operation);
                 }
 

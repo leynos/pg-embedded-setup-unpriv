@@ -7,6 +7,7 @@ use cap_std::{
 };
 use color_eyre::eyre::{Context, Result};
 use std::io::ErrorKind;
+use tracing::info;
 
 /// Resolves a path to an ambient directory handle paired with the relative path component.
 ///
@@ -34,6 +35,8 @@ pub(crate) fn ensure_dir_exists(path: &Utf8Path) -> Result<()> {
         return Ok(());
     }
 
+    info!(path = %path, "observability: ensuring directory exists");
+
     dir.create_dir_all(relative.as_std_path())
         .or_else(|err| {
             if err.kind() == ErrorKind::AlreadyExists {
@@ -51,6 +54,8 @@ pub(crate) fn set_permissions(path: &Utf8Path, mode: u32) -> Result<()> {
     if relative.as_str().is_empty() {
         return Ok(());
     }
+
+    info!(path = %path, mode = format_args!("{mode:#05o}"), "observability: applying permissions");
 
     dir.set_permissions(relative.as_std_path(), Permissions::from_mode(mode))
         .with_context(|| format!("chmod {}", path.as_str()))

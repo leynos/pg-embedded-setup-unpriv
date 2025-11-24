@@ -7,6 +7,7 @@ use crate::error::BootstrapResult;
 use color_eyre::eyre::{Context, eyre};
 use std::path::Path;
 use std::process::Command;
+use tracing::{info, info_span};
 
 #[cfg(all(
     unix,
@@ -70,6 +71,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// # }
 /// ```
 pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResult<()> {
+    let span = info_span!("worker.privilege_drop", payload = %payload_path.display());
+    let _guard = span.enter();
+
     #[cfg(all(
         unix,
         any(
@@ -82,6 +86,7 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
     ))]
     {
         if skip_privilege_drop_for_tests() {
+            info!("observability: skipping privilege drop for tests");
             return Ok(());
         }
 
@@ -90,6 +95,8 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
             .ok_or_else(|| eyre!("user 'nobody' not found"))?;
         let uid = user.uid.as_raw();
         let gid = user.gid.as_raw();
+
+        info!(uid, gid, "observability: installing worker privilege drop");
 
         chown(
             payload_path,
@@ -116,6 +123,11 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
                 Ok(())
             });
         }
+
+        info!(
+            uid,
+            gid, "observability: worker command configured for privilege drop"
+        );
     }
 
     #[cfg(not(all(
@@ -131,6 +143,7 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
     {
         let _ = payload_path;
         let _ = command;
+        info!("observability: privilege drop not supported on this platform");
     }
 
     Ok(())

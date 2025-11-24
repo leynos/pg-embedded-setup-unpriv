@@ -110,6 +110,13 @@ for the duration of its lifetime, making synchronous tests usable without extra
 setup. Unit and behavioural tests assert that `postmaster.pid` disappears after
 drop, demonstrating that no orphaned processes remain.
 
+Enable an info-level `tracing_subscriber` to view the `observability`-prefixed
+logs emitted during bootstrap. The helper records privilege decisions,
+directory preparation, scoped environment application, and lifecycle steps
+without printing secret values (environment entries are redacted to set/unset
+states). These traces make it easier to diagnose configuration issues in CI or
+bespoke developer machines.
+
 ### Using the `rstest` fixture
 
 `pg_embedded_setup_unpriv::test_support::test_cluster` exposes an `rstest`

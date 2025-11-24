@@ -19,6 +19,7 @@ use cap_std::{
 use color_eyre::eyre::{Context, eyre};
 use nix::unistd::{Uid, User, chown};
 use std::io::ErrorKind;
+use tracing::{debug, info};
 
 pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
     directory: P,
@@ -26,6 +27,13 @@ pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
     mode: u32,
 ) -> PrivilegeResult<()> {
     let dir_path = directory.as_ref();
+    info!(
+        path = %dir_path,
+        uid = user.uid.as_raw(),
+        gid = user.gid.as_raw(),
+        mode = format_args!("{mode:#05o}"),
+        "observability: preparing directory for user",
+    );
     ensure_dir_exists(dir_path)?;
     chown(dir_path.as_std_path(), Some(user.uid), Some(user.gid))
         .with_context(|| format!("chown {}", dir_path.as_str()))?;
@@ -88,6 +96,12 @@ pub(crate) fn ensure_tree_owned_by_user<P: AsRef<Utf8Path>>(
     root: P,
     user: &User,
 ) -> PrivilegeResult<()> {
+    info!(
+        root = %root.as_ref(),
+        uid = user.uid.as_raw(),
+        gid = user.gid.as_raw(),
+        "observability: enforcing ownership for subtree",
+    );
     let mut stack = vec![root.as_ref().to_path_buf()];
     while let Some(path_buf) = stack.pop() {
         let path = path_buf.as_path();
@@ -138,6 +152,12 @@ fn resolve_entry_path(path: &Utf8Path, entry: &DirEntry) -> PrivilegeResult<Utf8
 }
 
 fn chown_entry(path: &Utf8Path, user: &User) -> PrivilegeResult<()> {
+    debug!(
+        path = %path,
+        uid = user.uid.as_raw(),
+        gid = user.gid.as_raw(),
+        "observability: updating ownership",
+    );
     chown(path.as_std_path(), Some(user.uid), Some(user.gid))
         .with_context(|| format!("chown {}", path.as_str()))?;
     Ok(())

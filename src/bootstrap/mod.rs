@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use color_eyre::eyre::Context;
 use postgresql_embedded::Settings;
+use tracing::info;
 
 use crate::{
     PgEnvCfg,
@@ -118,6 +119,13 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
     let worker_binary = worker_binary_from_env()?;
     let execution_mode = determine_execution_mode(privileges, worker_binary.as_ref())?;
     let shutdown_timeout = shutdown_timeout_from_env()?;
+    info!(
+        privileges = ?privileges,
+        execution_mode = ?execution_mode,
+        worker_binary = ?worker_binary,
+        shutdown_timeout_secs = shutdown_timeout.as_secs(),
+        "observability: orchestrating bootstrap",
+    );
     let prepared = prepare_bootstrap(privileges, settings, &cfg)?;
 
     Ok(TestBootstrapSettings {

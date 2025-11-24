@@ -48,10 +48,26 @@ pub fn capture_warn_logs<F, R>(action: F) -> (Vec<String>, R)
 where
     F: FnOnce() -> R,
 {
+    capture_logs(Level::WARN, action)
+}
+
+/// Runs `action` while capturing informational logs and above.
+#[must_use]
+pub fn capture_info_logs<F, R>(action: F) -> (Vec<String>, R)
+where
+    F: FnOnce() -> R,
+{
+    capture_logs(Level::INFO, action)
+}
+
+fn capture_logs<F, R>(level: Level, action: F) -> (Vec<String>, R)
+where
+    F: FnOnce() -> R,
+{
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let writer_buffer = Arc::clone(&buffer);
     let subscriber = fmt()
-        .with_max_level(Level::WARN)
+        .with_max_level(level)
         .without_time()
         .with_writer(move || BufferWriter {
             buffer: Arc::clone(&writer_buffer),

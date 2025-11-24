@@ -34,6 +34,7 @@ use std::fmt::Display;
 use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
 use tokio::time;
+use tracing::info;
 
 /// Embedded `PostgreSQL` instance whose lifecycle follows Rust's drop semantics.
 #[derive(Debug)]
@@ -58,6 +59,13 @@ impl TestCluster {
     /// embedded cluster fails.
     pub fn new() -> BootstrapResult<Self> {
         let mut bootstrap = bootstrap_for_tests()?;
+        let span = tracing::info_span!(
+            "test_cluster.new",
+            privileges = ?bootstrap.privileges,
+            execution_mode = ?bootstrap.execution_mode,
+        );
+        let _guard = span.enter();
+        info!("observability: starting cluster bootstrap");
         let runtime = Builder::new_current_thread()
             .enable_all()
             .build()
@@ -65,6 +73,7 @@ impl TestCluster {
             .map_err(BootstrapError::from)?;
 
         let env_vars = bootstrap.environment.to_env();
+        info!(keys = ?redacted_env_keys(&env_vars), "observability: applying cluster environment");
         let env_guard = ScopedEnv::apply(&env_vars);
         let privileges = bootstrap.privileges;
         let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
@@ -85,6 +94,14 @@ impl TestCluster {
         } else {
             Some(embedded)
         };
+
+        info!(
+            host = %bootstrap.settings.host,
+            port = bootstrap.settings.port,
+            data_dir = %bootstrap.settings.data_dir.display(),
+            managed_via_worker = is_managed_via_worker,
+            "observability: cluster bootstrap complete",
+        );
 
         Ok(Self {
             runtime,
@@ -261,6 +278,11 @@ impl WorkerOperation {
 impl Drop for TestCluster {
     fn drop(&mut self) {
         let context = Self::stop_context(&self.bootstrap.settings);
+        info!(
+            context = %context,
+            managed_via_worker = self.is_managed_via_worker,
+            "observability: stopping cluster",
+        );
 
         if self.is_managed_via_worker {
             let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
@@ -281,6 +303,15 @@ impl Drop for TestCluster {
         }
         // Environment guards drop after this block, restoring the process state.
     }
+}
+
+fn redacted_env_keys(vars: &[(String, Option<String>)]) -> Vec<String> {
+    vars.iter()
+        .map(|(key, value)| {
+            let state = if value.is_some() { "set" } else { "unset" };
+            format!("{key}={state}")
+        })
+        .collect()
 }
 
 #[cfg(all(test, feature = "cluster-unit-tests"))]

@@ -26,6 +26,7 @@ use std::cell::RefCell;
 use std::env;
 use std::ffi::OsString;
 use std::sync::{Mutex, MutexGuard};
+use tracing::{info, info_span};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -58,13 +59,19 @@ impl ThreadState {
         }
     }
 
-    fn enter_scope<I>(&mut self, vars: I) -> usize
-    where
-        I: IntoIterator<Item = (OsString, Option<OsString>)>,
-    {
+    fn enter_scope(&mut self, vars: Vec<(OsString, Option<OsString>)>) -> usize {
         self.acquire_lock_if_needed();
 
         self.depth += 1;
+        let change_summary = summarise_env_changes(&vars);
+        let span = info_span!(
+            "env.scope",
+            depth = self.depth,
+            changes = ?change_summary,
+        );
+        let _guard = span.enter();
+
+        info!("observability: applying scoped environment");
 
         let saved = self.apply_env_vars(vars);
 
@@ -103,16 +110,16 @@ impl ThreadState {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn apply_env_vars<I>(&self, vars: I) -> Vec<(OsString, Option<OsString>)>
-    where
-        I: IntoIterator<Item = (OsString, Option<OsString>)>,
-    {
+    fn apply_env_vars(
+        &self,
+        vars: Vec<(OsString, Option<OsString>)>,
+    ) -> Vec<(OsString, Option<OsString>)> {
         assert!(
             self.lock.is_some(),
             "ScopedEnv must hold the mutex before mutating the environment",
         );
         let mut saved = Vec::new();
-        for (key, new_value) in vars {
+        for (key, new_value) in vars.into_iter() {
             Self::validate_env_key(&key);
             let previous = Self::apply_single_var(&key, new_value);
             saved.push((key, previous));
@@ -178,6 +185,11 @@ impl ThreadState {
         self.depth -= 1;
 
         self.finish_scope(index);
+
+        info!(
+            depth = self.depth,
+            "observability: restoring scoped environment"
+        );
 
         if self.depth == 0 {
             self.release_outermost_lock();
@@ -258,9 +270,10 @@ impl ScopedEnv {
     where
         I: IntoIterator<Item = (OsString, Option<OsString>)>,
     {
+        let owned: Vec<(OsString, Option<OsString>)> = vars.into_iter().collect();
         let index = THREAD_STATE.with(|cell| {
             let mut state = cell.borrow_mut();
-            state.enter_scope(vars)
+            state.enter_scope(owned)
         });
         Self { index }
     }
@@ -276,6 +289,8 @@ impl Drop for ScopedEnv {
 }
 
 fn restore_saved(saved: Vec<(OsString, Option<OsString>)>) {
+    let summary = summarise_restore(&saved);
+    info!(changes = ?summary, "observability: restoring environment to prior values");
     for (key, value) in saved.into_iter().rev() {
         match value {
             Some(previous) => unsafe {
@@ -290,6 +305,24 @@ fn restore_saved(saved: Vec<(OsString, Option<OsString>)>) {
             },
         }
     }
+}
+
+fn summarise_env_changes(vars: &[(OsString, Option<OsString>)]) -> Vec<String> {
+    vars.iter()
+        .map(|(key, value)| {
+            let action = if value.is_some() { "set" } else { "unset" };
+            format!("{}={action}", key.to_string_lossy())
+        })
+        .collect()
+}
+
+fn summarise_restore(vars: &[(OsString, Option<OsString>)]) -> Vec<String> {
+    vars.iter()
+        .map(|(key, value)| {
+            let action = if value.is_some() { "restore" } else { "clear" };
+            format!("{}={action}", key.to_string_lossy())
+        })
+        .collect()
 }
 
 #[cfg(test)]

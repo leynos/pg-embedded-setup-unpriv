@@ -434,6 +434,15 @@ paths and config values in logs, users can verify that the auto-detection
 picked up the right settings (for example, confirming it used an ephemeral port
 or the expected PG version).
 
+Implementation uses `tracing` spans with an `observability` prefix so
+info-level subscribers can see privilege selection, directory creation,
+environment scope application, and lifecycle invocations without exposing
+secrets. Environment logs only record whether keys were set or cleared, and
+lifecycle failures emit a warning that preserves the original context.
+Behavioural coverage via `rstest-bdd` captures these info logs for both the
+happy path and a forced worker failure, preventing regressions in the
+instrumentation surface.
+
 ## Platform support and limitations
 
 Initially, our focus is **Linux** for the worker-mediated privileged flow. On

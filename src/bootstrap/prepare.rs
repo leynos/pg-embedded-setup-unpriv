@@ -19,12 +19,20 @@ use crate::privileges::{
 };
 #[cfg(unix)]
 use nix::unistd::{Uid, User, fchown, geteuid};
+use tracing::{info, info_span};
 
 pub(super) fn prepare_bootstrap(
     privileges: super::mode::ExecutionPrivileges,
     settings: Settings,
     cfg: &PgEnvCfg,
 ) -> BootstrapResult<PreparedBootstrap> {
+    let span = info_span!("bootstrap.prepare", privileges = ?privileges);
+    let _guard = span.enter();
+
+    info!(
+        privileges = ?privileges,
+        "observability: preparing bootstrap layout",
+    );
     #[cfg(unix)]
     {
         match privileges {
@@ -55,6 +63,14 @@ fn bootstrap_with_root(
         .ok_or_else(|| color_eyre::eyre::eyre!("user 'nobody' not found"))?;
 
     let paths = resolve_settings_paths_for_uid(&mut settings, cfg, nobody_user.uid)?;
+    info!(
+        install = %paths.install_dir,
+        data = %paths.data_dir,
+        pgpass = %paths.password_file,
+        uid = nobody_user.uid.as_raw(),
+        gid = nobody_user.gid.as_raw(),
+        "observability: resolved bootstrap paths for root flow",
+    );
 
     ensure_parents_for_paths(&paths, |path| ensure_parent_for_user(path, &nobody_user))?;
 
@@ -84,6 +100,12 @@ fn bootstrap_unprivileged(
     cfg: &PgEnvCfg,
 ) -> BootstrapResult<PreparedBootstrap> {
     let paths = resolve_settings_paths_for_current_user(&mut settings, cfg)?;
+    info!(
+        install = %paths.install_dir,
+        data = %paths.data_dir,
+        pgpass = %paths.password_file,
+        "observability: resolved bootstrap paths for unprivileged flow",
+    );
 
     ensure_parents_for_paths(&paths, ensure_parent_exists)?;
 
