@@ -10,6 +10,7 @@ mod cluster;
 mod env;
 mod error;
 mod fs;
+mod observability;
 #[cfg(all(
     unix,
     any(

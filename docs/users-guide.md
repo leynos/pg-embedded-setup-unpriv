@@ -110,6 +110,17 @@ for the duration of its lifetime, making synchronous tests usable without extra
 setup. Unit and behavioural tests assert that `postmaster.pid` disappears after
 drop, demonstrating that no orphaned processes remain.
 
+## Observability
+
+Set `RUST_LOG=pg_embed::observability=info` to emit tracing spans that describe
+privilege drops, directory ownership or permission updates, scoped environment
+application, and the `postgresql_embedded` setup/start/stop lifecycle. The log
+target keeps sensitive values redacted: environment changes are rendered as
+`KEY=set` or `KEY=unset`, and PostgreSQL settings avoid echoing passwords.
+Subscribers that record span enter/exit events (for example via
+`FmtSpan::ENTER|CLOSE`) can reconstruct the lifecycle flow without needing
+additional instrumentation in downstream crates.
+
 ### Using the `rstest` fixture
 
 `pg_embedded_setup_unpriv::test_support::test_cluster` exposes an `rstest`

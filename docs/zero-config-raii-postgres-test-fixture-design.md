@@ -200,6 +200,19 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
 }
 ```
 
+### Implementation update (2025-11-24)
+
+- Added `tracing` spans and logs (targeted under `pg_embed::observability`)
+  around privilege drops, directory ownership/permission mutations, scoped
+  environment application, and `postgresql_embedded` lifecycle transitions.
+- Environment telemetry now emits `KEY=set` or `KEY=unset` markers rather than
+  values to avoid leaking credentials while still showing which variables were
+  injected or removed.
+- Unit coverage exercises the new instrumentation for environment scoping and
+  the test-only privilege-drop bypass, while `rstest-bdd` scenarios assert the
+  presence of lifecycle, directory, and failure-context logs for both happy and
+  unhappy bootstrap paths.
+
 ### Implementation update (2024-06-10)
 
 - Implemented the `TestCluster` RAII guard. `TestCluster::new()` reuses

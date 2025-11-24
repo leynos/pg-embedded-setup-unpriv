@@ -7,6 +7,7 @@ mod privileges;
 
 use crate::cluster::WorkerOperation;
 use crate::error::{BootstrapError, BootstrapResult};
+use crate::observability::LOG_TARGET;
 use crate::worker::WorkerPayload;
 use camino::Utf8Path;
 use color_eyre::eyre::{Context, eyre};
@@ -20,6 +21,7 @@ use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 use tempfile::{NamedTempFile, TempPath};
+use tracing::{info, info_span};
 use wait_timeout::ChildExt;
 
 #[cfg(all(
@@ -190,13 +192,37 @@ impl<'a> WorkerProcess<'a> {
     }
 
     fn run(&self) -> BootstrapResult<()> {
+        let span = info_span!(
+            target: LOG_TARGET,
+            "worker_process",
+            operation = self.request.operation.as_str(),
+            timeout_secs = self.request.timeout.as_secs()
+        );
+        let _entered = span.enter();
         let payload_path = self.write_payload()?;
         let mut command = self.configure_command(payload_path.as_ref())?;
+        info!(
+            target: LOG_TARGET,
+            operation = self.request.operation.as_str(),
+            payload = %payload_path.display(),
+            worker = %self.request.worker,
+            "launching worker command"
+        );
         let run_result = self.run_command_with_timeout(&mut command);
         let cleanup_result = Self::close_payload(payload_path);
 
         match (run_result, cleanup_result) {
-            (Ok(output), Ok(())) => Self::handle_exit(self.request.operation, &output),
+            (Ok(output), Ok(())) => {
+                let result = Self::handle_exit(self.request.operation, &output);
+                if result.is_ok() {
+                    info!(
+                        target: LOG_TARGET,
+                        operation = self.request.operation.as_str(),
+                        "worker operation completed successfully"
+                    );
+                }
+                result
+            }
             (Err(err), Ok(())) | (Ok(_), Err(err)) => Err(err),
             (Err(run_err), Err(cleanup_err)) => Err(Self::combine_errors(run_err, cleanup_err)),
         }

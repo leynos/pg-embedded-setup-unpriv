@@ -4,9 +4,11 @@
 //! account before execing the worker binary with the downgraded identity.
 
 use crate::error::BootstrapResult;
+use crate::observability::LOG_TARGET;
 use color_eyre::eyre::{Context, eyre};
 use std::path::Path;
 use std::process::Command;
+use tracing::{info, info_span};
 
 #[cfg(all(
     unix,
@@ -81,7 +83,18 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
         ),
     ))]
     {
+        let span = info_span!(
+            target: LOG_TARGET,
+            "privilege_drop",
+            payload = %payload_path.display()
+        );
+        let _entered = span.enter();
         if skip_privilege_drop_for_tests() {
+            info!(
+                target: LOG_TARGET,
+                payload = %payload_path.display(),
+                "skipping privilege drop for tests"
+            );
             return Ok(());
         }
 
@@ -90,6 +103,14 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
             .ok_or_else(|| eyre!("user 'nobody' not found"))?;
         let uid = user.uid.as_raw();
         let gid = user.gid.as_raw();
+
+        info!(
+            target: LOG_TARGET,
+            payload = %payload_path.display(),
+            uid,
+            gid,
+            "preparing worker payload for privilege drop"
+        );
 
         chown(
             payload_path,
@@ -116,6 +137,13 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
                 Ok(())
             });
         }
+        info!(
+            target: LOG_TARGET,
+            payload = %payload_path.display(),
+            uid,
+            gid,
+            "configured worker command to drop privileges"
+        );
     }
 
     #[cfg(not(all(
@@ -131,6 +159,10 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
     {
         let _ = payload_path;
         let _ = command;
+        info!(
+            target: LOG_TARGET,
+            "privilege drop unsupported on this platform; worker command left unchanged"
+        );
     }
 
     Ok(())
@@ -226,4 +258,29 @@ fn skip_privilege_drop_for_tests() -> bool {
 )))]
 const fn skip_privilege_drop_for_tests() -> bool {
     false
+}
+
+#[cfg(all(test, unix, feature = "cluster-unit-tests"))]
+mod tests {
+    use super::*;
+    use crate::test_support::capture_info_logs;
+    use std::process::Command;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn skip_guard_logs_observability() {
+        let payload = NamedTempFile::new().expect("payload file");
+        let mut command = Command::new("true");
+        let guard = disable_privilege_drop_for_tests();
+
+        let (logs, result) = capture_info_logs(|| apply(payload.path(), &mut command));
+        drop(guard);
+
+        assert!(result.is_ok(), "privilege drop skip should succeed");
+        assert!(
+            logs.iter()
+                .any(|line| line.contains("skipping privilege drop for tests")),
+            "expected skip log entry, got {logs:?}"
+        );
+    }
 }

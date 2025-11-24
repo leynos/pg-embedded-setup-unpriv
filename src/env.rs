@@ -22,10 +22,12 @@
 //! depth so callers can compose helpers without deadlocking. Different threads
 //! are still serialised.
 
+use crate::observability::LOG_TARGET;
 use std::cell::RefCell;
 use std::env;
 use std::ffi::OsString;
 use std::sync::{Mutex, MutexGuard};
+use tracing::{info, info_span};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -34,6 +36,8 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 #[must_use = "Hold the guard until the end of the environment scope"]
 pub struct ScopedEnv {
     index: usize,
+    span: tracing::Span,
+    change_count: usize,
 }
 
 #[derive(Debug)]
@@ -250,7 +254,7 @@ impl ScopedEnv {
                 (OsString::from(key), owned_value)
             })
             .collect();
-        Self::apply_os(owned)
+        Self::apply_owned(owned)
     }
 
     /// Applies environment variables provided as `OsString` pairs by any owned iterator.
@@ -258,16 +262,46 @@ impl ScopedEnv {
     where
         I: IntoIterator<Item = (OsString, Option<OsString>)>,
     {
+        let owned: Vec<(OsString, Option<OsString>)> = vars.into_iter().collect();
+        Self::apply_owned(owned)
+    }
+
+    fn apply_owned(vars: Vec<(OsString, Option<OsString>)>) -> Self {
+        let (summary, change_count) = summarise_env(&vars);
+        let changes = summary.join(", ");
+        let span = info_span!(
+            target: LOG_TARGET,
+            "scoped_env",
+            change_count,
+            changes = %changes
+        );
+        let _entered = span.enter();
         let index = THREAD_STATE.with(|cell| {
             let mut state = cell.borrow_mut();
             state.enter_scope(vars)
         });
-        Self { index }
+        info!(
+            target: LOG_TARGET,
+            change_count,
+            changes = %changes,
+            "applied scoped environment variables"
+        );
+        Self {
+            index,
+            span,
+            change_count,
+        }
     }
 }
 
 impl Drop for ScopedEnv {
     fn drop(&mut self) {
+        let _entered = self.span.enter();
+        info!(
+            target: LOG_TARGET,
+            change_count = self.change_count,
+            "restoring scoped environment variables"
+        );
         THREAD_STATE.with(|cell| {
             let mut state = cell.borrow_mut();
             state.exit_scope(self.index);
@@ -292,10 +326,24 @@ fn restore_saved(saved: Vec<(OsString, Option<OsString>)>) {
     }
 }
 
+fn summarise_env(vars: &[(OsString, Option<OsString>)]) -> (Vec<String>, usize) {
+    let summary = vars
+        .iter()
+        .map(|(key, value)| {
+            let status = if value.is_some() { "set" } else { "unset" };
+            format!("{}={status}", key.to_string_lossy())
+        })
+        .collect::<Vec<String>>();
+    let change_count = summary.len();
+    (summary, change_count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ENV_LOCK, ScopedEnv};
 
+    #[cfg(feature = "cluster-unit-tests")]
+    use crate::test_support::capture_info_logs;
     use std::env;
     use std::ffi::OsString;
     use std::panic;
@@ -369,6 +417,37 @@ mod tests {
         assert!(
             result.is_err(),
             "apply_os must reject environment names containing '='"
+        );
+    }
+
+    #[cfg(feature = "cluster-unit-tests")]
+    #[test]
+    fn logs_application_and_restoration() {
+        let (logs, ()) = capture_info_logs(|| {
+            let guard = ScopedEnv::apply(&[
+                (String::from("OBS_ENV_APPLY"), Some(String::from("one"))),
+                (String::from("OBS_ENV_CLEAR"), None),
+            ]);
+            drop(guard);
+        });
+
+        assert!(
+            logs.iter()
+                .any(|line| line.contains("applied scoped environment variables")),
+            "expected application log entry, got {logs:?}"
+        );
+        assert!(
+            logs.iter().any(|line| line.contains("OBS_ENV_APPLY=set")),
+            "expected set entry, got {logs:?}"
+        );
+        assert!(
+            logs.iter().any(|line| line.contains("OBS_ENV_CLEAR=unset")),
+            "expected unset entry, got {logs:?}"
+        );
+        assert!(
+            logs.iter()
+                .any(|line| line.contains("restoring scoped environment variables")),
+            "expected restoration log, got {logs:?}"
         );
     }
 }

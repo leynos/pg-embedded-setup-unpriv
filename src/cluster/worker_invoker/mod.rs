@@ -5,10 +5,12 @@ use color_eyre::eyre::{Context, eyre};
 use tokio::runtime::Runtime;
 
 use crate::error::{BootstrapError, BootstrapResult};
+use crate::observability::LOG_TARGET;
 use crate::worker_process::{self, WorkerRequest};
 use crate::{ExecutionMode, ExecutionPrivileges, TestBootstrapSettings};
 
 use super::WorkerOperation;
+use tracing::{info, info_span};
 
 /// Executes worker operations whilst respecting configured privileges.
 #[derive(Debug)]
@@ -77,12 +79,51 @@ impl<'a> WorkerInvoker<'a> {
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
-        match self.bootstrap.privileges {
+        let span = info_span!(
+            target: LOG_TARGET,
+            "lifecycle_operation",
+            operation = operation.as_str(),
+            privileges = ?self.bootstrap.privileges,
+            mode = ?self.bootstrap.execution_mode
+        );
+        let _entered = span.enter();
+        let result = match self.bootstrap.privileges {
             ExecutionPrivileges::Unprivileged => {
+                info!(
+                    target: LOG_TARGET,
+                    operation = operation.as_str(),
+                    "running lifecycle operation in-process"
+                );
                 self.invoke_unprivileged(in_process_op, operation.error_context())
             }
-            ExecutionPrivileges::Root => self.invoke_as_root(operation),
+            ExecutionPrivileges::Root => {
+                info!(
+                    target: LOG_TARGET,
+                    operation = operation.as_str(),
+                    worker = self
+                        .bootstrap
+                        .worker_binary
+                        .as_ref()
+                        .map(std::string::String::as_str),
+                    "dispatching lifecycle operation via worker"
+                );
+                self.invoke_as_root(operation)
+            }
+        };
+        match &result {
+            Ok(()) => info!(
+                target: LOG_TARGET,
+                operation = operation.as_str(),
+                "lifecycle operation completed"
+            ),
+            Err(err) => info!(
+                target: LOG_TARGET,
+                operation = operation.as_str(),
+                error = %err,
+                "lifecycle operation failed"
+            ),
         }
+        result
     }
 
     fn invoke_unprivileged<Fut>(&self, future: Fut, ctx: &'static str) -> BootstrapResult<()>

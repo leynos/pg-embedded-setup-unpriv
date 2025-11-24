@@ -41,7 +41,7 @@
 
 ### Step: Instrument setup for observability
 
-- [ ] **Task:** Add `tracing` spans and logs around privilege changes, directory
+- [x] **Task:** Add `tracing` spans and logs around privilege changes, directory
   mutations, environment variable injection, and PostgreSQL lifecycle events,
   verified by log assertions in integration tests.
 - [ ] **Task:** Surface the chosen settings (ports, directories, version) via

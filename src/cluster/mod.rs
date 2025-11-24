@@ -27,6 +27,7 @@ use self::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use crate::bootstrap_for_tests;
 use crate::env::ScopedEnv;
 use crate::error::{BootstrapError, BootstrapResult};
+use crate::observability::LOG_TARGET;
 use crate::{ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings};
 use color_eyre::eyre::Context;
 use postgresql_embedded::{PostgreSQL, Settings};
@@ -34,6 +35,7 @@ use std::fmt::Display;
 use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
 use tokio::time;
+use tracing::{info, info_span};
 
 /// Embedded `PostgreSQL` instance whose lifecycle follows Rust's drop semantics.
 #[derive(Debug)]
@@ -57,6 +59,8 @@ impl TestCluster {
     /// Returns an error if the bootstrap configuration cannot be prepared or if starting the
     /// embedded cluster fails.
     pub fn new() -> BootstrapResult<Self> {
+        let span = info_span!(target: LOG_TARGET, "test_cluster");
+        let _entered = span.enter();
         let mut bootstrap = bootstrap_for_tests()?;
         let runtime = Builder::new_current_thread()
             .enable_all()
@@ -68,6 +72,12 @@ impl TestCluster {
         let env_guard = ScopedEnv::apply(&env_vars);
         let privileges = bootstrap.privileges;
         let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
+        info!(
+            target: LOG_TARGET,
+            privileges = ?privileges,
+            mode = ?bootstrap.execution_mode,
+            "starting embedded postgres lifecycle"
+        );
 
         let invoker = ClusterWorkerInvoker::new(&runtime, &bootstrap, &env_vars);
 
@@ -85,6 +95,13 @@ impl TestCluster {
         } else {
             Some(embedded)
         };
+
+        info!(
+            target: LOG_TARGET,
+            privileges = ?privileges,
+            worker_managed = is_managed_via_worker,
+            "embedded postgres started"
+        );
 
         Ok(Self {
             runtime,
@@ -261,6 +278,12 @@ impl WorkerOperation {
 impl Drop for TestCluster {
     fn drop(&mut self) {
         let context = Self::stop_context(&self.bootstrap.settings);
+        info!(
+            target: LOG_TARGET,
+            context = %context,
+            worker_managed = self.is_managed_via_worker,
+            "stopping embedded postgres cluster"
+        );
 
         if self.is_managed_via_worker {
             let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
