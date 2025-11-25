@@ -121,6 +121,11 @@ Subscribers that record span enter/exit events (for example via
 `FmtSpan::ENTER|CLOSE`) can reconstruct the lifecycle flow without needing
 additional instrumentation in downstream crates.
 
+Environment change summaries are truncated once they exceed roughly 512
+characters, while the change count is always recorded. Lifecycle failures now
+emit at `error` level so log streams can distinguish genuine errors from the
+normal informational lifecycle noise.
+
 ### Using the `rstest` fixture
 
 `pg_embedded_setup_unpriv::test_support::test_cluster` exposes an `rstest`

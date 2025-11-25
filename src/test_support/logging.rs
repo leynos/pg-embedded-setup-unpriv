@@ -114,3 +114,28 @@ where
     let logs = content.lines().map(str::to_owned).collect();
     (logs, result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::capture_info_logs_with_spans;
+    use tracing::info_span;
+
+    #[test]
+    fn captures_span_enter_and_close_events() {
+        let (logs, ()) = capture_info_logs_with_spans(|| {
+            let span = info_span!("test_span");
+            let _entered = span.enter();
+        });
+
+        assert!(
+            logs.iter()
+                .any(|line| line.contains("test_span") && line.contains("enter")),
+            "expected span enter event in logs, got {logs:?}"
+        );
+        assert!(
+            logs.iter()
+                .any(|line| line.contains("test_span") && line.contains("close")),
+            "expected span close event in logs, got {logs:?}"
+        );
+    }
+}

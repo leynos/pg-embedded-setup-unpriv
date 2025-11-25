@@ -79,7 +79,7 @@ pub(super) fn fixture_environment_variable_isolation(
 ) -> Result<()> {
     const LEAK_VAR: &str = "RSTEST_CLUSTER_ENV_POLLUTION";
     run_unit_fixture_test("rstest-fixture-env-pollution", |_test_cluster| {
-        set_env_var(LEAK_VAR, "polluted_value");
+        unsafe { set_env_var(LEAK_VAR, "polluted_value") };
         Ok(())
     })?;
     ensure!(

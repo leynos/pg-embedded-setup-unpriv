@@ -10,39 +10,29 @@ use std::path::Path;
 use std::process::Command;
 use tracing::{info, info_span};
 
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-use nix::unistd::{Gid, Uid, User, chown};
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-use std::os::unix::process::CommandExt;
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-use std::sync::atomic::{AtomicBool, Ordering};
+macro_rules! cfg_privilege_drop {
+    ($($item:item)*) => {
+        $(
+            #[cfg(all(
+                unix,
+                any(
+                    target_os = "linux",
+                    target_os = "android",
+                    target_os = "freebsd",
+                    target_os = "openbsd",
+                    target_os = "dragonfly",
+                ),
+            ))]
+            $item
+        )*
+    };
+}
+
+cfg_privilege_drop! {
+    use nix::unistd::{Gid, Uid, User, chown};
+    use std::os::unix::process::CommandExt;
+    use std::sync::atomic::{AtomicBool, Ordering};
+}
 
 /// Applies privilege-dropping configuration to a worker command.
 ///
@@ -99,146 +89,88 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
     }
 }
 
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-static SKIP_PRIVILEGE_DROP: AtomicBool = AtomicBool::new(false);
+cfg_privilege_drop! {
+    static SKIP_PRIVILEGE_DROP: AtomicBool = AtomicBool::new(false);
 
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-#[expect(
-    clippy::cognitive_complexity,
-    reason = "tracing spans and early-return logging inflate complexity while flow is linear"
-)]
-fn apply_unix(payload_path: &Path, command: &mut Command) -> BootstrapResult<()> {
-    let span = info_span!(
-        target: LOG_TARGET,
-        "privilege_drop",
-        payload = %payload_path.display()
-    );
-    let _entered = span.enter();
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "tracing spans and early-return logging inflate complexity while flow is linear"
+    )]
+    fn apply_unix(payload_path: &Path, command: &mut Command) -> BootstrapResult<()> {
+        let span = info_span!(
+            target: LOG_TARGET,
+            "privilege_drop",
+            payload = %payload_path.display()
+        );
+        let _entered = span.enter();
 
-    if skip_privilege_drop(payload_path) {
-        return Ok(());
-    }
+        if skip_privilege_drop(payload_path) {
+            return Ok(());
+        }
 
-    let (uid, gid) = resolve_nobody_ids()?;
-    chown_payload(payload_path, uid, gid)?;
-    configure_pre_exec(command, uid, gid);
+        let (uid, gid) = resolve_nobody_ids()?;
+        chown_payload(payload_path, uid, gid)?;
+        configure_pre_exec(command, uid, gid);
 
-    info!(
-        target: LOG_TARGET,
-        payload = %payload_path.display(),
-        uid,
-        gid,
-        "configured worker command to drop privileges"
-    );
-    Ok(())
-}
-
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-fn skip_privilege_drop(payload_path: &Path) -> bool {
-    if skip_privilege_drop_for_tests() {
         info!(
             target: LOG_TARGET,
             payload = %payload_path.display(),
-            "skipping privilege drop for tests"
+            uid,
+            gid,
+            "configured worker command to drop privileges"
         );
-        true
-    } else {
-        false
+        Ok(())
     }
-}
 
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-fn resolve_nobody_ids() -> BootstrapResult<(u32, u32)> {
-    let user = User::from_name("nobody")
-        .context("failed to resolve user 'nobody'")?
-        .ok_or_else(|| eyre!("user 'nobody' not found"))?;
-    Ok((user.uid.as_raw(), user.gid.as_raw()))
-}
+    fn skip_privilege_drop(payload_path: &Path) -> bool {
+        if skip_privilege_drop_for_tests() {
+            info!(
+                target: LOG_TARGET,
+                payload = %payload_path.display(),
+                "skipping privilege drop for tests"
+            );
+            true
+        } else {
+            false
+        }
+    }
 
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-fn chown_payload(payload_path: &Path, uid: u32, gid: u32) -> BootstrapResult<()> {
-    chown(
-        payload_path,
-        Some(Uid::from_raw(uid)),
-        Some(Gid::from_raw(gid)),
-    )
-    .context("failed to chown worker payload to nobody")?;
-    Ok(())
-}
+    fn resolve_nobody_ids() -> BootstrapResult<(u32, u32)> {
+        let user = User::from_name("nobody")
+            .context("failed to resolve user 'nobody'")?
+            .ok_or_else(|| eyre!("user 'nobody' not found"))?;
+        Ok((user.uid.as_raw(), user.gid.as_raw()))
+    }
 
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-fn configure_pre_exec(command: &mut Command, uid: u32, gid: u32) {
-    unsafe {
-        // SAFETY: This closure executes immediately before `exec` whilst the process
-        // still owns elevated credentials. The synchronous UID/GID demotion mirrors the
-        // previous inlined implementation in `TestCluster::spawn_worker` and keeps the
-        // privilege adjustments ordered: groups, gid, then uid.
-        command.pre_exec(move || {
-            if libc::setgroups(0, std::ptr::null()) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::setgid(gid) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::setuid(uid) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
+    fn chown_payload(payload_path: &Path, uid: u32, gid: u32) -> BootstrapResult<()> {
+        chown(
+            payload_path,
+            Some(Uid::from_raw(uid)),
+            Some(Gid::from_raw(gid)),
+        )
+        .context("failed to chown worker payload to nobody")?;
+        Ok(())
+    }
+
+    fn configure_pre_exec(command: &mut Command, uid: u32, gid: u32) {
+        unsafe {
+            // SAFETY: This closure executes immediately before `exec` whilst the process
+            // still owns elevated credentials. The synchronous UID/GID demotion mirrors the
+            // previous inlined implementation in `TestCluster::spawn_worker` and keeps the
+            // privilege adjustments ordered: groups, gid, then uid.
+            command.pre_exec(move || {
+                if libc::setgroups(0, std::ptr::null()) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setgid(gid) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setuid(uid) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
     }
 }
 
@@ -260,70 +192,32 @@ fn apply_noop(_payload_path: &Path, _command: &mut Command) -> BootstrapResult<(
     Ok(())
 }
 
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-/// Guard that restores the privilege-drop toggle when dropped.
-///
-/// Obtain the guard through [`disable_privilege_drop_for_tests`] when
-/// temporarily bypassing demotion during integration tests; dropping the guard
-/// re-enables the standard privilege enforcement automatically.
-#[derive(Debug)]
-pub(crate) struct PrivilegeDropGuard {
-    previous: bool,
-}
-
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-impl Drop for PrivilegeDropGuard {
-    fn drop(&mut self) {
-        SKIP_PRIVILEGE_DROP.store(self.previous, Ordering::SeqCst);
+cfg_privilege_drop! {
+    /// Guard that restores the privilege-drop toggle when dropped.
+    ///
+    /// Obtain the guard through [`disable_privilege_drop_for_tests`] when
+    /// temporarily bypassing demotion during integration tests; dropping the guard
+    /// re-enables the standard privilege enforcement automatically.
+    #[derive(Debug)]
+    pub(crate) struct PrivilegeDropGuard {
+        previous: bool,
     }
-}
 
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-#[must_use]
-pub(crate) fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
-    let previous = SKIP_PRIVILEGE_DROP.swap(true, Ordering::SeqCst);
-    PrivilegeDropGuard { previous }
-}
+    impl Drop for PrivilegeDropGuard {
+        fn drop(&mut self) {
+            SKIP_PRIVILEGE_DROP.store(self.previous, Ordering::SeqCst);
+        }
+    }
 
-#[cfg(all(
-    unix,
-    any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-    ),
-))]
-fn skip_privilege_drop_for_tests() -> bool {
-    SKIP_PRIVILEGE_DROP.load(Ordering::SeqCst)
+    #[must_use]
+    pub(crate) fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
+        let previous = SKIP_PRIVILEGE_DROP.swap(true, Ordering::SeqCst);
+        PrivilegeDropGuard { previous }
+    }
+
+    fn skip_privilege_drop_for_tests() -> bool {
+        SKIP_PRIVILEGE_DROP.load(Ordering::SeqCst)
+    }
 }
 
 #[cfg(not(all(

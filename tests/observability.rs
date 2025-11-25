@@ -5,7 +5,8 @@ use std::cell::RefCell;
 use std::ffi::OsString;
 use std::fs;
 
-use color_eyre::eyre::{Context, Result, ensure, eyre};
+#[cfg(unix)]
+use color_eyre::eyre::{Context, Report, Result, ensure, eyre};
 use pg_embedded_setup_unpriv::test_support::capture_info_logs_with_spans;
 use pg_embedded_setup_unpriv::{BootstrapResult, TestCluster};
 use rstest::fixture;
@@ -56,10 +57,16 @@ impl ObservabilityWorld {
 
     fn record_outcome(&mut self, logs: Vec<String>, result: BootstrapResult<()>) {
         self.logs = logs;
-        self.error = result.err().map(|err| err.to_string());
-        if let Some(err) = &self.error {
-            if err.contains("Permission denied") || err.contains("setgroups") {
-                self.skip_reason = Some("privilege drop unavailable on host".to_owned());
+        match result {
+            Ok(()) => {
+                self.error = None;
+            }
+            Err(err) => {
+                let report = err.into_report();
+                if permission_denied_in_chain(&report) {
+                    self.skip_reason = Some("privilege drop unavailable on host".to_owned());
+                }
+                self.error = Some(report.to_string());
             }
         }
     }
@@ -229,7 +236,35 @@ fn then_logs_capture_failure(world: &WorldFixture) -> Result<()> {
         err.contains(&data_str) || err.contains("data"),
         "expected error message to reference data path, got {err}"
     );
+
+    let has_lifecycle_span = world_ref
+        .logs
+        .iter()
+        .any(|line| line.contains("lifecycle_operation"));
+    if has_lifecycle_span {
+        ensure!(
+            world_ref.logs.iter().any(|line| {
+                line.contains("lifecycle operation failed") && line.contains("setup")
+            }),
+            "expected lifecycle failure log for setup, got {:?}",
+            world_ref.logs
+        );
+    }
     Ok(())
+}
+
+fn permission_denied_in_chain(report: &Report) -> bool {
+    use std::io::ErrorKind;
+
+    if report.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == ErrorKind::PermissionDenied)
+    }) {
+        return true;
+    }
+
+    false
 }
 
 fn ensure_runtime_dir_matches(

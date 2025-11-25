@@ -213,6 +213,23 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
   presence of lifecycle, directory, and failure-context logs for both happy and
   unhappy bootstrap paths.
 
+### Implementation update (2025-11-25)
+
+- Scoped environment logging now truncates the rendered key summary to a
+  bounded length while always recording the change count, keeping observability
+  output readable when large snapshots are applied.
+- Lifecycle failures emit at `error` level and carry span context; worker spawn
+  errors preserve the original `io::Error` chain so callers can downcast or map
+  errno precisely.
+- Filesystem helpers inline their logging and error handling to retain
+  observability without the previous helper indirection, simplifying the
+  privilege setup flow.
+- Tree ownership fixes run inside a single traversal loop, maintaining the
+  updated-entry count without the separate walker type.
+- Observability behavioural scenarios now assert lifecycle span presence and
+  failure logs, and a focused unit test ensures span enter/close events are
+  captured by the logging harness used in BDD suites.
+
 ### Implementation update (2024-06-10)
 
 - Implemented the `TestCluster` RAII guard. `TestCluster::new()` reuses

@@ -30,7 +30,7 @@ use crate::bootstrap_for_tests;
 use crate::env::ScopedEnv;
 use crate::error::BootstrapResult;
 use crate::observability::LOG_TARGET;
-use crate::{ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings};
+use crate::{ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings};
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::fmt::Display;
 use std::time::Duration;
@@ -80,6 +80,10 @@ impl TestCluster {
         })
     }
 
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "privilege-aware lifecycle setup requires explicit branching for observability"
+    )]
     fn start_postgres(
         runtime: &Runtime,
         mut bootstrap: TestBootstrapSettings,
@@ -87,7 +91,12 @@ impl TestCluster {
     ) -> BootstrapResult<(TestBootstrapSettings, Option<PostgreSQL>, bool)> {
         let privileges = bootstrap.privileges;
         let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
-        Self::log_start(privileges, bootstrap.execution_mode);
+        info!(
+            target: LOG_TARGET,
+            privileges = ?privileges,
+            mode = ?bootstrap.execution_mode,
+            "starting embedded postgres lifecycle"
+        );
 
         let invoker = ClusterWorkerInvoker::new(runtime, &bootstrap, env_vars);
         Self::invoke_lifecycle(&invoker, &mut embedded)?;
@@ -96,7 +105,12 @@ impl TestCluster {
         let postgres =
             Self::prepare_postgres_handle(is_managed_via_worker, &mut bootstrap, embedded);
 
-        Self::log_started(privileges, is_managed_via_worker);
+        info!(
+            target: LOG_TARGET,
+            privileges = ?privileges,
+            worker_managed = is_managed_via_worker,
+            "embedded postgres started"
+        );
         Ok((bootstrap, postgres, is_managed_via_worker))
     }
 
@@ -119,24 +133,6 @@ impl TestCluster {
     ) -> BootstrapResult<()> {
         invoker.invoke(WorkerOperation::Setup, async { embedded.setup().await })?;
         invoker.invoke(WorkerOperation::Start, async { embedded.start().await })
-    }
-
-    fn log_start(privileges: ExecutionPrivileges, mode: ExecutionMode) {
-        info!(
-            target: LOG_TARGET,
-            privileges = ?privileges,
-            mode = ?mode,
-            "starting embedded postgres lifecycle"
-        );
-    }
-
-    fn log_started(privileges: ExecutionPrivileges, worker_managed: bool) {
-        info!(
-            target: LOG_TARGET,
-            privileges = ?privileges,
-            worker_managed,
-            "embedded postgres started"
-        );
     }
 
     /// Extends the cluster lifetime to cover additional scoped environment guards.
@@ -301,6 +297,10 @@ impl WorkerOperation {
 }
 
 impl Drop for TestCluster {
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "drop path must branch between worker and in-process shutdown with logging"
+    )]
     fn drop(&mut self) {
         let context = Self::stop_context(&self.bootstrap.settings);
         info!(
@@ -311,43 +311,24 @@ impl Drop for TestCluster {
         );
 
         if self.is_managed_via_worker {
-            self.stop_via_worker(&context);
-        } else {
-            self.stop_in_process(&context);
-        }
-        // Environment guards drop after this block, restoring the process state.
-    }
-}
-
-impl TestCluster {
-    fn stop_via_worker(&self, context: &str) {
-        let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
-        if let Err(err) = invoker.invoke_as_root(WorkerOperation::Stop) {
-            Self::warn_stop_failure(context, &err);
-        }
-    }
-
-    fn stop_in_process(&mut self, context: &str) {
-        if let Some(postgres) = self.postgres.take() {
+            let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
+            if let Err(err) = invoker.invoke_as_root(WorkerOperation::Stop) {
+                Self::warn_stop_failure(&context, &err);
+            }
+        } else if let Some(postgres) = self.postgres.take() {
             let timeout = self.bootstrap.shutdown_timeout;
             let timeout_secs = timeout.as_secs();
             let outcome = self
                 .runtime
                 .block_on(async { time::timeout(timeout, postgres.stop()).await });
-            Self::handle_in_process_stop(outcome, timeout_secs, context);
-        }
-    }
 
-    fn handle_in_process_stop(
-        outcome: Result<Result<(), postgresql_embedded::Error>, time::error::Elapsed>,
-        timeout_secs: u64,
-        context: &str,
-    ) {
-        match outcome {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => Self::warn_stop_failure(context, &err),
-            Err(_) => Self::warn_stop_timeout(timeout_secs, context),
+            match outcome {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => Self::warn_stop_failure(&context, &err),
+                Err(_) => Self::warn_stop_timeout(timeout_secs, &context),
+            }
         }
+        // Environment guards drop after this block, restoring the process state.
     }
 }
 
