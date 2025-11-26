@@ -24,7 +24,7 @@ use tracing::{info, info_span};
 
 #[expect(
     clippy::cognitive_complexity,
-    reason = "tracing span setup increases measured complexity in a linear function"
+    reason = "tracing span and structured logging macros inflate measured complexity"
 )]
 pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
     directory: P,

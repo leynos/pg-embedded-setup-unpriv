@@ -117,8 +117,8 @@ privilege drops, directory ownership or permission updates, scoped environment
 application, and the `postgresql_embedded` setup/start/stop lifecycle. The log
 target keeps sensitive values redacted: environment changes are rendered as
 `KEY=set` or `KEY=unset`, and PostgreSQL settings avoid echoing passwords.
-Subscribers that record span enter/exit events (for example via
-`FmtSpan::ENTER|CLOSE`) can reconstruct the lifecycle flow without needing
+Subscribers that record span enter/exit events, for example via
+`FmtSpan::ENTER|CLOSE`, can reconstruct the lifecycle flow without needing
 additional instrumentation in downstream crates.
 
 Environment change summaries are truncated once they exceed roughly 512

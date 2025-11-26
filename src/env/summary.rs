@@ -53,6 +53,7 @@ fn append_truncation_suffix(truncated: &mut String, shown_changes: usize, change
         if !truncated.is_empty() && !truncated.ends_with(',') {
             truncated.push_str(", ");
         }
+        // Writing into a `String` is infallible; log on the impossible error path.
         if let Err(err) = write!(truncated, "+ {remaining} more") {
             debug_assert!(false, "writing truncated summary failed: {err}");
         }

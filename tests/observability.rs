@@ -77,7 +77,7 @@ type WorldFixture = Result<RefCell<ObservabilityWorld>>;
 fn borrow_world(world: &WorldFixture) -> Result<&RefCell<ObservabilityWorld>> {
     world
         .as_ref()
-        .map_err(|err| eyre!(format!("observability world failed: {err}")))
+        .map_err(|err| eyre!("observability world failed: {err}"))
 }
 
 #[fixture]

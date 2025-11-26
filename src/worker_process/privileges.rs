@@ -31,7 +31,7 @@ macro_rules! cfg_privilege_drop {
 cfg_privilege_drop! {
     use nix::unistd::{Gid, Uid, User, chown};
     use std::os::unix::process::CommandExt;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 }
 
 /// Applies privilege-dropping configuration to a worker command.
@@ -90,7 +90,8 @@ pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResu
 }
 
 cfg_privilege_drop! {
-    static SKIP_PRIVILEGE_DROP: AtomicBool = AtomicBool::new(false);
+    // Tracks nesting so privilege drop stays disabled while any guard is held.
+    static SKIP_PRIVILEGE_DROP: AtomicUsize = AtomicUsize::new(0);
 
     #[expect(
         clippy::cognitive_complexity,
@@ -199,24 +200,22 @@ cfg_privilege_drop! {
     /// temporarily bypassing demotion during integration tests; dropping the guard
     /// re-enables the standard privilege enforcement automatically.
     #[derive(Debug)]
-    pub(crate) struct PrivilegeDropGuard {
-        previous: bool,
-    }
+    pub(crate) struct PrivilegeDropGuard;
 
     impl Drop for PrivilegeDropGuard {
         fn drop(&mut self) {
-            SKIP_PRIVILEGE_DROP.store(self.previous, Ordering::SeqCst);
+            SKIP_PRIVILEGE_DROP.fetch_sub(1, Ordering::SeqCst);
         }
     }
 
     #[must_use]
     pub(crate) fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
-        let previous = SKIP_PRIVILEGE_DROP.swap(true, Ordering::SeqCst);
-        PrivilegeDropGuard { previous }
+        SKIP_PRIVILEGE_DROP.fetch_add(1, Ordering::SeqCst);
+        PrivilegeDropGuard
     }
 
     fn skip_privilege_drop_for_tests() -> bool {
-        SKIP_PRIVILEGE_DROP.load(Ordering::SeqCst)
+        SKIP_PRIVILEGE_DROP.load(Ordering::SeqCst) > 0
     }
 }
 

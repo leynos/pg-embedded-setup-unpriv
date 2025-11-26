@@ -103,7 +103,7 @@ pub(crate) fn set_permissions(path: &Utf8Path, mode: u32) -> Result<()> {
 
 #[expect(
     clippy::cognitive_complexity,
-    reason = "differentiating metadata outcomes while logging drives branching depth"
+    reason = "metadata inspection plus logging branches beyond clippy threshold"
 )]
 fn ensure_existing_path_is_dir(path: &Utf8Path) -> Result<()> {
     match std::fs::metadata(path.as_std_path()) {
