@@ -75,10 +75,6 @@ impl<'a> WorkerInvoker<'a> {
     /// # Ok(())
     /// # }
     /// ```
-    #[expect(
-        clippy::cognitive_complexity,
-        reason = "privilege dispatch plus structured logging requires explicit branching"
-    )]
     pub fn invoke<Fut>(&self, operation: WorkerOperation, in_process_op: Fut) -> BootstrapResult<()>
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
@@ -86,45 +82,61 @@ impl<'a> WorkerInvoker<'a> {
         let span = self.lifecycle_span(operation);
         let _entered = span.enter();
 
-        let result = match self.bootstrap.privileges {
-            ExecutionPrivileges::Unprivileged => {
-                info!(
-                    target: LOG_TARGET,
-                    operation = operation.as_str(),
-                    "running lifecycle operation in-process"
-                );
-                self.invoke_unprivileged(in_process_op, operation.error_context())
-            }
-            ExecutionPrivileges::Root => {
-                info!(
-                    target: LOG_TARGET,
-                    operation = operation.as_str(),
-                    worker = self
-                        .bootstrap
-                        .worker_binary
-                        .as_ref()
-                        .map(|path| path.as_str()),
-                    "dispatching lifecycle operation via worker"
-                );
-                self.invoke_as_root(operation)
-            }
-        };
-
-        match &result {
-            Ok(()) => info!(
-                target: LOG_TARGET,
-                operation = operation.as_str(),
-                "lifecycle operation completed"
-            ),
-            Err(err) => error!(
-                target: LOG_TARGET,
-                operation = operation.as_str(),
-                error = %err,
-                "lifecycle operation failed"
-            ),
-        }
-
+        let result = self.dispatch_operation(operation, in_process_op);
+        Self::log_outcome(operation, &result);
         result
+    }
+
+    fn dispatch_operation<Fut>(
+        &self,
+        operation: WorkerOperation,
+        in_process_op: Fut,
+    ) -> BootstrapResult<()>
+    where
+        Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
+    {
+        match self.bootstrap.privileges {
+            ExecutionPrivileges::Unprivileged => self.run_unprivileged(operation, in_process_op),
+            ExecutionPrivileges::Root => self.run_root(operation),
+        }
+    }
+
+    fn run_unprivileged<Fut>(
+        &self,
+        operation: WorkerOperation,
+        in_process_op: Fut,
+    ) -> BootstrapResult<()>
+    where
+        Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
+    {
+        info!(
+            target: LOG_TARGET,
+            operation = operation.as_str(),
+            "running lifecycle operation in-process"
+        );
+        self.invoke_unprivileged(in_process_op, operation.error_context())
+    }
+
+    fn run_root(&self, operation: WorkerOperation) -> BootstrapResult<()> {
+        info!(
+            target: LOG_TARGET,
+            operation = operation.as_str(),
+            worker = self
+                .bootstrap
+                .worker_binary
+                .as_ref()
+                .map(|path| path.as_str()),
+            "dispatching lifecycle operation via worker"
+        );
+        self.invoke_as_root(operation)
+    }
+
+    fn log_outcome(operation: WorkerOperation, result: &BootstrapResult<()>) {
+        if let Err(err) = result {
+            log_failure(operation, err);
+        } else {
+            log_success(operation);
+        }
     }
 
     fn invoke_unprivileged<Fut>(&self, future: Fut, ctx: &'static str) -> BootstrapResult<()>
@@ -222,6 +234,23 @@ impl<'a> WorkerInvoker<'a> {
 
         worker_process::run(&request)
     }
+}
+
+fn log_failure(operation: WorkerOperation, err: &BootstrapError) {
+    error!(
+        target: LOG_TARGET,
+        operation = operation.as_str(),
+        error = %err,
+        "lifecycle operation failed"
+    );
+}
+
+fn log_success(operation: WorkerOperation) {
+    info!(
+        target: LOG_TARGET,
+        operation = operation.as_str(),
+        "lifecycle operation completed"
+    );
 }
 
 #[cfg(test)]

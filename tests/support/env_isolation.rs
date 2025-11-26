@@ -1,7 +1,3 @@
-#![expect(
-    dead_code,
-    reason = "utility helpers kept for optional env isolation scenarios"
-)]
 //! Environment helpers for isolating test scenarios.
 
 use std::collections::HashSet;
@@ -77,4 +73,20 @@ pub fn override_env_os(vars: &mut ScopedEnvVars, key: impl AsRef<OsStr>, value: 
 /// Overrides a UTF-8 environment variable entry in `vars`.
 pub fn override_env_path(vars: &mut ScopedEnvVars, key: impl AsRef<OsStr>, value: &Utf8Path) {
     override_env_os(vars, key, Some(OsString::from(value.as_str())));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn env_isolation_helpers_are_reachable() {
+        let guard = EnvIsolationGuard::capture();
+        drop(guard);
+
+        unsafe {
+            set_env_var("ENV_ISOLATION_SMOKE", "value");
+            remove_env_var("ENV_ISOLATION_SMOKE");
+        }
+    }
 }

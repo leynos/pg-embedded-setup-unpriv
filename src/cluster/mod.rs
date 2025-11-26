@@ -50,6 +50,12 @@ pub struct TestCluster {
     _env_guard: ScopedEnv,
 }
 
+struct StartupOutcome {
+    bootstrap: TestBootstrapSettings,
+    postgres: Option<PostgreSQL>,
+    is_managed_via_worker: bool,
+}
+
 impl TestCluster {
     /// Boots a `PostgreSQL` instance configured by [`bootstrap_for_tests`].
     ///
@@ -66,14 +72,13 @@ impl TestCluster {
         let runtime = build_runtime()?;
         let env_vars = initial_bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
-        let (bootstrap, postgres, is_managed_via_worker) =
-            Self::start_postgres(&runtime, initial_bootstrap, &env_vars)?;
+        let outcome = Self::start_postgres(&runtime, initial_bootstrap, &env_vars)?;
 
         Ok(Self {
             runtime,
-            postgres,
-            bootstrap,
-            is_managed_via_worker,
+            postgres: outcome.postgres,
+            bootstrap: outcome.bootstrap,
+            is_managed_via_worker: outcome.is_managed_via_worker,
             env_vars,
             worker_guard: None,
             _env_guard: env_guard,
@@ -88,7 +93,7 @@ impl TestCluster {
         runtime: &Runtime,
         mut bootstrap: TestBootstrapSettings,
         env_vars: &[(String, Option<String>)],
-    ) -> BootstrapResult<(TestBootstrapSettings, Option<PostgreSQL>, bool)> {
+    ) -> BootstrapResult<StartupOutcome> {
         let privileges = bootstrap.privileges;
         let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
         info!(
@@ -111,7 +116,11 @@ impl TestCluster {
             worker_managed = is_managed_via_worker,
             "embedded postgres started"
         );
-        Ok((bootstrap, postgres, is_managed_via_worker))
+        Ok(StartupOutcome {
+            bootstrap,
+            postgres,
+            is_managed_via_worker,
+        })
     }
 
     fn prepare_postgres_handle(

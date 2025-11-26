@@ -25,6 +25,8 @@
 use crate::observability::LOG_TARGET;
 use std::cell::RefCell;
 use std::ffi::OsString;
+use std::marker::PhantomData;
+use std::rc::Rc;
 use tracing::{info, info_span};
 
 mod state;
@@ -42,6 +44,8 @@ pub struct ScopedEnv {
     index: usize,
     span: tracing::Span,
     change_count: usize,
+    // !Send + !Sync so drops always occur on the creating thread.
+    _not_send_or_sync: PhantomData<Rc<()>>,
 }
 
 thread_local! {
@@ -118,6 +122,7 @@ impl ScopedEnv {
             index,
             span,
             change_count,
+            _not_send_or_sync: PhantomData,
         }
     }
 }

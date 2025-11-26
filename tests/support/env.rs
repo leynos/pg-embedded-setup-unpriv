@@ -53,25 +53,32 @@ fn locate_worker_binary() -> Option<OsString> {
     let entries = std::fs::read_dir(deps_dir).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if !name.starts_with("pg_worker") {
-            continue;
-        }
-        if path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("d"))
-        {
-            continue;
-        }
-        if path.is_file() {
+        if is_worker_binary(&path) {
             return Some(path.into_os_string());
         }
     }
 
     None
+}
+
+fn is_worker_binary(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+
+    if !name.starts_with("pg_worker") {
+        return false;
+    }
+
+    if path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("d"))
+    {
+        return false;
+    }
+
+    path.is_file()
 }
 
 /// Applies `vars` and returns a guard that keeps them active until dropped.

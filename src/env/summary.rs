@@ -1,6 +1,6 @@
 //! Helpers for rendering bounded environment change summaries.
 
-use std::fmt::Write as FmtWrite;
+use std::fmt::Write;
 
 pub(super) const MAX_ENV_CHANGES_SUMMARY_LEN: usize = 512;
 
@@ -53,10 +53,11 @@ fn append_truncation_suffix(truncated: &mut String, shown_changes: usize, change
         if !truncated.is_empty() && !truncated.ends_with(',') {
             truncated.push_str(", ");
         }
-        // Writing into a `String` is infallible; log on the impossible error path.
-        if let Err(err) = write!(truncated, "+ {remaining} more") {
-            debug_assert!(false, "writing truncated summary failed: {err}");
-        }
+        let write_result = write!(truncated, "+ {remaining} more");
+        debug_assert!(
+            write_result.is_ok(),
+            "writing truncated summary failed: {write_result:?}"
+        );
     } else if !truncated.ends_with("...") {
         truncated.push_str("...");
     }

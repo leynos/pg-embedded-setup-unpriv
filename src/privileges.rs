@@ -22,17 +22,21 @@ use nix::unistd::{Uid, User, chown};
 use std::io::ErrorKind;
 use tracing::{info, info_span};
 
-#[expect(
-    clippy::cognitive_complexity,
-    reason = "tracing span and structured logging macros inflate measured complexity"
-)]
 pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
     directory: P,
     user: &User,
     mode: u32,
 ) -> PrivilegeResult<()> {
     let dir_path = directory.as_ref();
-    let span = info_span!(
+    let span = dir_for_user_span(dir_path, user, mode);
+    let _entered = span.enter();
+    ensure_dir_for_user_inner(dir_path, user, mode)?;
+    log_dir_for_user_success(dir_path, user);
+    Ok(())
+}
+
+fn dir_for_user_span(dir_path: &Utf8Path, user: &User, mode: u32) -> tracing::Span {
+    info_span!(
         target: LOG_TARGET,
         "ensure_dir_for_user",
         path = %dir_path,
@@ -40,18 +44,23 @@ pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
         uid = user.uid.as_raw(),
         gid = user.gid.as_raw(),
         mode_octal = format_args!("{mode:o}")
-    );
-    let _entered = span.enter();
+    )
+}
+
+fn ensure_dir_for_user_inner(dir_path: &Utf8Path, user: &User, mode: u32) -> PrivilegeResult<()> {
     ensure_dir_exists(dir_path)?;
     apply_ownership(dir_path, user)?;
     set_permissions(dir_path, mode)?;
+    Ok(())
+}
+
+fn log_dir_for_user_success(dir_path: &Utf8Path, user: &User) {
     info!(
         target: LOG_TARGET,
         path = %dir_path,
         user = %user.name,
         "ensured directory ownership and permissions for user"
     );
-    Ok(())
 }
 
 /// Ensures `dir` exists, is owned by `user`, and grants world-readable access.

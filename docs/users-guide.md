@@ -123,7 +123,7 @@ additional instrumentation in downstream crates.
 
 Environment change summaries are truncated once they exceed roughly 512
 characters, while the change count is always recorded. Lifecycle failures now
-emit at `error` level so log streams can distinguish genuine errors from the
+emit at `error` level, so log streams can distinguish genuine errors from the
 normal informational lifecycle noise.
 
 ### Using the `rstest` fixture
