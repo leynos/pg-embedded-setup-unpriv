@@ -254,6 +254,7 @@ mod tests {
             .enable_all()
             .build()
             .expect("test runtime");
+        let span = info_span!(target: LOG_TARGET, "test_cluster");
         let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
         let env_vars = bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
@@ -265,6 +266,7 @@ mod tests {
             env_vars,
             worker_guard: None,
             _env_guard: env_guard,
+            _cluster_span: span,
         }
     }
 }

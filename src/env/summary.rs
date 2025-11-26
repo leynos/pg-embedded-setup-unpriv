@@ -53,12 +53,15 @@ fn append_truncation_suffix(truncated: &mut String, shown_changes: usize, change
         if !truncated.is_empty() && !truncated.ends_with(',') {
             truncated.push_str(", ");
         }
-        let write_result = write!(truncated, "+ {remaining} more");
-        debug_assert!(
-            write_result.is_ok(),
-            "writing truncated summary failed: {write_result:?}"
-        );
+        write_truncation_suffix(truncated, remaining);
     } else if !truncated.ends_with("...") {
         truncated.push_str("...");
+    }
+}
+
+fn write_truncation_suffix(truncated: &mut String, remaining: usize) {
+    // Writing into a `String` is infallible; check in debug to satisfy clippy.
+    if let Err(err) = write!(truncated, "+ {remaining} more") {
+        debug_assert!(false, "writing truncated summary failed: {err}");
     }
 }
