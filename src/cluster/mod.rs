@@ -48,6 +48,8 @@ pub struct TestCluster {
     env_vars: Vec<(String, Option<String>)>,
     worker_guard: Option<ScopedEnv>,
     _env_guard: ScopedEnv,
+    // Keeps the cluster span alive for the lifetime of the guard.
+    _cluster_span: tracing::Span,
 }
 
 struct StartupOutcome {
@@ -67,7 +69,6 @@ impl TestCluster {
     /// embedded cluster fails.
     pub fn new() -> BootstrapResult<Self> {
         let span = info_span!(target: LOG_TARGET, "test_cluster");
-        let _entered = span.enter();
         let initial_bootstrap = bootstrap_for_tests()?;
         let runtime = build_runtime()?;
         let env_vars = initial_bootstrap.environment.to_env();
@@ -82,6 +83,7 @@ impl TestCluster {
             env_vars,
             worker_guard: None,
             _env_guard: env_guard,
+            _cluster_span: span,
         })
     }
 
