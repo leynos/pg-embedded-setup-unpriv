@@ -219,7 +219,7 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
   bounded length while always recording the change count, keeping observability
   output readable when large snapshots are applied.
 - Lifecycle failures emit at `error` level and carry span context; worker spawn
-  errors preserve the original `io::Error` chain so callers can downcast or map
+errors preserve the original `io::Error` chain, so callers can downcast or map
   errno precisely.
 - Filesystem helpers inline their logging and error handling to retain
   observability without the previous helper indirection, simplifying the
