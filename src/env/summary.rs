@@ -24,10 +24,7 @@ pub(super) fn truncate_env_changes_summary(
     truncated.truncate(trimmed.len());
 
     // Estimate how many entries were shown to annotate how many were omitted.
-    let trimmed_for_count = truncated.trim_end();
-    let trimmed_no_trailing_comma = trimmed_for_count
-        .strip_suffix(',')
-        .unwrap_or(trimmed_for_count);
+    let trimmed_no_trailing_comma = truncated.strip_suffix(',').unwrap_or(truncated.as_str());
     let shown_changes = trimmed_no_trailing_comma
         .chars()
         .filter(|&c| c == ',')
@@ -71,9 +68,10 @@ fn append_truncation_suffix(truncated: &mut String, shown_changes: usize, change
 }
 
 fn write_truncation_suffix(truncated: &mut String, remaining: usize) {
-    // Writing to a `String` is infallible; validate in debug builds.
+    // Writing to a `String` is infallible; silence the result explicitly.
+    let write_result = write!(truncated, "+ {remaining} more");
     debug_assert!(
-        write!(truncated, "+ {remaining} more").is_ok(),
+        write_result.is_ok(),
         "writing truncated summary should be infallible"
     );
 }
