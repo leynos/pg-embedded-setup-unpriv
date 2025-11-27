@@ -5,10 +5,12 @@ use color_eyre::eyre::{Context, eyre};
 use tokio::runtime::Runtime;
 
 use crate::error::{BootstrapError, BootstrapResult};
+use crate::observability::LOG_TARGET;
 use crate::worker_process::{self, WorkerRequest};
 use crate::{ExecutionMode, ExecutionPrivileges, TestBootstrapSettings};
 
 use super::WorkerOperation;
+use tracing::{error, info, info_span};
 
 /// Executes worker operations whilst respecting configured privileges.
 #[derive(Debug)]
@@ -77,11 +79,63 @@ impl<'a> WorkerInvoker<'a> {
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
+        let span = self.lifecycle_span(operation);
+        let _entered = span.enter();
+
+        let result = self.dispatch_operation(operation, in_process_op);
+        Self::log_outcome(operation, &result);
+        result
+    }
+
+    fn dispatch_operation<Fut>(
+        &self,
+        operation: WorkerOperation,
+        in_process_op: Fut,
+    ) -> BootstrapResult<()>
+    where
+        Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
+    {
         match self.bootstrap.privileges {
-            ExecutionPrivileges::Unprivileged => {
-                self.invoke_unprivileged(in_process_op, operation.error_context())
-            }
-            ExecutionPrivileges::Root => self.invoke_as_root(operation),
+            ExecutionPrivileges::Unprivileged => self.run_unprivileged(operation, in_process_op),
+            ExecutionPrivileges::Root => self.run_root(operation),
+        }
+    }
+
+    fn run_unprivileged<Fut>(
+        &self,
+        operation: WorkerOperation,
+        in_process_op: Fut,
+    ) -> BootstrapResult<()>
+    where
+        Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
+    {
+        info!(
+            target: LOG_TARGET,
+            operation = operation.as_str(),
+            "running lifecycle operation in-process"
+        );
+        self.invoke_unprivileged(in_process_op, operation.error_context())
+    }
+
+    fn run_root(&self, operation: WorkerOperation) -> BootstrapResult<()> {
+        info!(
+            target: LOG_TARGET,
+            operation = operation.as_str(),
+            worker = self
+                .bootstrap
+                .worker_binary
+                .as_ref()
+                .map(|path| path.as_str()),
+            "dispatching lifecycle operation via worker"
+        );
+        self.invoke_as_root(operation)
+    }
+
+    fn log_outcome(operation: WorkerOperation, result: &BootstrapResult<()>) {
+        if let Err(err) = result {
+            log_failure(operation, err);
+        } else {
+            log_success(operation);
         }
     }
 
@@ -93,6 +147,16 @@ impl<'a> WorkerInvoker<'a> {
             .block_on(future)
             .context(ctx)
             .map_err(BootstrapError::from)
+    }
+
+    fn lifecycle_span(&self, operation: WorkerOperation) -> tracing::Span {
+        info_span!(
+            target: LOG_TARGET,
+            "lifecycle_operation",
+            operation = operation.as_str(),
+            privileges = ?self.bootstrap.privileges,
+            mode = ?self.bootstrap.execution_mode
+        )
     }
 
     pub(super) fn invoke_as_root(&self, operation: WorkerOperation) -> BootstrapResult<()> {
@@ -170,6 +234,23 @@ impl<'a> WorkerInvoker<'a> {
 
         worker_process::run(&request)
     }
+}
+
+fn log_failure(operation: WorkerOperation, err: &BootstrapError) {
+    error!(
+        target: LOG_TARGET,
+        operation = operation.as_str(),
+        error = %err,
+        "lifecycle operation failed"
+    );
+}
+
+fn log_success(operation: WorkerOperation) {
+    info!(
+        target: LOG_TARGET,
+        operation = operation.as_str(),
+        "lifecycle operation completed"
+    );
 }
 
 #[cfg(test)]
