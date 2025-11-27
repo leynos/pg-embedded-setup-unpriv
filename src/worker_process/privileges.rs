@@ -212,19 +212,18 @@ cfg_privilege_drop! {
     }
 
     fn decrement_skip_privilege_drop() {
-        let _ = SKIP_PRIVILEGE_DROP
-            .fetch_update(
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                |value| {
-                    debug_assert!(
-                        value > 0,
-                        "PrivilegeDropGuard dropped with zero privilege-drop counter"
-                    );
-                    Some(value.saturating_sub(1))
-                },
-            )
-            .unwrap_or(0);
+        let update_result = SKIP_PRIVILEGE_DROP.fetch_update(
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            |value| {
+                debug_assert!(
+                    value > 0,
+                    "PrivilegeDropGuard dropped with zero privilege-drop counter"
+                );
+                Some(value.saturating_sub(1))
+            },
+        );
+        debug_assert!(update_result.is_ok(), "privilege-drop counter update failed unexpectedly");
     }
 }
 
