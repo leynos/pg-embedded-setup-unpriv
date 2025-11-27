@@ -29,31 +29,31 @@ impl Drop for EnvIsolationGuard {
         let current_keys: Vec<OsString> = std::env::vars_os().map(|(key, _)| key).collect();
         for key in current_keys {
             if !saved_keys.contains(&key) {
-                remove_env_var(&key);
+                unsafe { remove_env_var(&key) };
             }
         }
         for (key, value) in &self.snapshot {
-            set_env_var(key, value);
+            unsafe { set_env_var(key, value) };
         }
     }
 }
 
 /// Sets an environment variable whilst bypassing nightly's lint.
-pub fn set_env_var<K, V>(key: K, value: V)
+pub unsafe fn set_env_var<K, V>(key: K, value: V)
 where
     K: AsRef<OsStr>,
     V: AsRef<OsStr>,
 {
-    // SAFETY: test cases serialise environment mutations via ScopedEnv.
+    // SAFETY: callers must serialise environment mutations; enforced at call sites.
     unsafe { std::env::set_var(key, value) };
 }
 
 /// Removes an environment variable whilst bypassing nightly's lint.
-pub fn remove_env_var<K>(key: K)
+pub unsafe fn remove_env_var<K>(key: K)
 where
     K: AsRef<OsStr>,
 {
-    // SAFETY: test cases serialise environment mutations via ScopedEnv.
+    // SAFETY: callers must serialise environment mutations; enforced at call sites.
     unsafe { std::env::remove_var(key) };
 }
 
@@ -73,4 +73,20 @@ pub fn override_env_os(vars: &mut ScopedEnvVars, key: impl AsRef<OsStr>, value: 
 /// Overrides a UTF-8 environment variable entry in `vars`.
 pub fn override_env_path(vars: &mut ScopedEnvVars, key: impl AsRef<OsStr>, value: &Utf8Path) {
     override_env_os(vars, key, Some(OsString::from(value.as_str())));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn env_isolation_helpers_are_reachable() {
+        let guard = EnvIsolationGuard::capture();
+        drop(guard);
+
+        unsafe {
+            set_env_var("ENV_ISOLATION_SMOKE", "value");
+            remove_env_var("ENV_ISOLATION_SMOKE");
+        }
+    }
 }

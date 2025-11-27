@@ -64,7 +64,7 @@ json5 = []
 yaml = []
 privileged-tests = []
 cluster-unit-tests = ["dep:tracing-subscriber"]
-dev-worker = []
+dev-worker = ["dep:tracing-subscriber"]
 diesel-support = ["dep:diesel", "dep:pq-sys"]
 
 [workspace.lints.rust]

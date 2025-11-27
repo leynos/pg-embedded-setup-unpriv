@@ -17,23 +17,26 @@
 //! ```
 
 mod connection;
+mod runtime;
 mod worker_invoker;
 
 pub use self::connection::{ConnectionMetadata, TestClusterConnection};
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use self::worker_invoker::WorkerInvoker;
 
+use self::runtime::build_runtime;
 use self::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use crate::bootstrap_for_tests;
 use crate::env::ScopedEnv;
-use crate::error::{BootstrapError, BootstrapResult};
+use crate::error::BootstrapResult;
+use crate::observability::LOG_TARGET;
 use crate::{ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings};
-use color_eyre::eyre::Context;
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::fmt::Display;
 use std::time::Duration;
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::Runtime;
 use tokio::time;
+use tracing::{info, info_span};
 
 /// Embedded `PostgreSQL` instance whose lifecycle follows Rust's drop semantics.
 #[derive(Debug)]
@@ -45,6 +48,14 @@ pub struct TestCluster {
     env_vars: Vec<(String, Option<String>)>,
     worker_guard: Option<ScopedEnv>,
     _env_guard: ScopedEnv,
+    // Keeps the cluster span alive for the lifetime of the guard.
+    _cluster_span: tracing::Span,
+}
+
+struct StartupOutcome {
+    bootstrap: TestBootstrapSettings,
+    postgres: Option<PostgreSQL>,
+    is_managed_via_worker: bool,
 }
 
 impl TestCluster {
@@ -57,44 +68,86 @@ impl TestCluster {
     /// Returns an error if the bootstrap configuration cannot be prepared or if starting the
     /// embedded cluster fails.
     pub fn new() -> BootstrapResult<Self> {
-        let mut bootstrap = bootstrap_for_tests()?;
-        let runtime = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("failed to create Tokio runtime for TestCluster")
-            .map_err(BootstrapError::from)?;
-
-        let env_vars = bootstrap.environment.to_env();
-        let env_guard = ScopedEnv::apply(&env_vars);
-        let privileges = bootstrap.privileges;
-        let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
-
-        let invoker = ClusterWorkerInvoker::new(&runtime, &bootstrap, &env_vars);
-
-        invoker.invoke(WorkerOperation::Setup, async { embedded.setup().await })?;
-        invoker.invoke(WorkerOperation::Start, async { embedded.start().await })?;
-
-        let is_managed_via_worker = matches!(privileges, ExecutionPrivileges::Root);
-        if !is_managed_via_worker {
-            // Capture runtime mutations such as dynamically assigned ports so connection
-            // metadata reflects the live cluster rather than the pre-bootstrap defaults.
-            bootstrap.settings = embedded.settings().clone();
-        }
-        let postgres = if is_managed_via_worker {
-            None
-        } else {
-            Some(embedded)
+        let span = info_span!(target: LOG_TARGET, "test_cluster");
+        let (runtime, env_vars, env_guard, outcome) = {
+            let _entered = span.enter();
+            let initial_bootstrap = bootstrap_for_tests()?;
+            let runtime = build_runtime()?;
+            let env_vars = initial_bootstrap.environment.to_env();
+            let env_guard = ScopedEnv::apply(&env_vars);
+            let outcome = Self::start_postgres(&runtime, initial_bootstrap, &env_vars)?;
+            (runtime, env_vars, env_guard, outcome)
         };
 
         Ok(Self {
             runtime,
-            postgres,
-            bootstrap,
-            is_managed_via_worker,
+            postgres: outcome.postgres,
+            bootstrap: outcome.bootstrap,
+            is_managed_via_worker: outcome.is_managed_via_worker,
             env_vars,
             worker_guard: None,
             _env_guard: env_guard,
+            _cluster_span: span,
         })
+    }
+
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "privilege-aware lifecycle setup requires explicit branching for observability"
+    )]
+    fn start_postgres(
+        runtime: &Runtime,
+        mut bootstrap: TestBootstrapSettings,
+        env_vars: &[(String, Option<String>)],
+    ) -> BootstrapResult<StartupOutcome> {
+        let privileges = bootstrap.privileges;
+        let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
+        info!(
+            target: LOG_TARGET,
+            privileges = ?privileges,
+            mode = ?bootstrap.execution_mode,
+            "starting embedded postgres lifecycle"
+        );
+
+        let invoker = ClusterWorkerInvoker::new(runtime, &bootstrap, env_vars);
+        Self::invoke_lifecycle(&invoker, &mut embedded)?;
+
+        let is_managed_via_worker = matches!(privileges, ExecutionPrivileges::Root);
+        let postgres =
+            Self::prepare_postgres_handle(is_managed_via_worker, &mut bootstrap, embedded);
+
+        info!(
+            target: LOG_TARGET,
+            privileges = ?privileges,
+            worker_managed = is_managed_via_worker,
+            "embedded postgres started"
+        );
+        Ok(StartupOutcome {
+            bootstrap,
+            postgres,
+            is_managed_via_worker,
+        })
+    }
+
+    fn prepare_postgres_handle(
+        is_managed_via_worker: bool,
+        bootstrap: &mut TestBootstrapSettings,
+        embedded: PostgreSQL,
+    ) -> Option<PostgreSQL> {
+        if is_managed_via_worker {
+            None
+        } else {
+            bootstrap.settings = embedded.settings().clone();
+            Some(embedded)
+        }
+    }
+
+    fn invoke_lifecycle(
+        invoker: &ClusterWorkerInvoker<'_>,
+        embedded: &mut PostgreSQL,
+    ) -> BootstrapResult<()> {
+        invoker.invoke(WorkerOperation::Setup, async { embedded.setup().await })?;
+        invoker.invoke(WorkerOperation::Start, async { embedded.start().await })
     }
 
     /// Extends the cluster lifetime to cover additional scoped environment guards.
@@ -205,6 +258,7 @@ mod tests {
             .enable_all()
             .build()
             .expect("test runtime");
+        let span = info_span!(target: LOG_TARGET, "test_cluster");
         let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
         let env_vars = bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
@@ -216,6 +270,7 @@ mod tests {
             env_vars,
             worker_guard: None,
             _env_guard: env_guard,
+            _cluster_span: span,
         }
     }
 }
@@ -259,8 +314,18 @@ impl WorkerOperation {
 }
 
 impl Drop for TestCluster {
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "drop path must branch between worker and in-process shutdown with logging"
+    )]
     fn drop(&mut self) {
         let context = Self::stop_context(&self.bootstrap.settings);
+        info!(
+            target: LOG_TARGET,
+            context = %context,
+            worker_managed = self.is_managed_via_worker,
+            "stopping embedded postgres cluster"
+        );
 
         if self.is_managed_via_worker {
             let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
@@ -273,6 +338,7 @@ impl Drop for TestCluster {
             let outcome = self
                 .runtime
                 .block_on(async { time::timeout(timeout, postgres.stop()).await });
+
             match outcome {
                 Ok(Ok(())) => {}
                 Ok(Err(err)) => Self::warn_stop_failure(&context, &err),

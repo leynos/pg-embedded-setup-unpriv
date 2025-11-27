@@ -11,6 +11,7 @@
 //! Privilege management helpers for dropping root access safely.
 use crate::error::{PrivilegeError, PrivilegeResult};
 use crate::fs::{ensure_dir_exists, set_permissions};
+use crate::observability::LOG_TARGET;
 use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::{
     ambient_authority,
@@ -19,6 +20,7 @@ use cap_std::{
 use color_eyre::eyre::{Context, eyre};
 use nix::unistd::{Uid, User, chown};
 use std::io::ErrorKind;
+use tracing::{info, info_span};
 
 pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
     directory: P,
@@ -26,11 +28,39 @@ pub(crate) fn ensure_dir_for_user<P: AsRef<Utf8Path>>(
     mode: u32,
 ) -> PrivilegeResult<()> {
     let dir_path = directory.as_ref();
+    let span = dir_for_user_span(dir_path, user, mode);
+    let _entered = span.enter();
+    ensure_dir_for_user_inner(dir_path, user, mode)?;
+    log_dir_for_user_success(dir_path, user);
+    Ok(())
+}
+
+fn dir_for_user_span(dir_path: &Utf8Path, user: &User, mode: u32) -> tracing::Span {
+    info_span!(
+        target: LOG_TARGET,
+        "ensure_dir_for_user",
+        path = %dir_path,
+        user = %user.name,
+        uid = user.uid.as_raw(),
+        gid = user.gid.as_raw(),
+        mode_octal = format_args!("{mode:o}")
+    )
+}
+
+fn ensure_dir_for_user_inner(dir_path: &Utf8Path, user: &User, mode: u32) -> PrivilegeResult<()> {
     ensure_dir_exists(dir_path)?;
-    chown(dir_path.as_std_path(), Some(user.uid), Some(user.gid))
-        .with_context(|| format!("chown {}", dir_path.as_str()))?;
+    chown_entry(dir_path, user)?;
     set_permissions(dir_path, mode)?;
     Ok(())
+}
+
+fn log_dir_for_user_success(dir_path: &Utf8Path, user: &User) {
+    info!(
+        target: LOG_TARGET,
+        path = %dir_path,
+        user = %user.name,
+        "ensured directory ownership and permissions for user"
+    );
 }
 
 /// Ensures `dir` exists, is owned by `user`, and grants world-readable access.
@@ -84,18 +114,62 @@ pub fn make_data_dir_private<P: AsRef<Utf8Path>>(dir: P, user: &User) -> Privile
     ensure_dir_for_user(dir, user, 0o700)
 }
 
+/// Recursively ensures ownership of all entries under `root` is assigned to `user`.
+///
+/// Traverses the directory tree rooted at `root`, calling `chown` on each entry
+/// and counting updates. Directories are opened using capability handles to
+/// respect the ambient sandbox. Errors surface with contextual path metadata to
+/// aid diagnostics.
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "walk traversal and contextual logging require nested branching"
+)]
 pub(crate) fn ensure_tree_owned_by_user<P: AsRef<Utf8Path>>(
     root: P,
     user: &User,
 ) -> PrivilegeResult<()> {
+    let span = info_span!(
+        target: LOG_TARGET,
+        "ensure_tree_owned_by_user",
+        root = %root.as_ref(),
+        user = %user.name,
+        uid = user.uid.as_raw(),
+        gid = user.gid.as_raw()
+    );
+    let _entered = span.enter();
     let mut stack = vec![root.as_ref().to_path_buf()];
+    let mut updated = 0usize;
+
     while let Some(path_buf) = stack.pop() {
         let path = path_buf.as_path();
-        if let Some(dir_result) = open_directory_if_exists(path) {
-            let dir = dir_result?;
-            process_directory_entries(path, &dir, user, &mut stack)?;
+
+        let Some(dir_result) = open_directory_if_exists(path) else {
+            continue;
+        };
+        let dir = dir_result?;
+        for dir_entry_result in dir
+            .entries()
+            .with_context(|| format!("read_dir {}", path.as_str()))?
+        {
+            let dir_entry =
+                dir_entry_result.with_context(|| format!("iterate {}", path.as_str()))?;
+            let entry_path = resolve_entry_path(path, &dir_entry)?;
+
+            chown_entry(&entry_path, user)?;
+            updated += 1;
+
+            if is_directory(&dir_entry) {
+                stack.push(entry_path);
+            }
         }
     }
+
+    info!(
+        target: LOG_TARGET,
+        root = %root.as_ref(),
+        updated_entries = updated,
+        "ensured tree ownership for user"
+    );
     Ok(())
 }
 
@@ -108,26 +182,6 @@ fn open_directory_if_exists(path: &Utf8Path) -> Option<PrivilegeResult<Dir>> {
             Some(Err(PrivilegeError::from(report)))
         }
     }
-}
-
-fn process_directory_entries(
-    path: &Utf8Path,
-    dir: &Dir,
-    user: &User,
-    stack: &mut Vec<Utf8PathBuf>,
-) -> PrivilegeResult<()> {
-    for dir_entry_result in dir
-        .entries()
-        .with_context(|| format!("read_dir {}", path.as_str()))?
-    {
-        let dir_entry = dir_entry_result.with_context(|| format!("iterate {}", path.as_str()))?;
-        let entry_path = resolve_entry_path(path, &dir_entry)?;
-        chown_entry(&entry_path, user)?;
-        if is_directory(&dir_entry) {
-            stack.push(entry_path);
-        }
-    }
-    Ok(())
 }
 
 fn resolve_entry_path(path: &Utf8Path, entry: &DirEntry) -> PrivilegeResult<Utf8PathBuf> {

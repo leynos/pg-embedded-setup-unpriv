@@ -3,23 +3,26 @@
 //! The helpers serialise worker payloads, prepare commands, and enforce timeouts
 //! so `TestCluster` can remain focused on orchestration logic.
 
+mod output;
 mod privileges;
 
+pub(crate) use self::output::render_failure_for_tests;
+use self::output::{append_error_context, combine_errors, render_failure};
 use crate::cluster::WorkerOperation;
 use crate::error::{BootstrapError, BootstrapResult};
+use crate::observability::LOG_TARGET;
 use crate::worker::WorkerPayload;
 use camino::Utf8Path;
-use color_eyre::eyre::{Context, eyre};
+use color_eyre::eyre::{Context, Report, eyre};
 use postgresql_embedded::Settings;
 use serde_json::to_writer;
-use std::borrow::Cow;
-use std::fmt::Write as FmtWrite;
 use std::io::ErrorKind;
 use std::io::Write as _;
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 use tempfile::{NamedTempFile, TempPath};
+use tracing::{info, info_span};
 use wait_timeout::ChildExt;
 
 #[cfg(all(
@@ -182,23 +185,51 @@ struct WorkerProcess<'a> {
 }
 
 impl<'a> WorkerProcess<'a> {
-    const OUTPUT_CHAR_LIMIT: usize = 2_048;
-    const TRUNCATION_SUFFIX: &'static str = "… [truncated]";
-
     const fn new(request: &'a WorkerRequest<'a>) -> Self {
         Self { request }
     }
 
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "worker orchestration includes span setup, timeout handling, and cleanup branches"
+    )]
     fn run(&self) -> BootstrapResult<()> {
+        let span = info_span!(
+            target: LOG_TARGET,
+            "worker_process",
+            operation = self.request.operation.as_str(),
+            timeout_secs = self.request.timeout.as_secs()
+        );
+        let _entered = span.enter();
         let payload_path = self.write_payload()?;
         let mut command = self.configure_command(payload_path.as_ref())?;
-        let run_result = self.run_command_with_timeout(&mut command);
-        let cleanup_result = Self::close_payload(payload_path);
+        info!(
+            target: LOG_TARGET,
+            operation = self.request.operation.as_str(),
+            payload = %payload_path.display(),
+            worker = %self.request.worker,
+            "launching worker command"
+        );
 
+        let output = self.run_worker(payload_path, &mut command)?;
+        let result = Self::handle_exit(self.request.operation, &output);
+        if result.is_ok() {
+            info!(
+                target: LOG_TARGET,
+                operation = self.request.operation.as_str(),
+                "worker operation completed successfully"
+            );
+        }
+        result
+    }
+
+    fn run_worker(&self, payload_path: TempPath, command: &mut Command) -> BootstrapResult<Output> {
+        let run_result = self.run_command_with_timeout(command);
+        let cleanup_result = Self::close_payload(payload_path);
         match (run_result, cleanup_result) {
-            (Ok(output), Ok(())) => Self::handle_exit(self.request.operation, &output),
+            (Ok(output), Ok(())) => Ok(output),
             (Err(err), Ok(())) | (Ok(_), Err(err)) => Err(err),
-            (Err(run_err), Err(cleanup_err)) => Err(Self::combine_errors(run_err, cleanup_err)),
+            (Err(run_err), Err(cleanup_err)) => Err(combine_errors(run_err, cleanup_err)),
         }
     }
 
@@ -220,10 +251,36 @@ impl<'a> WorkerProcess<'a> {
         Ok(command)
     }
 
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "timeout handling needs explicit branching for diagnostics"
+    )]
     fn run_command_with_timeout(&self, command: &mut Command) -> BootstrapResult<Output> {
-        let mut child = command.spawn().context("failed to spawn worker command")?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(err) => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    operation = self.request.operation.as_str(),
+                    error = %err,
+                    "failed to spawn worker command"
+                );
+                let Err(report) =
+                    Err::<(), Report>(Report::new(err)).context("failed to spawn worker command")
+                else {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        operation = self.request.operation.as_str(),
+                        "failed to spawn worker command without error detail"
+                    );
+                    return Err(BootstrapError::from(eyre!(
+                        "failed to spawn worker command"
+                    )));
+                };
+                return Err(BootstrapError::from(report));
+            }
+        };
 
-        // Ensure the worker is reaped even if waiting fails unexpectedly.
         let wait_result = match child.wait_timeout(self.request.timeout) {
             Ok(result) => result,
             Err(error) => return Self::handle_wait_error(child, error),
@@ -246,7 +303,7 @@ impl<'a> WorkerProcess<'a> {
                 "SKIP-TEST-CLUSTER: worker {} timed out after {timeout_secs}s",
                 self.request.operation.as_str()
             );
-            return Err(Self::render_failure(
+            return Err(render_failure(
                 &format!(
                     "{} timed out after {}s",
                     self.request.operation.error_context(),
@@ -265,7 +322,7 @@ impl<'a> WorkerProcess<'a> {
         let mut message = format!("failed to wait for worker command: {error}");
         drop(error);
         if let Err(kill_err) = kill_result {
-            Self::append_error_context(
+            append_error_context(
                 &mut message,
                 "additionally failed to terminate worker",
                 &kill_err,
@@ -273,7 +330,7 @@ impl<'a> WorkerProcess<'a> {
             );
         }
         if let Err(wait_err) = wait_result {
-            Self::append_error_context(
+            append_error_context(
                 &mut message,
                 "additionally failed to reap worker output",
                 &wait_err,
@@ -299,14 +356,8 @@ impl<'a> WorkerProcess<'a> {
         if output.status.success() {
             Ok(())
         } else {
-            Err(Self::render_failure(operation.error_context(), output))
+            Err(render_failure(operation.error_context(), output))
         }
-    }
-
-    fn render_failure(context: &str, output: &Output) -> BootstrapError {
-        let stdout = Self::truncate_output(String::from_utf8_lossy(&output.stdout));
-        let stderr = Self::truncate_output(String::from_utf8_lossy(&output.stderr));
-        BootstrapError::from(eyre!("{context}\nstdout: {stdout}\nstderr: {stderr}"))
     }
 
     fn close_payload(payload_path: TempPath) -> BootstrapResult<()> {
@@ -315,47 +366,4 @@ impl<'a> WorkerProcess<'a> {
             .context("failed to clean up worker payload file")?;
         Ok(())
     }
-
-    fn truncate_output(text: Cow<'_, str>) -> String {
-        let mut out =
-            String::with_capacity(Self::OUTPUT_CHAR_LIMIT + Self::TRUNCATION_SUFFIX.len());
-        let mut chars = text.chars();
-        for _ in 0..Self::OUTPUT_CHAR_LIMIT {
-            match chars.next() {
-                Some(ch) => out.push(ch),
-                None => return text.into_owned(),
-            }
-        }
-
-        if chars.next().is_none() {
-            return text.into_owned();
-        }
-
-        out.push_str(Self::TRUNCATION_SUFFIX);
-        out
-    }
-
-    fn combine_errors(primary: BootstrapError, cleanup: BootstrapError) -> BootstrapError {
-        let primary_report = primary.into_report();
-        let cleanup_report = cleanup.into_report();
-        BootstrapError::from(eyre!(
-            "{primary_report}\nSecondary failure whilst removing worker payload: {cleanup_report}"
-        ))
-    }
-
-    fn append_error_context(
-        message: &mut String,
-        detail: &str,
-        error: &impl std::fmt::Display,
-        fallback: &str,
-    ) {
-        if FmtWrite::write_fmt(message, format_args!("; {detail}: {error}")).is_err() {
-            message.push_str(fallback);
-        }
-    }
-}
-#[doc(hidden)]
-#[must_use]
-pub(crate) fn render_failure_for_tests(context: &str, output: &Output) -> BootstrapError {
-    WorkerProcess::render_failure(context, output)
 }
