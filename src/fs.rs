@@ -104,7 +104,7 @@ pub(crate) fn set_permissions(path: &Utf8Path, mode: u32) -> Result<()> {
 fn ensure_existing_path_is_dir(path: &Utf8Path) -> Result<()> {
     match std::fs::metadata(path.as_std_path()) {
         Ok(metadata) => handle_existing_metadata(path, &metadata),
-        Err(err) => Err(log_dir_metadata_error(path, &err))
+        Err(err) => Err(log_dir_metadata_error(path, err))
             .with_context(|| format!("create {}", path.as_str())),
     }
 }
@@ -118,16 +118,16 @@ fn handle_existing_metadata(path: &Utf8Path, metadata: &std::fs::Metadata) -> Re
             ErrorKind::AlreadyExists,
             format!("{path} exists but is not a directory"),
         );
-        Err(log_dir_metadata_error(path, &err)).with_context(|| format!("create {}", path.as_str()))
+        Err(log_dir_metadata_error(path, err)).with_context(|| format!("create {}", path.as_str()))
     }
 }
 
-fn log_dir_metadata_error(path: &Utf8Path, err: &std::io::Error) -> std::io::Error {
+fn log_dir_metadata_error(path: &Utf8Path, err: std::io::Error) -> std::io::Error {
     error!(
         target: LOG_TARGET,
         path = %path,
         error = %err,
         "failed to ensure directory exists"
     );
-    std::io::Error::new(err.kind(), err.to_string())
+    err
 }

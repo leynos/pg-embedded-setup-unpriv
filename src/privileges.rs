@@ -49,7 +49,7 @@ fn dir_for_user_span(dir_path: &Utf8Path, user: &User, mode: u32) -> tracing::Sp
 
 fn ensure_dir_for_user_inner(dir_path: &Utf8Path, user: &User, mode: u32) -> PrivilegeResult<()> {
     ensure_dir_exists(dir_path)?;
-    apply_ownership(dir_path, user)?;
+    chown_entry(dir_path, user)?;
     set_permissions(dir_path, mode)?;
     Ok(())
 }
@@ -193,12 +193,6 @@ fn chown_entry(path: &Utf8Path, user: &User) -> PrivilegeResult<()> {
 
 fn is_directory(entry: &DirEntry) -> bool {
     entry.file_type().is_ok_and(|ft| ft.is_dir())
-}
-
-fn apply_ownership(path: &Utf8Path, user: &User) -> PrivilegeResult<()> {
-    chown(path.as_std_path(), Some(user.uid), Some(user.gid))
-        .with_context(|| format!("chown {}", path.as_str()))?;
-    Ok(())
 }
 
 /// Retrieves the UID of the `nobody` account, defaulting to 65534 when absent.

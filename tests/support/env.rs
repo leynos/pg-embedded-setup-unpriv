@@ -38,6 +38,14 @@ where
     env
 }
 
+/// Locates the `pg_worker` binary for integration tests.
+///
+/// Resolution proceeds in two steps:
+/// 1. Checks for an un-suffixed binary at `target/{profile}/pg_worker` (e.g., from `cargo run`).
+/// 2. Falls back to scanning `target/{profile}/deps` for hashed binaries (e.g., `pg_worker-<hash>`),
+///    excluding `.d` dependency metadata files.
+///
+/// Returns `None` if the binary cannot be located.
 fn locate_worker_binary() -> Option<OsString> {
     let exe = std::env::current_exe().ok()?;
     let deps_dir = exe.parent()?;
@@ -61,6 +69,12 @@ fn locate_worker_binary() -> Option<OsString> {
     None
 }
 
+/// Determines whether a path points to a valid `pg_worker` binary.
+///
+/// A valid binary:
+/// - has a filename starting with `pg_worker`,
+/// - is not a `.d` dependency metadata file, and
+/// - is a regular file.
 fn is_worker_binary(path: &std::path::Path) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
@@ -70,6 +84,7 @@ fn is_worker_binary(path: &std::path::Path) -> bool {
         return false;
     }
 
+    // Exclude .d files (dependency metadata).
     if path
         .extension()
         .and_then(|ext| ext.to_str())

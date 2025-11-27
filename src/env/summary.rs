@@ -1,7 +1,5 @@
 //! Helpers for rendering bounded environment change summaries.
 
-use std::fmt::Write;
-
 pub(super) const MAX_ENV_CHANGES_SUMMARY_LEN: usize = 512;
 
 pub(super) fn truncate_env_changes_summary(
@@ -60,8 +58,7 @@ fn append_truncation_suffix(truncated: &mut String, shown_changes: usize, change
 }
 
 fn write_truncation_suffix(truncated: &mut String, remaining: usize) {
-    // Writing into a `String` is infallible; check in debug to satisfy clippy.
-    if let Err(err) = write!(truncated, "+ {remaining} more") {
-        debug_assert!(false, "writing truncated summary failed: {err}");
-    }
+    truncated.push_str("+ ");
+    truncated.push_str(&remaining.to_string());
+    truncated.push_str(" more");
 }

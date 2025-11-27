@@ -157,9 +157,7 @@ fn then_logs_cover_lifecycle(world: &WorldFixture) -> Result<()> {
         return Ok(());
     }
     if let Some(err) = &world_ref.error {
-        return Err(eyre!(format!(
-            "cluster bootstrap failed unexpectedly: {err}"
-        )));
+        return Err(eyre!("cluster bootstrap failed unexpectedly: {err}"));
     }
 
     ensure!(
@@ -256,15 +254,11 @@ fn then_logs_capture_failure(world: &WorldFixture) -> Result<()> {
 fn permission_denied_in_chain(report: &Report) -> bool {
     use std::io::ErrorKind;
 
-    if report.chain().any(|cause| {
+    report.chain().any(|cause| {
         cause
             .downcast_ref::<std::io::Error>()
             .is_some_and(|io| io.kind() == ErrorKind::PermissionDenied)
-    }) {
-        return true;
-    }
-
-    false
+    })
 }
 
 fn ensure_runtime_dir_matches(

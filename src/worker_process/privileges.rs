@@ -204,7 +204,7 @@ cfg_privilege_drop! {
 
     impl Drop for PrivilegeDropGuard {
         fn drop(&mut self) {
-            SKIP_PRIVILEGE_DROP.fetch_sub(1, Ordering::SeqCst);
+            decrement_skip_privilege_drop();
         }
     }
 
@@ -216,6 +216,29 @@ cfg_privilege_drop! {
 
     fn skip_privilege_drop_for_tests() -> bool {
         SKIP_PRIVILEGE_DROP.load(Ordering::SeqCst) > 0
+    }
+
+    fn decrement_skip_privilege_drop() {
+        let update_result = SKIP_PRIVILEGE_DROP.fetch_update(
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            |value| {
+                debug_assert!(
+                    value > 0,
+                    "PrivilegeDropGuard dropped with zero privilege-drop counter"
+                );
+                if value == 0 {
+                    None
+                } else {
+                    Some(value - 1)
+                }
+            },
+        );
+
+        debug_assert!(
+            update_result.is_ok(),
+            "PrivilegeDropGuard drop failed to update counter"
+        );
     }
 }
 
@@ -233,7 +256,18 @@ const fn skip_privilege_drop_for_tests() -> bool {
     false
 }
 
-#[cfg(all(test, unix, feature = "cluster-unit-tests"))]
+#[cfg(all(
+    test,
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+    feature = "cluster-unit-tests"
+))]
 mod tests {
     use super::*;
     use crate::test_support::capture_info_logs;
