@@ -69,11 +69,15 @@ impl TestCluster {
     /// embedded cluster fails.
     pub fn new() -> BootstrapResult<Self> {
         let span = info_span!(target: LOG_TARGET, "test_cluster");
-        let initial_bootstrap = bootstrap_for_tests()?;
-        let runtime = build_runtime()?;
-        let env_vars = initial_bootstrap.environment.to_env();
-        let env_guard = ScopedEnv::apply(&env_vars);
-        let outcome = Self::start_postgres(&runtime, initial_bootstrap, &env_vars)?;
+        let (runtime, env_vars, env_guard, outcome) = {
+            let _entered = span.enter();
+            let initial_bootstrap = bootstrap_for_tests()?;
+            let runtime = build_runtime()?;
+            let env_vars = initial_bootstrap.environment.to_env();
+            let env_guard = ScopedEnv::apply(&env_vars);
+            let outcome = Self::start_postgres(&runtime, initial_bootstrap, &env_vars)?;
+            (runtime, env_vars, env_guard, outcome)
+        };
 
         Ok(Self {
             runtime,

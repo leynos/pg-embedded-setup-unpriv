@@ -114,9 +114,15 @@ pub fn make_data_dir_private<P: AsRef<Utf8Path>>(dir: P, user: &User) -> Privile
     ensure_dir_for_user(dir, user, 0o700)
 }
 
+/// Recursively ensures ownership of all entries under `root` is assigned to `user`.
+///
+/// Traverses the directory tree rooted at `root`, calling `chown` on each entry
+/// and counting updates. Directories are opened using capability handles to
+/// respect the ambient sandbox. Errors surface with contextual path metadata to
+/// aid diagnostics.
 #[expect(
     clippy::cognitive_complexity,
-    reason = "tracing span and traversal bookkeeping inflate complexity despite simple flow"
+    reason = "walk traversal and contextual logging require nested branching"
 )]
 pub(crate) fn ensure_tree_owned_by_user<P: AsRef<Utf8Path>>(
     root: P,

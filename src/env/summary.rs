@@ -40,6 +40,8 @@ fn find_preferred_cut_point(changes: &str, max_len: usize) -> usize {
         }
     }
 
+    // Only use the last comma if it's in the latter half of max_len to avoid
+    // trimming away most of the summary.
     last_comma_before_cut
         .filter(|pos| pos.saturating_mul(2) > max_len)
         .unwrap_or(cut)

@@ -62,41 +62,17 @@ cfg_privilege_drop! {
 /// # }
 /// ```
 pub(crate) fn apply(payload_path: &Path, command: &mut Command) -> BootstrapResult<()> {
-    #[cfg(all(
-        unix,
-        any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "dragonfly",
-        ),
-    ))]
-    return apply_unix(payload_path, command);
-
-    #[cfg(not(all(
-        unix,
-        any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "dragonfly",
-        ),
-    )))]
-    {
-        apply_noop(payload_path, command)
-    }
+    apply_impl(payload_path, command)
 }
 
 cfg_privilege_drop! {
+    fn apply_impl(payload_path: &Path, command: &mut Command) -> BootstrapResult<()> {
+        apply_unix(payload_path, command)
+    }
+
     // Tracks nesting so privilege drop stays disabled while any guard is held.
     static SKIP_PRIVILEGE_DROP: AtomicUsize = AtomicUsize::new(0);
 
-    #[expect(
-        clippy::cognitive_complexity,
-        reason = "tracing spans and early-return logging inflate complexity while flow is linear"
-    )]
     fn apply_unix(payload_path: &Path, command: &mut Command) -> BootstrapResult<()> {
         let span = info_span!(
             target: LOG_TARGET,
@@ -109,6 +85,10 @@ cfg_privilege_drop! {
             return Ok(());
         }
 
+        apply_privilege_drop(payload_path, command)
+    }
+
+    fn apply_privilege_drop(payload_path: &Path, command: &mut Command) -> BootstrapResult<()> {
         let (uid, gid) = resolve_nobody_ids()?;
         chown_payload(payload_path, uid, gid)?;
         configure_pre_exec(command, uid, gid);
@@ -130,10 +110,9 @@ cfg_privilege_drop! {
                 payload = %payload_path.display(),
                 "skipping privilege drop for tests"
             );
-            true
-        } else {
-            false
+            return true;
         }
+        false
     }
 
     fn resolve_nobody_ids() -> BootstrapResult<(u32, u32)> {
@@ -193,6 +172,20 @@ fn apply_noop(_payload_path: &Path, _command: &mut Command) -> BootstrapResult<(
     Ok(())
 }
 
+#[cfg(not(all(
+    unix,
+    any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+    ),
+)))]
+fn apply_impl(payload_path: &Path, command: &mut Command) -> BootstrapResult<()> {
+    apply_noop(payload_path, command)
+}
+
 cfg_privilege_drop! {
     /// Guard that restores the privilege-drop toggle when dropped.
     ///
@@ -219,7 +212,7 @@ cfg_privilege_drop! {
     }
 
     fn decrement_skip_privilege_drop() {
-        let update_result = SKIP_PRIVILEGE_DROP.fetch_update(
+        if let Err(current) = SKIP_PRIVILEGE_DROP.fetch_update(
             Ordering::SeqCst,
             Ordering::SeqCst,
             |value| {
@@ -227,18 +220,14 @@ cfg_privilege_drop! {
                     value > 0,
                     "PrivilegeDropGuard dropped with zero privilege-drop counter"
                 );
-                if value == 0 {
-                    None
-                } else {
-                    Some(value - 1)
-                }
+                Some(value.saturating_sub(1))
             },
-        );
-
-        debug_assert!(
-            update_result.is_ok(),
-            "PrivilegeDropGuard drop failed to update counter"
-        );
+        ) {
+            debug_assert!(
+                false,
+                "PrivilegeDropGuard drop failed to update counter from {current}"
+            );
+        }
     }
 }
 
@@ -285,8 +274,10 @@ mod tests {
 
         assert!(result.is_ok(), "privilege drop skip should succeed");
         assert!(
-            logs.iter()
-                .any(|line| line.contains("skipping privilege drop for tests")),
+            logs.iter().any(|line| {
+                line.contains("skipping privilege drop for tests")
+                    && line.contains(&format!("{}", payload.path().display()))
+            }),
             "expected skip log entry, got {logs:?}"
         );
     }
