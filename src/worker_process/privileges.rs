@@ -104,15 +104,15 @@ cfg_privilege_drop! {
     }
 
     fn skip_privilege_drop(payload_path: &Path) -> bool {
-        if skip_privilege_drop_for_tests() {
+        let should_skip = skip_privilege_drop_for_tests();
+        if should_skip {
             info!(
                 target: LOG_TARGET,
                 payload = %payload_path.display(),
                 "skipping privilege drop for tests"
             );
-            return true;
         }
-        false
+        should_skip
     }
 
     fn resolve_nobody_ids() -> BootstrapResult<(u32, u32)> {
@@ -212,7 +212,7 @@ cfg_privilege_drop! {
     }
 
     fn decrement_skip_privilege_drop() {
-        if let Err(current) = SKIP_PRIVILEGE_DROP.fetch_update(
+        let update_result = SKIP_PRIVILEGE_DROP.fetch_update(
             Ordering::SeqCst,
             Ordering::SeqCst,
             |value| {
@@ -222,12 +222,11 @@ cfg_privilege_drop! {
                 );
                 Some(value.saturating_sub(1))
             },
-        ) {
-            debug_assert!(
-                false,
-                "PrivilegeDropGuard drop failed to update counter from {current}"
-            );
-        }
+        );
+        debug_assert!(
+            update_result.is_ok(),
+            "PrivilegeDropGuard drop failed to update counter"
+        );
     }
 }
 
