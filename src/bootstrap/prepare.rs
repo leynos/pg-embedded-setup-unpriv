@@ -9,6 +9,7 @@ use crate::{
     PgEnvCfg,
     error::{BootstrapError, BootstrapResult},
     fs::{ensure_dir_exists, set_permissions},
+    observability::LOG_TARGET,
 };
 
 use super::env::{TestBootstrapEnvironment, XdgDirs, prepare_timezone_env};
@@ -19,6 +20,7 @@ use crate::privileges::{
 };
 #[cfg(unix)]
 use nix::unistd::{Uid, User, fchown, geteuid};
+use tracing::debug;
 
 pub(super) fn prepare_bootstrap(
     privileges: super::mode::ExecutionPrivileges,
@@ -55,6 +57,7 @@ fn bootstrap_with_root(
         .ok_or_else(|| color_eyre::eyre::eyre!("user 'nobody' not found"))?;
 
     let paths = resolve_settings_paths_for_uid(&mut settings, cfg, nobody_user.uid)?;
+    log_sanitized_settings(&settings);
 
     ensure_parents_for_paths(&paths, |path| ensure_parent_for_user(path, &nobody_user))?;
 
@@ -84,6 +87,7 @@ fn bootstrap_unprivileged(
     cfg: &PgEnvCfg,
 ) -> BootstrapResult<PreparedBootstrap> {
     let paths = resolve_settings_paths_for_current_user(&mut settings, cfg)?;
+    log_sanitized_settings(&settings);
 
     ensure_parents_for_paths(&paths, ensure_parent_exists)?;
 
@@ -258,6 +262,108 @@ fn ensure_parent_exists(path: &Utf8PathBuf) -> BootstrapResult<()> {
         ensure_dir_exists(parent).map_err(BootstrapError::from)?;
     }
     Ok(())
+}
+
+fn log_sanitized_settings(settings: &Settings) {
+    let configuration_keys = sorted_configuration_keys(settings);
+    let timeout_secs = settings.timeout.map(|duration| duration.as_secs());
+
+    debug!(
+        target: LOG_TARGET,
+        version = %settings.version,
+        host = %settings.host,
+        port = settings.port,
+        installation_dir = %settings.installation_dir.display(),
+        data_dir = %settings.data_dir.display(),
+        password_file = %settings.password_file.display(),
+        username = %settings.username,
+        password = "<redacted>",
+        temporary = settings.temporary,
+        timeout_secs,
+        trust_installation_dir = settings.trust_installation_dir,
+        configuration_keys = ?configuration_keys,
+        "prepared postgres settings"
+    );
+}
+
+fn sorted_configuration_keys(settings: &Settings) -> Vec<String> {
+    let mut keys: Vec<String> = settings.configuration.keys().cloned().collect();
+    keys.sort();
+    keys
+}
+
+#[cfg(test)]
+mod tests {
+    use super::log_sanitized_settings;
+    use crate::test_support::capture_debug_logs;
+    use color_eyre::eyre::{Result, ensure};
+    use postgresql_embedded::VersionReq;
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    fn sample_settings() -> Result<postgresql_embedded::Settings> {
+        let mut configuration = HashMap::new();
+        configuration.insert("encoding".into(), "UTF8".into());
+        configuration.insert("locale".into(), "en_US".into());
+
+        Ok(postgresql_embedded::Settings {
+            releases_url: "https://example.invalid/releases".into(),
+            version: VersionReq::parse("=17.1.0")?,
+            installation_dir: "/tmp/sanitized/install".into(),
+            password_file: "/tmp/sanitized/.pgpass".into(),
+            data_dir: "/tmp/sanitized/data".into(),
+            host: "127.0.0.1".into(),
+            port: 15_432,
+            username: "integration".into(),
+            password: "super-secret-pass".into(),
+            temporary: false,
+            timeout: Some(Duration::from_secs(12)),
+            configuration,
+            trust_installation_dir: true,
+        })
+    }
+
+    #[test]
+    fn sanitized_settings_log_redacts_passwords() -> Result<()> {
+        let settings = sample_settings()?;
+        let (logs, ()) = capture_debug_logs(|| log_sanitized_settings(&settings));
+        let joined = logs.join("\n");
+
+        ensure!(
+            joined.contains("prepared postgres settings"),
+            "expected settings log, got {joined}"
+        );
+        ensure!(
+            joined.contains("port=15432"),
+            "expected port to appear in logs, got {joined}"
+        );
+        ensure!(
+            joined.contains("installation_dir=/tmp/sanitized/install"),
+            "expected installation dir to appear in logs, got {joined}"
+        );
+        ensure!(
+            joined.contains("data_dir=/tmp/sanitized/data"),
+            "expected data dir to appear in logs, got {joined}"
+        );
+        ensure!(
+            joined.contains("password=\"<redacted>\""),
+            "expected password to be redacted, got {joined}"
+        );
+        ensure!(
+            joined.contains("=17.1.0"),
+            "expected version requirement to appear, got {joined}"
+        );
+        ensure!(
+            joined.contains("configuration_keys=[\"encoding\", \"locale\"]"),
+            "expected configuration keys to be logged, got {joined}"
+        );
+        ensure!(
+            !joined.contains("super-secret-pass"),
+            "log output leaked the password: {joined}"
+        );
+
+        Ok(())
+    }
 }
 
 #[cfg(unix)]

@@ -117,9 +117,14 @@ privilege drops, directory ownership or permission updates, scoped environment
 application, and the `postgresql_embedded` setup/start/stop lifecycle. The log
 target keeps sensitive values redacted: environment changes are rendered as
 `KEY=set` or `KEY=unset`, and PostgreSQL settings avoid echoing passwords.
-Subscribers that record span enter/exit events, for example via
-`FmtSpan::ENTER|CLOSE`, can reconstruct the lifecycle flow without needing
-additional instrumentation in downstream crates.
+Enable `RUST_LOG=pg_embed::observability=debug` to surface a sanitised snapshot
+of the prepared settings, including the version requirement, host and port,
+installation and data directories, and the `.pgpass` location. Passwords log as
+`<redacted>` and configuration entries are reduced to their keys so secrets
+stay out of the debug stream, even when bootstrap fails early. Subscribers that
+record span enter/exit events, for example via `FmtSpan::ENTER|CLOSE`, can
+reconstruct the lifecycle flow without needing additional instrumentation in
+downstream crates.
 
 Environment change summaries are truncated once they exceed roughly 512
 characters, while the change count is always recorded. Lifecycle failures now
