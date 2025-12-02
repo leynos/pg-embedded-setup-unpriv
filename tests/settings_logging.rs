@@ -11,12 +11,12 @@ use pg_embedded_setup_unpriv::{BootstrapResult, bootstrap_for_tests};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
 
-#[path = "support/env_isolation.rs"]
-mod env_isolation;
-#[path = "support/env.rs"]
-mod env;
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs;
+#[path = "support/env.rs"]
+mod env;
+#[path = "support/env_isolation.rs"]
+mod env_isolation;
 #[path = "support/sandbox.rs"]
 mod sandbox;
 #[path = "support/scenario.rs"]
