@@ -286,9 +286,9 @@ fn log_sanitized_settings(settings: &Settings) {
     );
 }
 
-fn sorted_configuration_keys(settings: &Settings) -> Vec<String> {
-    let mut keys: Vec<String> = settings.configuration.keys().cloned().collect();
-    keys.sort();
+fn sorted_configuration_keys(settings: &Settings) -> Vec<&str> {
+    let mut keys: Vec<&str> = settings.configuration.keys().map(String::as_str).collect();
+    keys.sort_unstable();
     keys
 }
 

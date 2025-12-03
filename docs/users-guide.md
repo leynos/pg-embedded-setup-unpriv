@@ -117,7 +117,7 @@ privilege drops, directory ownership or permission updates, scoped environment
 application, and the `postgresql_embedded` setup/start/stop lifecycle. The log
 target keeps sensitive values redacted: environment changes are rendered as
 `KEY=set` or `KEY=unset`, and PostgreSQL settings avoid echoing passwords.
-Enable `RUST_LOG=pg_embed::observability=debug` to surface a sanitised snapshot
+Enable `RUST_LOG=pg_embed::observability=debug` to surface a sanitized snapshot
 of the prepared settings, including the version requirement, host and port,
 installation and data directories, and the `.pgpass` location. Passwords log as
 `<redacted>` and configuration entries are reduced to their keys so secrets

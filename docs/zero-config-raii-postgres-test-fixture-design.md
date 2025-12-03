@@ -298,12 +298,12 @@ essentially one line in the test setup.
 
 ### Implementation update (2025-12-02)
 
-- Bootstrap now emits a debug-level, sanitised snapshot of the chosen
+- Bootstrap now emits a debug-level, sanitized snapshot of the chosen
   `postgresql_embedded::Settings`, covering the version requirement, host,
   port, and the installation, data, and `.pgpass` directories. Secrets are
   always redacted: passwords log as `<redacted>` and configuration values are
   reduced to their keys.
-- A focused unit test exercises the sanitised renderer, asserting that ports and
+- A focused unit test exercises the sanitized renderer, asserting that ports and
   directories appear while the password never does.
 - Behavioural coverage driven by `rstest-bdd` asserts that the settings summary
   is present for both successful and failing bootstraps and that sensitive

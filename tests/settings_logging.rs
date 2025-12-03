@@ -1,10 +1,11 @@
 //! Behavioural coverage for settings observability and redaction.
-#![cfg(unix)]
+#![cfg(all(unix, any(feature = "cluster-unit-tests", feature = "dev-worker")))]
 
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::fs;
 
+use camino::Utf8PathBuf;
 use color_eyre::eyre::{Context, Report, Result, ensure, eyre};
 use pg_embedded_setup_unpriv::test_support::capture_debug_logs;
 use pg_embedded_setup_unpriv::{BootstrapResult, bootstrap_for_tests};
@@ -34,6 +35,7 @@ struct SettingsLoggingWorld {
     logs: Vec<String>,
     error: Option<String>,
     skip_reason: Option<String>,
+    failing_path: Option<Utf8PathBuf>,
 }
 
 impl SettingsLoggingWorld {
@@ -44,6 +46,7 @@ impl SettingsLoggingWorld {
             logs: Vec::new(),
             error: None,
             skip_reason: None,
+            failing_path: None,
         })
     }
 
@@ -52,6 +55,7 @@ impl SettingsLoggingWorld {
         self.logs.clear();
         self.error = None;
         self.skip_reason = None;
+        self.failing_path = None;
         Ok(())
     }
 
@@ -116,7 +120,7 @@ fn when_bootstrap_logs(world: &WorldFixture) -> Result<()> {
 #[when("bootstrap fails while preparing settings with debug logging enabled")]
 fn when_bootstrap_logging_fails(world: &WorldFixture) -> Result<()> {
     let world_cell = borrow_world(world)?;
-    let (logs, outcome) = {
+    let (logs, outcome, failing_path) = {
         let world_ref = world_cell.borrow();
         let data_file = world_ref.sandbox.install_dir().join("data-as-file");
         if let Some(parent) = data_file.parent() {
@@ -130,9 +134,15 @@ fn when_bootstrap_logging_fails(world: &WorldFixture) -> Result<()> {
         override_password_and_port(&mut vars);
         override_env_path(&mut vars, "PG_DATA_DIR", data_file.as_ref());
 
-        capture_debug_logs(|| world_ref.sandbox.with_env(vars, bootstrap_for_tests))
+        let (logs, outcome) =
+            capture_debug_logs(|| world_ref.sandbox.with_env(vars, bootstrap_for_tests));
+        (logs, outcome, data_file)
     };
-    world_cell.borrow_mut().record_outcome(logs, outcome);
+    {
+        let mut world_mut = world_cell.borrow_mut();
+        world_mut.failing_path = Some(failing_path);
+        world_mut.record_outcome(logs, outcome);
+    }
     Ok(())
 }
 
@@ -207,9 +217,15 @@ fn then_failure_logs_are_redacted(world: &WorldFixture) -> Result<()> {
             .any(|line| line.contains("settings-password-secret")),
         "password leaked into logs: {logs:?}"
     );
+    let failing_path = world_ref
+        .failing_path
+        .as_ref()
+        .ok_or_else(|| eyre!("expected failing path to be recorded"))?;
+
     ensure!(
-        err.contains("data-as-file") || err.contains("data"),
-        "expected failure to mention the data path, got {err}"
+        err.contains(failing_path.as_str()),
+        "expected failure to mention the data path {}, got {err}",
+        failing_path
     );
     Ok(())
 }
