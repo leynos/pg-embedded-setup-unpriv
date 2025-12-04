@@ -30,5 +30,7 @@ pub use hook::{
     install_run_root_operation_hook, invoke_with_privileges, run_root_operation_hook,
 };
 #[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
-pub use logging::{capture_info_logs, capture_info_logs_with_spans, capture_warn_logs};
+pub use logging::{
+    capture_debug_logs, capture_info_logs, capture_info_logs_with_spans, capture_warn_logs,
+};
 pub use scoped_env::scoped_env;
