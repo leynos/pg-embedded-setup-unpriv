@@ -120,7 +120,7 @@ target keeps sensitive values redacted: environment changes are rendered as
 Enable `RUST_LOG=pg_embed::observability=debug` to surface a sanitized snapshot
 of the prepared settings, including the version requirement, host and port,
 installation and data directories, and the `.pgpass` location. Passwords log as
-`<redacted>` and configuration entries are reduced to their keys so secrets
+`<redacted>` and configuration entries are reduced to their keys, so secrets
 stay out of the debug stream, even when bootstrap fails early. Subscribers that
 record span enter/exit events, for example via `FmtSpan::ENTER|CLOSE`, can
 reconstruct the lifecycle flow without needing additional instrumentation in
