@@ -85,6 +85,30 @@ where
     capture_logs(Level::INFO, true, action)
 }
 
+/// Runs `action`, capturing debug-level logs and returning them with the result.
+///
+/// # Examples
+/// ```
+/// use pg_embedded_setup_unpriv::test_support::capture_debug_logs;
+///
+/// let (logs, value) = capture_debug_logs(|| {
+///     tracing::debug!("debugging enabled");
+///     21 * 2
+/// });
+/// assert!(
+///     logs.iter().any(|line| line.contains("debugging enabled")),
+///     "expected debug log to be captured"
+/// );
+/// assert_eq!(value, 42);
+/// ```
+#[must_use]
+pub fn capture_debug_logs<F, R>(action: F) -> (Vec<String>, R)
+where
+    F: FnOnce() -> R,
+{
+    capture_logs(Level::DEBUG, false, action)
+}
+
 fn capture_logs<F, R>(max_level: Level, span_events: bool, action: F) -> (Vec<String>, R)
 where
     F: FnOnce() -> R,
@@ -117,7 +141,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::capture_info_logs_with_spans;
+    use super::{capture_debug_logs, capture_info_logs_with_spans};
     use tracing::info_span;
 
     #[test]
@@ -136,6 +160,19 @@ mod tests {
             logs.iter()
                 .any(|line| line.contains("test_span") && line.contains("close")),
             "expected span close event in logs, got {logs:?}"
+        );
+    }
+
+    #[test]
+    fn captures_debug_logs() {
+        let (logs, ()) = capture_debug_logs(|| {
+            tracing::debug!("debug message for capture");
+        });
+
+        assert!(
+            logs.iter()
+                .any(|line| line.contains("debug message for capture")),
+            "expected debug log to be captured, got {logs:?}"
         );
     }
 }

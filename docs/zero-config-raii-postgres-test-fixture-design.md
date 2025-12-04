@@ -220,7 +220,7 @@ fn bootstrap() -> BootstrapResult<TestBootstrapSettings> {
   output readable when large snapshots are applied.
 - Lifecycle failures emit at `error` level and carry span context; worker spawn
 errors preserve the original `io::Error` chain, so callers can downcast or map
-  errno precisely.
+errno precisely.
 - Filesystem helpers inline their logging and error handling to retain
   observability without the previous helper indirection, simplifying the
   privilege setup flow.
@@ -295,6 +295,19 @@ essentially one line in the test setup.
   switches diagnostics to French via `select_localizations`. The test is part
   of `make test`, giving CI a deterministic signal that localization bundles
   ship correctly on every target platform.
+
+### Implementation update (2025-12-02)
+
+- Bootstrap now emits a debug-level, sanitized snapshot of the chosen
+  `postgresql_embedded::Settings`, covering the version requirement, host,
+  port, and the installation, data, and `.pgpass` directories. Secrets are
+  always redacted: passwords log as `<redacted>` and configuration values are
+  reduced to their keys.
+- A focused unit test exercises the sanitized renderer, asserting that ports and
+  directories appear while the password never does.
+- Behavioural coverage driven by `rstest-bdd` asserts that the settings summary
+  is present for both successful and failing bootstraps and that sensitive
+  values remain redacted even when preparation errors occur.
 
 ### Ephemeral ports and isolation
 

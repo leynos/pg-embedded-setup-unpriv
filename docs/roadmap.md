@@ -44,7 +44,7 @@
 - [x] **Task:** Add `tracing` spans and logs around privilege changes, directory
   mutations, environment variable injection, and PostgreSQL lifecycle events,
   verified by log assertions in integration tests.
-- [ ] **Task:** Surface the chosen settings (ports, directories, version) via
+- [x] **Task:** Surface the chosen settings (ports, directories, version) via
   debug logging with sanitized output, ensuring sensitive values are redacted.
 
 ### Step: Validate cross-platform behaviour
