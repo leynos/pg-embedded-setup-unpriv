@@ -45,6 +45,7 @@ use std::path::PathBuf;
 use color_eyre::eyre::{Context, Report, Result};
 use pg_embedded_setup_unpriv::worker::WorkerPayload;
 use postgresql_embedded::PostgreSQL;
+use secrecy::ExposeSecret;
 use tokio::runtime::Builder;
 
 enum Operation {
@@ -105,7 +106,7 @@ fn run_worker(mut args: impl Iterator<Item = OsString>) -> Result<()> {
         match value {
             Some(env_value) => unsafe {
                 // SAFETY: the worker is single-threaded; environment updates cannot race.
-                env::set_var(key, env_value);
+                env::set_var(key, env_value.expose_secret());
             },
             None => unsafe {
                 // SAFETY: the worker is single-threaded; environment updates cannot race.
