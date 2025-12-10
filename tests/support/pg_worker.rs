@@ -37,14 +37,13 @@
 //! caller to demote credentials before spawning the child process.
 #![cfg(unix)]
 
+use color_eyre::eyre::{Context, Report, Result};
+use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
+use postgresql_embedded::PostgreSQL;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::PathBuf;
-
-use color_eyre::eyre::{Context, Report, Result};
-use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
-use postgresql_embedded::PostgreSQL;
 use tokio::runtime::Builder;
 
 enum Operation {
@@ -142,7 +141,10 @@ fn apply_worker_environment(environment: &[(String, Option<PlainSecret>)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{LazyLock, Mutex};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     #[test]
     fn rejects_extra_argument() {
@@ -161,6 +163,10 @@ mod tests {
 
     #[test]
     fn apply_worker_environment_uses_plaintext_and_unsets() {
+        let _guard = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
         let secret_key = unique_env_key("PGWORKER_SECRET_KEY");
         let none_key = unique_env_key("PGWORKER_NONE_KEY");
 

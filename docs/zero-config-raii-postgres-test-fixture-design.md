@@ -311,7 +311,7 @@ essentially one line in the test setup.
 
 #### Class diagram (2025-12-10)
 
-The worker payload and snapshot types are organised as follows.
+The worker payload and snapshot types are organized as follows.
 
 ```mermaid
 classDiagram
@@ -391,7 +391,7 @@ classDiagram
     secret_string_option ..> SecretString : uses
 ```
 
-*Figure: Worker payload serialisation and redaction flow.*
+*Figure: Worker payload serialization and redaction flow.*
 
 ### Ephemeral ports and isolation
 
