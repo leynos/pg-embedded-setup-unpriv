@@ -48,6 +48,7 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, DurationSeconds, serde_as};
 use std::collections::HashMap;
+use std::fmt;
 use std::time::Duration;
 
 /// Serialised representation of [`Settings`] for subprocess helpers.
@@ -63,8 +64,7 @@ pub struct SettingsSnapshot {
     host: String,
     port: u16,
     username: String,
-    #[serde(with = "secret_string")]
-    password: SecretString,
+    password: PlainSecret,
     temporary: bool,
     #[serde_as(as = "Option<DurationSeconds<u64>>")]
     timeout_secs: Option<Duration>,
@@ -99,7 +99,7 @@ impl TryFrom<&Settings> for SettingsSnapshot {
             host: settings.host.clone(),
             port: settings.port,
             username: settings.username.clone(),
-            password: SecretString::from(settings.password.clone()),
+            password: PlainSecret::from(settings.password.clone()),
             temporary: settings.temporary,
             timeout_secs: settings.timeout,
             configuration: settings.configuration.clone(),
@@ -112,8 +112,7 @@ impl TryFrom<&Settings> for SettingsSnapshot {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerPayload {
     pub settings: SettingsSnapshot,
-    #[serde(with = "secret_string_option")]
-    pub environment: Vec<(String, Option<SecretString>)>,
+    pub environment: Vec<(String, Option<PlainSecret>)>,
 }
 
 impl WorkerPayload {
@@ -125,7 +124,7 @@ impl WorkerPayload {
             settings: SettingsSnapshot::try_from(settings)?,
             environment: environment
                 .into_iter()
-                .map(|(key, value)| (key, value.map(SecretString::from)))
+                .map(|(key, value)| (key, value.map(PlainSecret::from)))
                 .collect(),
         })
     }
@@ -142,7 +141,7 @@ impl From<SettingsSnapshot> for Settings {
             host: snapshot.host,
             port: snapshot.port,
             username: snapshot.username,
-            password: snapshot.password.expose_secret().to_owned(),
+            password: snapshot.password.expose().to_owned(),
             temporary: snapshot.temporary,
             timeout: snapshot.timeout_secs,
             configuration: snapshot.configuration,
@@ -151,61 +150,54 @@ impl From<SettingsSnapshot> for Settings {
     }
 }
 
-mod secret_string {
-    use secrecy::{ExposeSecret, SecretString};
-    use serde::{Deserialize, Deserializer, Serializer};
+#[derive(Clone)]
+pub struct PlainSecret(SecretString);
 
-    pub fn serialize<S>(value: &SecretString, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(value.expose_secret())
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<SecretString, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        String::deserialize(deserializer).map(Into::into)
+impl PlainSecret {
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        self.0.expose_secret()
     }
 }
 
-mod secret_string_option {
-    use secrecy::{ExposeSecret, SecretString};
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(
-        entries: &[(String, Option<SecretString>)],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mapped: Vec<(String, Option<String>)> = entries
-            .iter()
-            .map(|(key, value)| {
-                (
-                    key.clone(),
-                    value
-                        .as_ref()
-                        .map(|secret| secret.expose_secret().to_owned()),
-                )
-            })
-            .collect();
-        mapped.serialize(serializer)
+impl From<String> for PlainSecret {
+    fn from(secret: String) -> Self {
+        Self(SecretString::from(secret))
     }
+}
 
-    pub fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<Vec<(String, Option<SecretString>)>, D::Error>
+impl From<&str> for PlainSecret {
+    fn from(secret: &str) -> Self {
+        Self(SecretString::from(secret.to_owned()))
+    }
+}
+
+impl From<PlainSecret> for SecretString {
+    fn from(secret: PlainSecret) -> Self {
+        secret.0
+    }
+}
+
+impl fmt::Debug for PlainSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "PlainSecret([REDACTED])")
+    }
+}
+
+impl Serialize for PlainSecret {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        D: Deserializer<'de>,
+        S: serde::Serializer,
     {
-        Vec::<(String, Option<String>)>::deserialize(deserializer).map(|entries| {
-            entries
-                .into_iter()
-                .map(|(key, value)| (key, value.map(Into::into)))
-                .collect()
-        })
+        serializer.serialize_str(self.expose())
+    }
+}
+
+impl<'de> Deserialize<'de> for PlainSecret {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(Self::from)
     }
 }

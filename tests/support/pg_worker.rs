@@ -43,9 +43,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use color_eyre::eyre::{Context, Report, Result};
-use pg_embedded_setup_unpriv::worker::WorkerPayload;
+use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
 use postgresql_embedded::PostgreSQL;
-use secrecy::ExposeSecret;
 use tokio::runtime::Builder;
 
 enum Operation {
@@ -102,18 +101,7 @@ fn run_worker(mut args: impl Iterator<Item = OsString>) -> Result<()> {
         .build()
         .wrap_err("failed to build runtime for worker")?;
 
-    for (key, value) in &payload.environment {
-        match value {
-            Some(env_value) => unsafe {
-                // SAFETY: the worker is single-threaded; environment updates cannot race.
-                env::set_var(key, env_value.expose_secret());
-            },
-            None => unsafe {
-                // SAFETY: the worker is single-threaded; environment updates cannot race.
-                env::remove_var(key);
-            },
-        }
-    }
+    apply_worker_environment(&payload.environment);
     let mut pg = PostgreSQL::new(settings);
 
     runtime.block_on(async {
@@ -135,9 +123,26 @@ fn run_worker(mut args: impl Iterator<Item = OsString>) -> Result<()> {
     Ok(())
 }
 
+/// Applies the worker environment overrides to the current process.
+fn apply_worker_environment(environment: &[(String, Option<PlainSecret>)]) {
+    for (key, value) in environment {
+        match value {
+            Some(env_value) => unsafe {
+                // SAFETY: the worker is single-threaded; environment updates cannot race.
+                env::set_var(key, env_value.expose());
+            },
+            None => unsafe {
+                // SAFETY: the worker is single-threaded; environment updates cannot race.
+                env::remove_var(key);
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn rejects_extra_argument() {
@@ -152,5 +157,42 @@ mod tests {
             err.to_string().contains("unexpected extra argument"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn apply_worker_environment_uses_plaintext_and_unsets() {
+        let secret_key = unique_env_key("PGWORKER_SECRET_KEY");
+        let none_key = unique_env_key("PGWORKER_NONE_KEY");
+
+        unsafe {
+            // SAFETY: scoped test cleanup; single-threaded in this process.
+            env::remove_var(&secret_key);
+            env::remove_var(&none_key);
+        }
+
+        let secret = PlainSecret::from("super-secret-value".to_owned());
+        let env_pairs = vec![(secret_key.clone(), Some(secret)), (none_key.clone(), None)];
+
+        apply_worker_environment(&env_pairs);
+
+        assert_eq!(env::var(&secret_key).as_deref(), Ok("super-secret-value"));
+        assert!(matches!(
+            env::var(&none_key),
+            Err(env::VarError::NotPresent)
+        ));
+
+        unsafe {
+            // SAFETY: scoped test cleanup; single-threaded in this process.
+            env::remove_var(secret_key);
+            env::remove_var(none_key);
+        }
+    }
+
+    fn unique_env_key(prefix: &str) -> String {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        format!("{prefix}_{pid}_{nanos}", pid = std::process::id())
     }
 }
