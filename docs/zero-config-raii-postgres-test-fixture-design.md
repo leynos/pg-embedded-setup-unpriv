@@ -309,6 +309,90 @@ essentially one line in the test setup.
   is present for both successful and failing bootstraps and that sensitive
   values remain redacted even when preparation errors occur.
 
+#### Class diagram (2025-12-10)
+
+The worker payload and snapshot types are organised as follows.
+
+```mermaid
+classDiagram
+    class Settings {
+        +String releases_url
+        +VersionReq version
+        +PathBuf installation_dir
+        +PathBuf password_file
+        +PathBuf data_dir
+        +String host
+        +u16 port
+        +String username
+        +String password
+        +bool temporary
+        +Option~Duration~ timeout
+        +HashMap~String,String~ configuration
+        +bool trust_installation_dir
+    }
+
+    class SettingsSnapshot {
+        +String releases_url
+        +VersionReq version
+        +Utf8PathBuf installation_dir
+        +Utf8PathBuf password_file
+        +Utf8PathBuf data_dir
+        +String host
+        +u16 port
+        +String username
+        +SecretString password
+        +bool temporary
+        +Option~Duration~ timeout_secs
+        +HashMap~String,String~ configuration
+        +bool trust_installation_dir
+        +into_settings() Result~Settings,BootstrapError~
+    }
+
+    class WorkerPayload {
+        +SettingsSnapshot settings
+        +Vec~Tuple2~ environment
+        +new(settings, environment) Result~WorkerPayload,BootstrapError~
+    }
+
+    class Tuple2 {
+        +String key
+        +Option~SecretString~ value
+    }
+
+    class secret_string {
+        +serialize(value, serializer) Result~Ok,Error~
+        +deserialize(deserializer) Result~SecretString,Error~
+    }
+
+    class secret_string_option {
+        +serialize(entries, serializer) Result~Ok,Error~
+        +deserialize(deserializer) Result~Vec~Tuple2~,Error~
+    }
+
+    class SecretString {
+        +from(String) SecretString
+        +expose_secret() &str
+    }
+
+    class VersionReq {
+        +clone() VersionReq
+    }
+
+    SettingsSnapshot --> Settings : From~SettingsSnapshot~
+    Settings --> SettingsSnapshot : TryFrom~&Settings~
+    WorkerPayload --> SettingsSnapshot : contains
+    WorkerPayload --> Tuple2 : environment
+    Tuple2 --> SecretString : wraps
+    SettingsSnapshot ..> SecretString : password
+    SettingsSnapshot ..> VersionReq : version
+    SettingsSnapshot ..> secret_string : serde with
+    WorkerPayload ..> secret_string_option : serde with
+    secret_string ..> SecretString : uses
+    secret_string_option ..> SecretString : uses
+```
+
+*Figure: Worker payload serialisation and redaction flow.*
+
 ### Ephemeral ports and isolation
 
 To allow the same tests to run concurrently (especially under `nextest`, which
