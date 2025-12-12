@@ -5,16 +5,16 @@
 
 ## Context
 
-This project currently provides a zero-configuration, RAII PostgreSQL fixture
-for tests by orchestrating `postgresql_embedded` (referred to in some places as
-the “postgres-embedded” backend). The fixture is designed to “just work” across
-root and unprivileged environments, and to integrate cleanly with `rstest` and
-`rstest-bdd` as described in
-`docs/zero-config-raii-postgres-test-fixture-design.md`.
+This project currently provides a zero-configuration, resource acquisition is
+initialisation (RAII) PostgreSQL fixture for tests by orchestrating
+`postgresql_embedded` (referred to in some places as the “postgres-embedded”
+backend). The fixture is designed to “just work” across root and unprivileged
+environments, and to integrate cleanly with `rstest` and `rstest-bdd` as
+described in `docs/zero-config-raii-postgres-test-fixture-design.md`.
 
 The `postgresql_embedded` approach provides a high-fidelity PostgreSQL server,
 but it has trade-offs that are increasingly relevant for local development and
-CI:
+continuous integration (CI):
 
 - It may require downloading PostgreSQL distributions at runtime (network
   dependency and potential flakiness).
@@ -84,11 +84,143 @@ Keep selection simple and zero-config by default:
 - Opt-in backend: `pglite-oxide`, enabled via a Cargo feature and activated at
   runtime via a single environment variable (for example `PG_TEST_BACKEND`).
 
+Expected `PG_TEST_BACKEND` values:
+
+- `postgresql_embedded` (default when unset)
+- `pglite_oxide` (requires a feature-gated `pglite-oxide` backend build)
+
 When the env var selects a backend that is not compiled in, the fixture should
 fail with a clear error that describes the required Cargo feature.
 
 This matches the existing design approach: defaults that “just work” plus
 escape hatches for unusual environments.
+
+The fixture should render connection strings using the `postgresql://` scheme.
+This keeps the output aligned with existing `postgresql_embedded` connection
+helpers and avoids downstream ambiguity between `postgres://` and
+`postgresql://`.
+
+Example error when a non-compiled backend is selected:
+
+```plaintext
+SKIP-TEST-CLUSTER: requested backend "pglite_oxide" is not available; enable Cargo feature "pglite-oxide"
+```
+
+### Backend selection and lifecycle (pglite-oxide)
+
+For screen readers: The following sequence diagram shows an integration test
+run selecting the `pglite-oxide` backend via `PG_TEST_BACKEND`, starting a
+cluster bound to `127.0.0.1` on an ephemeral port, executing SQL, and then
+stopping the runtime automatically when the RAII guard is dropped.
+
+```mermaid
+sequenceDiagram
+    actor Developer
+    participant TestCode
+    participant TestCluster
+    participant BackendSelector
+    participant PgliteOxideBackend
+    participant RunningCluster
+    participant PgliteRuntime as PgliteOxideRuntime
+
+    Developer->>TestCode: run integration tests (PG_TEST_BACKEND=pglite_oxide)
+    TestCode->>TestCluster: new() and start()
+    TestCluster->>BackendSelector: select_backend("pglite_oxide", feature_pglite_enabled=true)
+    BackendSelector-->>TestCluster: PgliteOxideBackend
+
+    TestCluster->>PgliteOxideBackend: start()
+    PgliteOxideBackend->>PgliteRuntime: init(temp_dir, bind 127.0.0.1:0)
+    PgliteRuntime-->>PgliteOxideBackend: ready(host, ephemeral_port)
+    PgliteOxideBackend-->>TestCluster: RunningCluster
+
+    TestCluster->>RunningCluster: connection()
+    RunningCluster-->>TestCluster: TestClusterConnection(url, host, port, user, password)
+    TestCluster-->>TestCode: TestClusterConnection
+
+    TestCode->>PgliteRuntime: execute SQL (e.g. SELECT 42)
+    PgliteRuntime-->>TestCode: query result
+
+    TestCode->>RunningCluster: drop at end of scope
+    RunningCluster->>PgliteRuntime: shutdown
+    PgliteRuntime-->>RunningCluster: stopped
+```
+
+### Backend abstraction overview
+
+For screen readers: The following class diagram shows `TestCluster` delegating
+to a selected backend. Both `PostgresqlEmbeddedBackend` and
+`PgliteOxideBackend` implement a shared backend interface, and both produce a
+`RunningCluster` which can render a `TestClusterConnection`.
+
+```mermaid
+classDiagram
+    class TestCluster {
+      +new() TestCluster
+      +start() Result_RunningCluster_ClusterStartError
+      +connection() TestClusterConnection
+      -backend Backend
+    }
+
+    class TestClusterConnection {
+      +host String
+      +port u16
+      +user String
+      +password String
+      +url String
+    }
+
+    class Backend {
+      <<interface>>
+      +start() Result_RunningCluster_ClusterStartError
+    }
+
+    class RunningCluster {
+      +connection() TestClusterConnection
+      +drop()
+    }
+
+    class PostgresqlEmbeddedBackend {
+      +start() Result_RunningCluster_ClusterStartError
+      -data_dir Path
+      -port u16
+    }
+
+    class PgliteOxideBackend {
+      +start() Result_RunningCluster_ClusterStartError
+      -temp_dir Path
+      -port u16
+    }
+
+    class BackendSelector {
+      +select_backend(env_backend String, feature_pglite_enabled bool) BackendSelectionResult
+    }
+
+    class ClusterStartError {
+      +message String
+      +backend BackendKind
+    }
+
+    class BackendSelectionError {
+      +message String
+      +required_feature String
+      +requested_backend BackendKind
+    }
+
+    class BackendKind {
+      +PostgresqlEmbedded
+      +PgliteOxide
+    }
+
+    TestCluster --> Backend : uses
+    Backend <|.. PostgresqlEmbeddedBackend
+    Backend <|.. PgliteOxideBackend
+    RunningCluster --> TestClusterConnection : produces
+    BackendSelector --> BackendKind
+    BackendSelector --> Backend : returns
+    ClusterStartError --> BackendKind
+    BackendSelectionError --> BackendKind
+    TestCluster --> BackendSelector : delegates backend choice
+```
 
 ## Design notes
 
@@ -128,7 +260,7 @@ To align with the RAII fixture design, the implementation should:
 
 At the time of writing, `pglite-oxide`’s convenience helpers are oriented
 towards fixed default paths and ports. To preserve this project’s parallel test
-expectations, we should plan to either:
+expectations, the plan should be to either:
 
 - Contribute upstream changes to support custom mount paths and listener
   binding (preferred), or
@@ -136,7 +268,7 @@ expectations, we should plan to either:
   a process-global lock until upstream exposes the necessary controls
   (acceptable only as an explicitly documented transitional state).
 
-The preferred direction is upstream collaboration so this project does not
+The preferred direction is upstream collaboration, so this project does not
 carry a long-lived fork and so the ecosystem benefits from the improvements.
 
 ### Observability and error handling
@@ -162,7 +294,7 @@ was set or unset, mirroring the current design.
 - A viable path for running tests in offline or restricted-network
   environments.
 - Reduced coupling to host PostgreSQL prerequisites (for example, fewer
-  time-zone database related failure modes).
+  failure modes related to the time zone database).
 
 ### Costs and risks
 
@@ -205,7 +337,7 @@ was set or unset, mirroring the current design.
 ## Open questions
 
 - What is the minimum supported `pglite-oxide` version that provides the
-  controls needed for per-cluster isolation?
+  capabilities needed for per-cluster isolation?
 - Which PostgreSQL features and extensions are in-scope for the `pglite-oxide`
   backend, and which should be documented as unsupported?
 - How should the fixture behave when the selected backend cannot run on the
