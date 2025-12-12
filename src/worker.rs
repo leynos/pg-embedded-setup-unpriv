@@ -42,26 +42,32 @@
 //! ```
 use crate::error::BootstrapError;
 use camino::Utf8PathBuf;
-use color_eyre::eyre::{Context, eyre};
-use postgresql_embedded::Settings;
+use color_eyre::eyre::eyre;
+use postgresql_embedded::{Settings, VersionReq};
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
+use serde_with::{DisplayFromStr, DurationSeconds, serde_as};
 use std::collections::HashMap;
 use std::fmt;
+use std::time::Duration;
 
 /// Serialised representation of [`Settings`] for subprocess helpers.
-#[derive(Serialize, Deserialize)]
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SettingsSnapshot {
     releases_url: String,
-    version: String,
+    #[serde_as(as = "DisplayFromStr")]
+    version: VersionReq,
     installation_dir: Utf8PathBuf,
     password_file: Utf8PathBuf,
     data_dir: Utf8PathBuf,
     host: String,
     port: u16,
     username: String,
-    password: String,
+    password: PlainSecret,
     temporary: bool,
-    timeout_secs: Option<u64>,
+    #[serde_as(as = "Option<DurationSeconds<u64>>")]
+    timeout_secs: Option<Duration>,
     configuration: HashMap<String, String>,
     trust_installation_dir: bool,
 }
@@ -69,28 +75,7 @@ pub struct SettingsSnapshot {
 impl SettingsSnapshot {
     /// Converts the snapshot back into [`Settings`].
     pub fn into_settings(self) -> Result<Settings, BootstrapError> {
-        let version = postgresql_embedded::VersionReq::parse(&self.version)
-            .wrap_err("failed to parse version requirement from snapshot")?;
-        let installation_dir = self.installation_dir.into_std_path_buf();
-        let password_file = self.password_file.into_std_path_buf();
-        let data_dir = self.data_dir.into_std_path_buf();
-        let timeout = self.timeout_secs.map(std::time::Duration::from_secs);
-
-        Ok(Settings {
-            releases_url: self.releases_url,
-            version,
-            installation_dir,
-            password_file,
-            data_dir,
-            host: self.host,
-            port: self.port,
-            username: self.username,
-            password: self.password,
-            temporary: self.temporary,
-            timeout,
-            configuration: self.configuration,
-            trust_installation_dir: self.trust_installation_dir,
-        })
+        Ok(self.into())
     }
 }
 
@@ -107,16 +92,16 @@ impl TryFrom<&Settings> for SettingsSnapshot {
 
         Ok(Self {
             releases_url: settings.releases_url.clone(),
-            version: settings.version.to_string(),
+            version: settings.version.clone(),
             installation_dir,
             password_file,
             data_dir,
             host: settings.host.clone(),
             port: settings.port,
             username: settings.username.clone(),
-            password: settings.password.clone(),
+            password: PlainSecret::from(settings.password.clone()),
             temporary: settings.temporary,
-            timeout_secs: settings.timeout.map(|duration| duration.as_secs()),
+            timeout_secs: settings.timeout,
             configuration: settings.configuration.clone(),
             trust_installation_dir: settings.trust_installation_dir,
         })
@@ -124,10 +109,10 @@ impl TryFrom<&Settings> for SettingsSnapshot {
 }
 
 /// Payload exchanged with the worker subprocess.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerPayload {
     pub settings: SettingsSnapshot,
-    pub environment: Vec<(String, Option<String>)>,
+    pub environment: Vec<(String, Option<PlainSecret>)>,
 }
 
 impl WorkerPayload {
@@ -137,68 +122,82 @@ impl WorkerPayload {
     ) -> Result<Self, BootstrapError> {
         Ok(Self {
             settings: SettingsSnapshot::try_from(settings)?,
-            environment,
+            environment: environment
+                .into_iter()
+                .map(|(key, value)| (key, value.map(PlainSecret::from)))
+                .collect(),
         })
     }
 }
 
-impl fmt::Debug for SettingsSnapshot {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SettingsSnapshot")
-            .field("releases_url", &self.releases_url)
-            .field("version", &self.version)
-            .field("installation_dir", &self.installation_dir)
-            .field("password_file", &self.password_file)
-            .field("data_dir", &self.data_dir)
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("username", &self.username)
-            .field("password", &"<redacted>")
-            .field("temporary", &self.temporary)
-            .field("timeout_secs", &self.timeout_secs)
-            .field("configuration", &self.configuration)
-            .field("trust_installation_dir", &self.trust_installation_dir)
-            .finish()
-    }
-}
-
-impl fmt::Debug for WorkerPayload {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("WorkerPayload")
-            .field("settings", &self.settings)
-            .field("environment", &RedactedEnvironment(&self.environment))
-            .finish()
-    }
-}
-
-struct RedactedEnvironment<'a>(&'a [(String, Option<String>)]);
-
-impl fmt::Debug for RedactedEnvironment<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut entries = f.debug_list();
-
-        for (key, value) in self.0 {
-            entries.entry(&RedactedEnvironmentEntry {
-                key,
-                has_value: value.is_some(),
-            });
+impl From<SettingsSnapshot> for Settings {
+    fn from(snapshot: SettingsSnapshot) -> Self {
+        Self {
+            releases_url: snapshot.releases_url,
+            version: snapshot.version,
+            installation_dir: snapshot.installation_dir.into(),
+            password_file: snapshot.password_file.into(),
+            data_dir: snapshot.data_dir.into(),
+            host: snapshot.host,
+            port: snapshot.port,
+            username: snapshot.username,
+            password: snapshot.password.expose().to_owned(),
+            temporary: snapshot.temporary,
+            timeout: snapshot.timeout_secs,
+            configuration: snapshot.configuration,
+            trust_installation_dir: snapshot.trust_installation_dir,
         }
-
-        entries.finish()
     }
 }
 
-struct RedactedEnvironmentEntry<'a> {
-    key: &'a str,
-    has_value: bool,
+#[derive(Clone)]
+pub struct PlainSecret(SecretString);
+
+impl PlainSecret {
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        self.0.expose_secret()
+    }
 }
 
-impl fmt::Debug for RedactedEnvironmentEntry<'_> {
+impl From<String> for PlainSecret {
+    fn from(secret: String) -> Self {
+        Self(SecretString::from(secret))
+    }
+}
+
+impl From<&str> for PlainSecret {
+    fn from(secret: &str) -> Self {
+        Self(SecretString::from(secret.to_owned()))
+    }
+}
+
+impl From<PlainSecret> for SecretString {
+    fn from(secret: PlainSecret) -> Self {
+        secret.0
+    }
+}
+
+impl fmt::Debug for PlainSecret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.has_value {
-            write!(f, "{}=<redacted>", self.key)
-        } else {
-            write!(f, "{}=<unset>", self.key)
-        }
+        write!(f, "PlainSecret([REDACTED])")
+    }
+}
+
+impl Serialize for PlainSecret {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.expose())
+    }
+}
+
+impl<'de> Deserialize<'de> for PlainSecret {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(Self::from)
     }
 }
