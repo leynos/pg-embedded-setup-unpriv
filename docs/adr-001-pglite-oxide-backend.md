@@ -269,7 +269,7 @@ expectations, the plan should be to either:
   (acceptable only as an explicitly documented transitional state).
 
 The preferred direction is upstream collaboration, so this project does not
-carry a long-lived fork and so the ecosystem benefits from the improvements.
+carry a long-lived fork, and so the ecosystem benefits from the improvements.
 
 ### Observability and error handling
 
