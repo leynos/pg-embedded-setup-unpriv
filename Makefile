@@ -34,7 +34,7 @@ check-fmt: ## Verify formatting
 	$(CARGO) fmt --all -- --check
 
 markdownlint: ## Lint Markdown files
-	$(MDLINT) "**/*.md" "#target"
+	$(MDLINT) "**/*.md"
 
 nixie: ## Validate Mermaid diagrams
 	nixie --no-sandbox

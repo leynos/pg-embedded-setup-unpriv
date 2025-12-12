@@ -1,4 +1,5 @@
 {
+  "ignores": ["target/**"],
   // Ignore MD013 (line length) inside tables since reflowing
   // Markdown tables often breaks formatting and readability.
   "config": {
