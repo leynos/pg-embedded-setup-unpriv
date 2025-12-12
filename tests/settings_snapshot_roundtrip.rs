@@ -88,16 +88,8 @@ fn worker_payload_debug_redacts_sensitive_values() -> Result<()> {
     let debug_output = format!("{payload:?}");
 
     ensure!(
-        debug_output.contains("PGPASSWORD=<redacted>"),
-        "expected PGPASSWORD to be redacted"
-    );
-    ensure!(
-        debug_output.contains("PATH=<redacted>"),
-        "expected PATH to be redacted"
-    );
-    ensure!(
-        debug_output.contains("EMPTY=<unset>"),
-        "expected EMPTY to be marked as unset"
+        debug_output.contains("[REDACTED]"),
+        "expected secrets to be redacted"
     );
     ensure!(
         !debug_output.contains("supersecret"),

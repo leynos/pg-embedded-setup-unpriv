@@ -113,7 +113,7 @@ diagram so screen readers can understand it.
 For screen readers: The following flowchart outlines the documentation workflow.
 
 ```mermaid
-flowchart TD
+graph TD
     A[Start] --> B[Draft]
     B --> C[Review]
     C --> D[Merge]
