@@ -2074,7 +2074,7 @@ dependencies = [
  "serde_with",
  "temp-env",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tokio",
  "tracing",
  "tracing-subscriber",
