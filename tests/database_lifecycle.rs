@@ -136,37 +136,45 @@ where
     Ok(())
 }
 
-/// Check database existence with expected state.
-///
-/// If `use_delegation` is true, uses `TestCluster::database_exists` directly;
-/// otherwise uses `TestClusterConnection::database_exists`.
-#[expect(clippy::too_many_arguments, reason = "test helper with descriptive parameters")]
-fn check_db_exists(
+/// Check database existence with expected state using `TestClusterConnection`.
+fn check_db_exists(world: &DatabaseWorldFixture, db_name: &str, expected: bool) -> Result<()> {
+    let world_cell = borrow_world(world)?;
+    if world_cell.borrow().is_skipped() {
+        return Ok(());
+    }
+    let exists = world_cell
+        .borrow()
+        .cluster()?
+        .connection()
+        .database_exists(db_name)?;
+    if expected {
+        ensure!(exists, "expected database '{db_name}' to exist");
+    } else {
+        ensure!(!exists, "expected database '{db_name}' to not exist");
+    }
+    Ok(())
+}
+
+/// Check database existence with expected state using `TestCluster` delegation.
+fn check_db_exists_via_delegation(
     world: &DatabaseWorldFixture,
     db_name: &str,
     expected: bool,
-    use_delegation: bool,
-    context: &str,
 ) -> Result<()> {
     let world_cell = borrow_world(world)?;
     if world_cell.borrow().is_skipped() {
         return Ok(());
     }
-    let exists = if use_delegation {
-        world_cell.borrow().cluster()?.database_exists(db_name)?
-    } else {
-        world_cell
-            .borrow()
-            .cluster()?
-            .connection()
-            .database_exists(db_name)?
-    };
+    let exists = world_cell.borrow().cluster()?.database_exists(db_name)?;
     if expected {
-        ensure!(exists, "expected database '{db_name}' to exist{context}");
+        ensure!(
+            exists,
+            "expected database '{db_name}' to exist via delegation"
+        );
     } else {
         ensure!(
             !exists,
-            "expected database '{db_name}' to not exist{context}"
+            "expected database '{db_name}' to not exist via delegation"
         );
     }
     Ok(())
@@ -288,22 +296,22 @@ fn when_database_dropped_via_delegation(world: &DatabaseWorldFixture) -> Result<
 
 #[then("the database exists in the cluster")]
 fn then_database_exists(world: &DatabaseWorldFixture) -> Result<()> {
-    check_db_exists(world, TEST_DB_NAME, true, false, "")
+    check_db_exists(world, TEST_DB_NAME, true)
 }
 
 #[then("the database no longer exists")]
 fn then_database_does_not_exist(world: &DatabaseWorldFixture) -> Result<()> {
-    check_db_exists(world, TEST_DB_NAME, false, false, "")
+    check_db_exists(world, TEST_DB_NAME, false)
 }
 
 #[then("the database exists via TestCluster delegation")]
 fn then_database_exists_via_delegation(world: &DatabaseWorldFixture) -> Result<()> {
-    check_db_exists(world, TEST_DB_NAME, true, true, " via delegation")
+    check_db_exists_via_delegation(world, TEST_DB_NAME, true)
 }
 
 #[then("the database no longer exists via TestCluster delegation")]
 fn then_database_does_not_exist_via_delegation(world: &DatabaseWorldFixture) -> Result<()> {
-    check_db_exists(world, TEST_DB_NAME, false, true, " via delegation")
+    check_db_exists_via_delegation(world, TEST_DB_NAME, false)
 }
 
 #[then("a duplicate database error is returned")]
