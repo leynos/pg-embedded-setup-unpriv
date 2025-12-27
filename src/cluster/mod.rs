@@ -248,12 +248,9 @@ impl TestCluster {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn create_database_from_template(
-        &self,
-        name: &str,
-        template: &str,
-    ) -> BootstrapResult<()> {
-        self.connection().create_database_from_template(name, template)
+    pub fn create_database_from_template(&self, name: &str, template: &str) -> BootstrapResult<()> {
+        self.connection()
+            .create_database_from_template(name, template)
     }
 
     /// Drops an existing database.

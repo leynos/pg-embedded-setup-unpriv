@@ -113,6 +113,89 @@ fn borrow_world(world: &DatabaseWorldFixture) -> Result<&RefCell<DatabaseWorld>>
         .map_err(|err| eyre!(format!("database world failed to initialise: {err}")))
 }
 
+/// Execute a database operation, capturing any error in the specified field.
+///
+/// If `is_create` is true, errors are stored in `create_error`; otherwise in `drop_error`.
+fn execute_db_op<F>(world: &DatabaseWorldFixture, op: F, is_create: bool) -> Result<()>
+where
+    F: FnOnce(&TestCluster) -> pg_embedded_setup_unpriv::BootstrapResult<()>,
+{
+    let world_cell = borrow_world(world)?;
+    if world_cell.borrow().is_skipped() {
+        return Ok(());
+    }
+    let result = op(world_cell.borrow().cluster()?);
+    if let Err(err) = result {
+        let mut world_mut = world_cell.borrow_mut();
+        if is_create {
+            world_mut.create_error = Some(err.to_string());
+        } else {
+            world_mut.drop_error = Some(err.to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Check database existence with expected state.
+///
+/// If `use_delegation` is true, uses `TestCluster::database_exists` directly;
+/// otherwise uses `TestClusterConnection::database_exists`.
+#[expect(clippy::too_many_arguments, reason = "test helper with descriptive parameters")]
+fn check_db_exists(
+    world: &DatabaseWorldFixture,
+    db_name: &str,
+    expected: bool,
+    use_delegation: bool,
+    context: &str,
+) -> Result<()> {
+    let world_cell = borrow_world(world)?;
+    if world_cell.borrow().is_skipped() {
+        return Ok(());
+    }
+    let exists = if use_delegation {
+        world_cell.borrow().cluster()?.database_exists(db_name)?
+    } else {
+        world_cell
+            .borrow()
+            .cluster()?
+            .connection()
+            .database_exists(db_name)?
+    };
+    if expected {
+        ensure!(exists, "expected database '{db_name}' to exist{context}");
+    } else {
+        ensure!(
+            !exists,
+            "expected database '{db_name}' to not exist{context}"
+        );
+    }
+    Ok(())
+}
+
+/// Verify captured error contains expected text.
+///
+/// If `is_create` is true, checks `create_error`; otherwise checks `drop_error`.
+fn verify_error(
+    world: &DatabaseWorldFixture,
+    is_create: bool,
+    expected_patterns: &[&str],
+    error_type: &str,
+) -> Result<()> {
+    let world_ref = borrow_world(world)?.borrow();
+    if world_ref.is_skipped() {
+        return Ok(());
+    }
+    let error = if is_create {
+        world_ref.create_error.as_ref()
+    } else {
+        world_ref.drop_error.as_ref()
+    }
+    .ok_or_else(|| eyre!("expected {error_type} error but none recorded"))?;
+    let matches = expected_patterns.iter().any(|p| error.contains(p));
+    ensure!(matches, "expected {error_type} error, got: {error}");
+    Ok(())
+}
+
 #[fixture]
 fn world() -> DatabaseWorldFixture {
     Ok(RefCell::new(DatabaseWorld::new()?))
@@ -159,194 +242,83 @@ fn given_running_cluster(world: &DatabaseWorldFixture) -> Result<()> {
 
 #[when("a new database is created")]
 fn when_database_created(world: &DatabaseWorldFixture) -> Result<()> {
-    let world_cell = borrow_world(world)?;
-    if world_cell.borrow().is_skipped() {
-        return Ok(());
-    }
-    let result = world_cell
-        .borrow()
-        .cluster()?
-        .connection()
-        .create_database(TEST_DB_NAME);
-    if let Err(err) = result {
-        world_cell.borrow_mut().create_error = Some(err.to_string());
-    }
-    Ok(())
+    execute_db_op(
+        world,
+        |cluster| cluster.connection().create_database(TEST_DB_NAME),
+        true,
+    )
 }
 
 #[when("the same database is created again")]
 fn when_duplicate_database_created(world: &DatabaseWorldFixture) -> Result<()> {
-    let world_cell = borrow_world(world)?;
-    if world_cell.borrow().is_skipped() {
-        return Ok(());
-    }
-    let result = world_cell
-        .borrow()
-        .cluster()?
-        .connection()
-        .create_database(TEST_DB_NAME);
-    if let Err(err) = result {
-        world_cell.borrow_mut().create_error = Some(err.to_string());
-    }
-    Ok(())
+    execute_db_op(
+        world,
+        |cluster| cluster.connection().create_database(TEST_DB_NAME),
+        true,
+    )
 }
 
 #[when("the database is dropped")]
 fn when_database_dropped(world: &DatabaseWorldFixture) -> Result<()> {
-    let world_cell = borrow_world(world)?;
-    if world_cell.borrow().is_skipped() {
-        return Ok(());
-    }
-    let result = world_cell
-        .borrow()
-        .cluster()?
-        .connection()
-        .drop_database(TEST_DB_NAME);
-    if let Err(err) = result {
-        world_cell.borrow_mut().drop_error = Some(err.to_string());
-    }
-    Ok(())
+    execute_db_op(
+        world,
+        |cluster| cluster.connection().drop_database(TEST_DB_NAME),
+        false,
+    )
 }
 
 #[when("a non-existent database is dropped")]
 fn when_nonexistent_database_dropped(world: &DatabaseWorldFixture) -> Result<()> {
-    let world_cell = borrow_world(world)?;
-    if world_cell.borrow().is_skipped() {
-        return Ok(());
-    }
-    let result = world_cell
-        .borrow()
-        .cluster()?
-        .connection()
-        .drop_database("nonexistent_db_12345");
-    if let Err(err) = result {
-        world_cell.borrow_mut().drop_error = Some(err.to_string());
-    }
-    Ok(())
+    execute_db_op(
+        world,
+        |cluster| cluster.connection().drop_database("nonexistent_db_12345"),
+        false,
+    )
 }
 
 #[when("a database is created via TestCluster delegation")]
 fn when_database_created_via_delegation(world: &DatabaseWorldFixture) -> Result<()> {
-    let world_cell = borrow_world(world)?;
-    if world_cell.borrow().is_skipped() {
-        return Ok(());
-    }
-    let result = world_cell.borrow().cluster()?.create_database(TEST_DB_NAME);
-    if let Err(err) = result {
-        world_cell.borrow_mut().create_error = Some(err.to_string());
-    }
-    Ok(())
+    execute_db_op(world, |cluster| cluster.create_database(TEST_DB_NAME), true)
 }
 
 #[when("the database is dropped via TestCluster delegation")]
 fn when_database_dropped_via_delegation(world: &DatabaseWorldFixture) -> Result<()> {
-    let world_cell = borrow_world(world)?;
-    if world_cell.borrow().is_skipped() {
-        return Ok(());
-    }
-    let result = world_cell.borrow().cluster()?.drop_database(TEST_DB_NAME);
-    if let Err(err) = result {
-        world_cell.borrow_mut().drop_error = Some(err.to_string());
-    }
-    Ok(())
+    execute_db_op(world, |cluster| cluster.drop_database(TEST_DB_NAME), false)
 }
 
 #[then("the database exists in the cluster")]
 fn then_database_exists(world: &DatabaseWorldFixture) -> Result<()> {
-    let world_cell = borrow_world(world)?;
-    if world_cell.borrow().is_skipped() {
-        return Ok(());
-    }
-    let exists = world_cell
-        .borrow()
-        .cluster()?
-        .connection()
-        .database_exists(TEST_DB_NAME)?;
-    ensure!(exists, "expected database '{TEST_DB_NAME}' to exist");
-    Ok(())
+    check_db_exists(world, TEST_DB_NAME, true, false, "")
 }
 
 #[then("the database no longer exists")]
 fn then_database_does_not_exist(world: &DatabaseWorldFixture) -> Result<()> {
-    let world_cell = borrow_world(world)?;
-    if world_cell.borrow().is_skipped() {
-        return Ok(());
-    }
-    let exists = world_cell
-        .borrow()
-        .cluster()?
-        .connection()
-        .database_exists(TEST_DB_NAME)?;
-    ensure!(!exists, "expected database '{TEST_DB_NAME}' to not exist");
-    Ok(())
+    check_db_exists(world, TEST_DB_NAME, false, false, "")
 }
 
 #[then("the database exists via TestCluster delegation")]
 fn then_database_exists_via_delegation(world: &DatabaseWorldFixture) -> Result<()> {
-    let world_cell = borrow_world(world)?;
-    if world_cell.borrow().is_skipped() {
-        return Ok(());
-    }
-    let exists = world_cell
-        .borrow()
-        .cluster()?
-        .database_exists(TEST_DB_NAME)?;
-    ensure!(
-        exists,
-        "expected database '{TEST_DB_NAME}' to exist via delegation"
-    );
-    Ok(())
+    check_db_exists(world, TEST_DB_NAME, true, true, " via delegation")
 }
 
 #[then("the database no longer exists via TestCluster delegation")]
 fn then_database_does_not_exist_via_delegation(world: &DatabaseWorldFixture) -> Result<()> {
-    let world_cell = borrow_world(world)?;
-    if world_cell.borrow().is_skipped() {
-        return Ok(());
-    }
-    let exists = world_cell
-        .borrow()
-        .cluster()?
-        .database_exists(TEST_DB_NAME)?;
-    ensure!(
-        !exists,
-        "expected database '{TEST_DB_NAME}' to not exist via delegation"
-    );
-    Ok(())
+    check_db_exists(world, TEST_DB_NAME, false, true, " via delegation")
 }
 
 #[then("a duplicate database error is returned")]
 fn then_duplicate_error(world: &DatabaseWorldFixture) -> Result<()> {
-    let world_ref = borrow_world(world)?.borrow();
-    if world_ref.is_skipped() {
-        return Ok(());
-    }
-    let error = world_ref
-        .create_error
-        .as_ref()
-        .ok_or_else(|| eyre!("expected create error but none recorded"))?;
-    ensure!(
-        error.contains("already exists") || error.contains("duplicate"),
-        "expected duplicate database error, got: {error}"
-    );
-    Ok(())
+    verify_error(
+        world,
+        true,
+        &["already exists", "duplicate"],
+        "duplicate database",
+    )
 }
 
 #[then("a missing database error is returned")]
 fn then_missing_error(world: &DatabaseWorldFixture) -> Result<()> {
-    let world_ref = borrow_world(world)?.borrow();
-    if world_ref.is_skipped() {
-        return Ok(());
-    }
-    let error = world_ref
-        .drop_error
-        .as_ref()
-        .ok_or_else(|| eyre!("expected drop error but none recorded"))?;
-    ensure!(
-        error.contains("does not exist"),
-        "expected missing database error, got: {error}"
-    );
-    Ok(())
+    verify_error(world, false, &["does not exist"], "missing database")
 }
 
 #[scenario(path = "tests/features/database_lifecycle.feature", index = 0)]

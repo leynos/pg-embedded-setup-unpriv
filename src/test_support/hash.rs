@@ -55,10 +55,7 @@ fn hash_directory_recursive(
 
     for entry in entries {
         let path = entry.path();
-        let relative = path
-            .strip_prefix(base)
-            .unwrap_or(&path)
-            .to_string_lossy();
+        let relative = path.strip_prefix(base).unwrap_or(&path).to_string_lossy();
 
         // Hash the relative path
         hasher.update(relative.as_bytes());
@@ -109,7 +106,10 @@ mod tests {
         fs::write(temp.path().join("file.sql"), "CREATE TABLE b;").expect("write");
         let hash2 = hash_directory(temp.path()).expect("hash2");
 
-        assert_ne!(hash1, hash2, "different contents should produce different hash");
+        assert_ne!(
+            hash1, hash2,
+            "different contents should produce different hash"
+        );
     }
 
     #[test]

@@ -234,11 +234,7 @@ impl TestClusterConnection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn create_database_from_template(
-        &self,
-        name: &str,
-        template: &str,
-    ) -> BootstrapResult<()> {
+    pub fn create_database_from_template(&self, name: &str, template: &str) -> BootstrapResult<()> {
         let _span =
             info_span!("create_database_from_template", db = %name, template = %template).entered();
         let mut client = self.admin_client()?;
@@ -353,7 +349,9 @@ impl TestClusterConnection {
         let lock = locks
             .entry(name.to_owned())
             .or_insert_with(|| Mutex::new(()));
-        let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         if !self.database_exists(name)? {
             self.create_database(name)?;
