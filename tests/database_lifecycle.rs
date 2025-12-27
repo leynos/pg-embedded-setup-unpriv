@@ -127,10 +127,11 @@ where
     let result = op(world_cell.borrow().cluster()?);
     if let Err(err) = result {
         let mut world_mut = world_cell.borrow_mut();
+        let error_chain = format!("{err:?}");
         if is_create {
-            world_mut.create_error = Some(err.to_string());
+            world_mut.create_error = Some(error_chain.clone());
         } else {
-            world_mut.drop_error = Some(err.to_string());
+            world_mut.drop_error = Some(error_chain);
         }
     }
     Ok(())
