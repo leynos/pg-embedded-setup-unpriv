@@ -8,6 +8,7 @@ use postgres::{Client, NoTls};
 use postgresql_embedded::Settings;
 use tracing::info_span;
 
+use super::temporary_database::TemporaryDatabase;
 use crate::TestBootstrapSettings;
 use crate::error::BootstrapResult;
 
@@ -359,6 +360,88 @@ impl TestClusterConnection {
             setup_fn(name)?;
         }
         Ok(())
+    }
+
+    /// Creates a temporary database that is dropped when the guard is dropped.
+    ///
+    /// This is useful for test isolation where each test creates its own
+    /// database and the database is automatically cleaned up when the test
+    /// completes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database already exists or if the connection
+    /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    /// let temp_db = cluster.connection().temporary_database("my_temp_db")?;
+    ///
+    /// // Database is dropped automatically when temp_db goes out of scope
+    /// let url = temp_db.url();
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn temporary_database(&self, name: &str) -> BootstrapResult<TemporaryDatabase> {
+        let _span = info_span!("temporary_database", db = %name).entered();
+        self.create_database(name)?;
+        Ok(TemporaryDatabase::new(
+            name.to_owned(),
+            self.database_url("postgres"),
+            self.database_url(name),
+        ))
+    }
+
+    /// Creates a temporary database from a template.
+    ///
+    /// Combines template cloning with RAII cleanup. The database is created
+    /// by cloning the template and is automatically dropped when the guard
+    /// goes out of scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target database already exists, the template
+    /// does not exist, the template has active connections, or if the
+    /// connection fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    ///
+    /// // Create and migrate a template once
+    /// cluster.ensure_template_exists("migrated_template", |_| Ok(()))?;
+    ///
+    /// // Each test gets its own database cloned from the template
+    /// let temp_db = cluster.connection()
+    ///     .temporary_database_from_template("test_db", "migrated_template")?;
+    ///
+    /// // Database is dropped automatically when temp_db goes out of scope
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn temporary_database_from_template(
+        &self,
+        name: &str,
+        template: &str,
+    ) -> BootstrapResult<TemporaryDatabase> {
+        let _span =
+            info_span!("temporary_database_from_template", db = %name, template = %template)
+                .entered();
+        self.create_database_from_template(name, template)?;
+        Ok(TemporaryDatabase::new(
+            name.to_owned(),
+            self.database_url("postgres"),
+            self.database_url(name),
+        ))
     }
 
     /// Connects to the `postgres` administration database.

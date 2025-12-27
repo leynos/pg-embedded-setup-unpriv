@@ -440,6 +440,58 @@ cluster.create_database_from_template(&db_name, "my_template")?;
 fails. Ensure all connections are closed before calling `drop_database`. If
 using connection pools, drain the pool first.
 
+### Automatic cleanup with TemporaryDatabase
+
+The `TemporaryDatabase` guard provides RAII cleanup semantics. When the guard
+goes out of scope, the database is automatically dropped:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+
+// Create a temporary database with automatic cleanup
+let temp_db = cluster.temporary_database("my_test_db")?;
+
+// Use the database
+let url = temp_db.url();
+// ... run queries ...
+
+// Database is dropped automatically when temp_db goes out of scope
+drop(temp_db);
+# Ok(())
+# }
+```
+
+For template-based workflows, use `temporary_database_from_template`:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+
+// Ensure the template exists
+cluster.ensure_template_exists("migrated_template", |_| Ok(()))?;
+
+// Create a temporary database from the template
+let temp_db = cluster.temporary_database_from_template("test_db", "migrated_template")?;
+
+// Database is automatically dropped when temp_db goes out of scope
+# Ok(())
+# }
+```
+
+**Drop behaviour:**
+
+- `drop_database()` - Explicitly drop the database, failing if connections
+  exist. Consumes the guard.
+- `force_drop()` - Terminate active connections before dropping. Useful when
+  connection pools haven't been drained.
+- Implicit drop (guard goes out of scope) - Best-effort drop with a warning
+  logged on failure.
+
 ## Privilege detection and idempotence
 
 - `pg_embedded_setup_unpriv` detects its effective user ID at runtime. Root

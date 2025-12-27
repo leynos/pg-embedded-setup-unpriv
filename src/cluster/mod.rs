@@ -18,9 +18,11 @@
 
 mod connection;
 mod runtime;
+mod temporary_database;
 mod worker_invoker;
 
 pub use self::connection::{ConnectionMetadata, TestClusterConnection};
+pub use self::temporary_database::TemporaryDatabase;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use self::worker_invoker::WorkerInvoker;
 
@@ -336,6 +338,66 @@ impl TestCluster {
         F: FnOnce(&str) -> BootstrapResult<()>,
     {
         self.connection().ensure_template_exists(name, setup_fn)
+    }
+
+    /// Creates a temporary database that is dropped when the guard is dropped.
+    ///
+    /// Delegates to [`TestClusterConnection::temporary_database`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database already exists or if the connection
+    /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    /// let temp_db = cluster.temporary_database("my_temp_db")?;
+    ///
+    /// // Database is dropped automatically when temp_db goes out of scope
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn temporary_database(&self, name: &str) -> BootstrapResult<TemporaryDatabase> {
+        self.connection().temporary_database(name)
+    }
+
+    /// Creates a temporary database from a template.
+    ///
+    /// Delegates to [`TestClusterConnection::temporary_database_from_template`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target database already exists, the template
+    /// does not exist, the template has active connections, or if the
+    /// connection fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    /// cluster.ensure_template_exists("migrated_template", |_| Ok(()))?;
+    ///
+    /// let temp_db = cluster.temporary_database_from_template("test_db", "migrated_template")?;
+    ///
+    /// // Database is dropped automatically when temp_db goes out of scope
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn temporary_database_from_template(
+        &self,
+        name: &str,
+        template: &str,
+    ) -> BootstrapResult<TemporaryDatabase> {
+        self.connection()
+            .temporary_database_from_template(name, template)
     }
 
     fn stop_context(settings: &Settings) -> String {

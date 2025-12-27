@@ -2,9 +2,10 @@
 
 ## Status
 
-Proposed. Phase 1 (core database lifecycle API) complete. Phase 2 (shared
+Accepted. Phase 1 (core database lifecycle API) complete. Phase 2 (shared
 cluster fixture) complete. Phase 3 (template creation with concurrency safety)
-complete. Phase 4 (documentation) complete.
+complete. Phase 4 (documentation) complete. Phase 5 (cleanup automation)
+complete.
 
 ## Date
 
