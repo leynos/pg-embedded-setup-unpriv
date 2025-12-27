@@ -372,6 +372,74 @@ let template_name = format!("template_{}", &hash[..8]);
 # }
 ```
 
+### Performance comparison
+
+The following table compares test isolation approaches:
+
+| Approach                        | Bootstrap | Per-test overhead | Isolation |
+| ------------------------------- | --------- | ----------------- | --------- |
+| Per-test `TestCluster`          | Per test  | 20-30 seconds     | Full      |
+| Shared cluster, fresh database  | Once      | 1-5 seconds       | Database  |
+| Shared cluster, template clone  | Once      | 10-50 ms          | Database  |
+
+**When to use each approach:**
+
+- **Per-test cluster (`test_cluster` fixture):** Use when tests modify
+  cluster-level settings, require specific PostgreSQL versions, or need
+  complete isolation from other tests.
+- **Shared cluster with fresh databases:** Use when tests need database-level
+  isolation but can share the same cluster. Suitable when migration overhead
+  is acceptable.
+- **Shared cluster with template cloning (`shared_test_cluster` fixture):** Use
+  for maximum performance when tests only need database-level isolation.
+  Requires upfront template creation but reduces per-test overhead by orders
+  of magnitude.
+
+### Database cleanup strategies
+
+When using a shared cluster, databases created during tests persist until
+explicitly dropped or the cluster shuts down. Consider these strategies:
+
+**Explicit cleanup:** Drop databases after each test to reclaim disk space and
+prevent name collisions:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+let db_name = format!("test_{}", uuid::Uuid::new_v4());
+cluster.create_database_from_template(&db_name, "my_template")?;
+
+// ... run test ...
+
+cluster.drop_database(&db_name)?; // Explicit cleanup
+# Ok(())
+# }
+```
+
+**Cluster teardown cleanup:** Let the shared cluster drop all databases when
+the test binary exits. This is simpler but uses more disk space during the
+test run:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::test_support::shared_cluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = shared_cluster()?;
+let db_name = format!("test_{}", uuid::Uuid::new_v4());
+cluster.create_database_from_template(&db_name, "my_template")?;
+
+// ... run test ...
+// Database dropped automatically when cluster shuts down
+# Ok(())
+# }
+```
+
+**Active connection handling:** Dropping a database with active connections
+fails. Ensure all connections are closed before calling `drop_database`. If
+using connection pools, drain the pool first.
+
 ## Privilege detection and idempotence
 
 - `pg_embedded_setup_unpriv` detects its effective user ID at runtime. Root
