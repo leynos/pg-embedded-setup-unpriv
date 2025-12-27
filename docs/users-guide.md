@@ -207,6 +207,59 @@ assert!(url.starts_with("postgresql://"));
 # }
 ```
 
+### Database lifecycle management
+
+`TestClusterConnection` provides methods for programmatically creating and
+dropping databases on the running cluster. These are useful for test isolation
+patterns where each test creates its own database to avoid cross-test
+interference.
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+let conn = cluster.connection();
+
+// Create a new database
+conn.create_database("my_test_db")?;
+
+// Check if a database exists
+assert!(conn.database_exists("my_test_db")?);
+assert!(conn.database_exists("postgres")?); // Built-in database
+
+// Drop the database when done
+conn.drop_database("my_test_db")?;
+assert!(!conn.database_exists("my_test_db")?);
+# Ok(())
+# }
+```
+
+The `TestCluster` type also exposes convenience wrappers that delegate to the
+connection methods:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+
+// These delegate to cluster.connection().create_database(...) etc.
+cluster.create_database("my_test_db")?;
+assert!(cluster.database_exists("my_test_db")?);
+cluster.drop_database("my_test_db")?;
+# Ok(())
+# }
+```
+
+All methods connect to the `postgres` database as the superuser to execute the
+Data Definition Language (DDL) statements. Errors are returned when:
+
+- Creating a database that already exists
+- Dropping a database that does not exist
+- Dropping a database with active connections
+- Connection to the cluster fails
+
 ## Privilege detection and idempotence
 
 - `pg_embedded_setup_unpriv` detects its effective user ID at runtime. Root

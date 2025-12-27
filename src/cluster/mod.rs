@@ -199,6 +199,79 @@ impl TestCluster {
         TestClusterConnection::new(&self.bootstrap)
     }
 
+    /// Creates a new database with the given name.
+    ///
+    /// Delegates to [`TestClusterConnection::create_database`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database already exists or if the connection
+    /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    /// cluster.create_database("my_test_db")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn create_database(&self, name: &str) -> BootstrapResult<()> {
+        self.connection().create_database(name)
+    }
+
+    /// Drops an existing database.
+    ///
+    /// Delegates to [`TestClusterConnection::drop_database`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database does not exist, has active connections,
+    /// or if the connection fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    /// cluster.create_database("temp_db")?;
+    /// cluster.drop_database("temp_db")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn drop_database(&self, name: &str) -> BootstrapResult<()> {
+        self.connection().drop_database(name)
+    }
+
+    /// Checks whether a database with the given name exists.
+    ///
+    /// Delegates to [`TestClusterConnection::database_exists`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    /// assert!(cluster.database_exists("postgres")?);
+    /// assert!(!cluster.database_exists("nonexistent")?);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn database_exists(&self, name: &str) -> BootstrapResult<bool> {
+        self.connection().database_exists(name)
+    }
+
     fn stop_context(settings: &Settings) -> String {
         let data_dir = settings.data_dir.display();
         let version = settings.version.to_string();

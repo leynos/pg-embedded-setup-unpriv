@@ -1,11 +1,11 @@
 //! Connection helpers for `TestCluster`, including metadata accessors and optional Diesel support.
 use camino::{Utf8Path, Utf8PathBuf};
-#[cfg(feature = "diesel-support")]
 use color_eyre::eyre::WrapErr;
+use postgres::{Client, NoTls};
 use postgresql_embedded::Settings;
+use tracing::info_span;
 
 use crate::TestBootstrapSettings;
-#[cfg(feature = "diesel-support")]
 use crate::error::BootstrapResult;
 
 /// Provides ergonomic accessors for connection-oriented cluster metadata.
@@ -153,6 +153,107 @@ impl TestClusterConnection {
 
         diesel::PgConnection::establish(&self.database_url(database))
             .wrap_err(format!("failed to connect to {database} via Diesel"))
+            .map_err(crate::error::BootstrapError::from)
+    }
+
+    /// Creates a new database with the given name.
+    ///
+    /// Connects to the `postgres` database as superuser and executes
+    /// `CREATE DATABASE`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database already exists or if the connection
+    /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    /// cluster.connection().create_database("my_test_db")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn create_database(&self, name: &str) -> BootstrapResult<()> {
+        let _span = info_span!("create_database", db = %name).entered();
+        let mut client = self.admin_client()?;
+        // Database names are quoted to handle special characters safely
+        let sql = format!("CREATE DATABASE \"{name}\"");
+        client
+            .batch_execute(&sql)
+            .wrap_err(format!("failed to create database '{name}'"))
+            .map_err(crate::error::BootstrapError::from)
+    }
+
+    /// Drops an existing database.
+    ///
+    /// Connects to the `postgres` database as superuser and executes
+    /// `DROP DATABASE`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database does not exist, has active connections,
+    /// or if the connection fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    /// cluster.connection().create_database("temp_db")?;
+    /// cluster.connection().drop_database("temp_db")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn drop_database(&self, name: &str) -> BootstrapResult<()> {
+        let _span = info_span!("drop_database", db = %name).entered();
+        let mut client = self.admin_client()?;
+        let sql = format!("DROP DATABASE \"{name}\"");
+        client
+            .batch_execute(&sql)
+            .wrap_err(format!("failed to drop database '{name}'"))
+            .map_err(crate::error::BootstrapError::from)
+    }
+
+    /// Checks whether a database with the given name exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    /// assert!(cluster.connection().database_exists("postgres")?);
+    /// assert!(!cluster.connection().database_exists("nonexistent")?);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn database_exists(&self, name: &str) -> BootstrapResult<bool> {
+        let mut client = self.admin_client()?;
+        let row = client
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)",
+                &[&name],
+            )
+            .wrap_err("failed to query pg_database")
+            .map_err(crate::error::BootstrapError::from)?;
+        Ok(row.get(0))
+    }
+
+    /// Connects to the `postgres` administration database.
+    fn admin_client(&self) -> BootstrapResult<Client> {
+        Client::connect(&self.database_url("postgres"), NoTls)
+            .wrap_err("failed to connect to postgres database")
             .map_err(crate::error::BootstrapError::from)
     }
 }
