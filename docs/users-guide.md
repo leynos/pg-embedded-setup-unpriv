@@ -167,6 +167,57 @@ If PostgreSQL cannot start, the fixture panics with a
 tests fail immediately, while behaviour tests can convert known transient
 conditions into soft skips via the shared `skip_message` helper.
 
+### Shared cluster fixture for fast test isolation
+
+When test execution time is critical, use the `shared_test_cluster` fixture
+instead of `test_cluster`. The shared fixture initialises a single
+`PostgreSQL` cluster on first access and reuses it across all tests in the
+same binary, eliminating per-test bootstrap overhead.
+
+```rust,no_run
+use pg_embedded_setup_unpriv::{test_support::shared_test_cluster, TestCluster};
+use rstest::rstest;
+
+#[rstest]
+fn uses_shared_cluster(shared_test_cluster: &'static TestCluster) {
+    // Create a per-test database for isolation
+    shared_test_cluster.create_database("my_test_db").unwrap();
+
+    // Run tests against the database
+    let url = shared_test_cluster.connection().database_url("my_test_db");
+    assert!(url.contains("my_test_db"));
+
+    // Clean up (optional - the database is dropped when the cluster shuts down)
+    shared_test_cluster.drop_database("my_test_db").unwrap();
+}
+```
+
+For programmatic access without `rstest`, use `shared_cluster()` directly:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::test_support::shared_cluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = shared_cluster()?;
+
+// Multiple calls return the same instance
+let cluster2 = shared_cluster()?;
+assert!(std::ptr::eq(cluster, cluster2));
+# Ok(())
+# }
+```
+
+**When to use each fixture:**
+
+| Fixture               | Use case                                           |
+| --------------------- | -------------------------------------------------- |
+| `test_cluster`        | Tests that modify cluster-level settings or state  |
+| `shared_test_cluster` | Tests that only need database-level isolation      |
+
+The shared cluster is particularly effective when combined with template
+databases (see "Database lifecycle management" below) to reduce per-test
+overhead from seconds to milliseconds.
+
 ### Connection helpers and Diesel integration
 
 `TestCluster::connection()` exposes `TestClusterConnection`, a lightweight view

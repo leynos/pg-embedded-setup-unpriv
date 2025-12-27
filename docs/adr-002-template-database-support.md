@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed. Phase 1 (core database lifecycle API) implementation in progress.
+Proposed. Phase 1 (core database lifecycle API) complete. Phase 2 (shared
+cluster fixture) complete.
 
 ## Date
 
