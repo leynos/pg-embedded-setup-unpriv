@@ -1,12 +1,25 @@
 //! Connection helpers for `TestCluster`, including metadata accessors and optional Diesel support.
+use std::sync::{Mutex, OnceLock};
+
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::WrapErr;
+use dashmap::DashMap;
 use postgres::{Client, NoTls};
 use postgresql_embedded::Settings;
 use tracing::info_span;
 
 use crate::TestBootstrapSettings;
 use crate::error::BootstrapResult;
+
+/// Global per-template locks to prevent concurrent template creation.
+///
+/// Uses a `DashMap` to allow lock-free reads and concurrent access to
+/// different templates while serialising access to the same template.
+static TEMPLATE_LOCKS: OnceLock<DashMap<String, Mutex<()>>> = OnceLock::new();
+
+fn template_locks() -> &'static DashMap<String, Mutex<()>> {
+    TEMPLATE_LOCKS.get_or_init(DashMap::new)
+}
 
 /// Provides ergonomic accessors for connection-oriented cluster metadata.
 ///
@@ -188,6 +201,55 @@ impl TestClusterConnection {
             .map_err(crate::error::BootstrapError::from)
     }
 
+    /// Creates a new database by cloning an existing template.
+    ///
+    /// Connects to the `postgres` database as superuser and executes
+    /// `CREATE DATABASE ... TEMPLATE`. This is significantly faster than
+    /// creating an empty database and running migrations, as `PostgreSQL`
+    /// performs a filesystem-level copy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The target database already exists
+    /// - The template database does not exist
+    /// - The template database has active connections
+    /// - The connection fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    ///
+    /// // Create and set up a template database
+    /// cluster.connection().create_database("my_template")?;
+    /// // ... run migrations on my_template ...
+    ///
+    /// // Clone the template for a test
+    /// cluster.connection().create_database_from_template("test_db", "my_template")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn create_database_from_template(
+        &self,
+        name: &str,
+        template: &str,
+    ) -> BootstrapResult<()> {
+        let _span =
+            info_span!("create_database_from_template", db = %name, template = %template).entered();
+        let mut client = self.admin_client()?;
+        let sql = format!("CREATE DATABASE \"{name}\" TEMPLATE \"{template}\"");
+        client
+            .batch_execute(&sql)
+            .wrap_err(format!(
+                "failed to create database '{name}' from template '{template}'"
+            ))
+            .map_err(crate::error::BootstrapError::from)
+    }
+
     /// Drops an existing database.
     ///
     /// Connects to the `postgres` database as superuser and executes
@@ -248,6 +310,55 @@ impl TestClusterConnection {
             .wrap_err("failed to query pg_database")
             .map_err(crate::error::BootstrapError::from)?;
         Ok(row.get(0))
+    }
+
+    /// Ensures a template database exists, creating it if necessary.
+    ///
+    /// Uses per-template locking to prevent concurrent creation attempts when
+    /// multiple tests race to initialise the same template. The `setup_fn` is
+    /// called only if the template does not already exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if database creation fails or if `setup_fn` returns
+    /// an error.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    ///
+    /// // Ensure template exists, running migrations if needed
+    /// cluster.connection().ensure_template_exists("my_template", |db_name| {
+    ///     // Run migrations on the newly created template database
+    ///     // e.g., diesel::migration::run(&mut conn)?;
+    ///     Ok(())
+    /// })?;
+    ///
+    /// // Clone the template for each test
+    /// cluster.connection().create_database_from_template("test_db_1", "my_template")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn ensure_template_exists<F>(&self, name: &str, setup_fn: F) -> BootstrapResult<()>
+    where
+        F: FnOnce(&str) -> BootstrapResult<()>,
+    {
+        let _span = info_span!("ensure_template_exists", template = %name).entered();
+        let locks = template_locks();
+        let lock = locks
+            .entry(name.to_owned())
+            .or_insert_with(|| Mutex::new(()));
+        let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        if !self.database_exists(name)? {
+            self.create_database(name)?;
+            setup_fn(name)?;
+        }
+        Ok(())
     }
 
     /// Connects to the `postgres` administration database.

@@ -223,6 +223,37 @@ impl TestCluster {
         self.connection().create_database(name)
     }
 
+    /// Creates a new database by cloning an existing template.
+    ///
+    /// Delegates to [`TestClusterConnection::create_database_from_template`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target database already exists, the template
+    /// does not exist, the template has active connections, or if the
+    /// connection fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    /// cluster.create_database("my_template")?;
+    /// // ... run migrations on my_template ...
+    /// cluster.create_database_from_template("test_db", "my_template")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn create_database_from_template(
+        &self,
+        name: &str,
+        template: &str,
+    ) -> BootstrapResult<()> {
+        self.connection().create_database_from_template(name, template)
+    }
+
     /// Drops an existing database.
     ///
     /// Delegates to [`TestClusterConnection::drop_database`].
@@ -270,6 +301,41 @@ impl TestCluster {
     /// ```
     pub fn database_exists(&self, name: &str) -> BootstrapResult<bool> {
         self.connection().database_exists(name)
+    }
+
+    /// Ensures a template database exists, creating it if necessary.
+    ///
+    /// Delegates to [`TestClusterConnection::ensure_template_exists`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if database creation fails or if `setup_fn` returns
+    /// an error.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?;
+    ///
+    /// // Ensure template exists, running migrations if needed
+    /// cluster.ensure_template_exists("my_template", |db_name| {
+    ///     // Run migrations on the newly created template database
+    ///     Ok(())
+    /// })?;
+    ///
+    /// // Clone the template for each test
+    /// cluster.create_database_from_template("test_db_1", "my_template")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn ensure_template_exists<F>(&self, name: &str, setup_fn: F) -> BootstrapResult<()>
+    where
+        F: FnOnce(&str) -> BootstrapResult<()>,
+    {
+        self.connection().ensure_template_exists(name, setup_fn)
     }
 
     fn stop_context(settings: &Settings) -> String {

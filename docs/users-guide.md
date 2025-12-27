@@ -311,6 +311,67 @@ Data Definition Language (DDL) statements. Errors are returned when:
 - Dropping a database with active connections
 - Connection to the cluster fails
 
+### Template databases for fast test isolation
+
+PostgreSQL's `CREATE DATABASE ... TEMPLATE` mechanism clones an existing
+database via a filesystem-level copy, completing in milliseconds regardless
+of schema complexity. This is significantly faster than running migrations
+on each test database.
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+
+// Create a template database and apply migrations
+cluster.create_database("my_template")?;
+// ... run migrations on my_template ...
+
+// Clone the template for each test (milliseconds vs seconds)
+cluster.create_database_from_template("test_db_1", "my_template")?;
+cluster.create_database_from_template("test_db_2", "my_template")?;
+# Ok(())
+# }
+```
+
+The `ensure_template_exists` method provides concurrent-safe template creation
+with per-template locking to prevent race conditions when multiple tests try
+to initialise the same template simultaneously:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+
+// Only creates and migrates if the template doesn't exist
+cluster.ensure_template_exists("migrated_template", |db_name| {
+    // Run migrations on the newly created database
+    // e.g., diesel::migration::run(&mut conn)?;
+    Ok(())
+})?;
+
+// Clone for the test
+cluster.create_database_from_template("test_db", "migrated_template")?;
+# Ok(())
+# }
+```
+
+For versioned template names that automatically invalidate when migrations
+change, use the `hash_directory` helper to generate a content-based hash:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::test_support::hash_directory;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let hash = hash_directory("migrations")?;
+let template_name = format!("template_{}", &hash[..8]);
+// Template name changes when any migration file changes
+# Ok(())
+# }
+```
+
 ## Privilege detection and idempotence
 
 - `pg_embedded_setup_unpriv` detects its effective user ID at runtime. Root
