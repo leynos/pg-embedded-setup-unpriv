@@ -97,6 +97,43 @@ can focus on behaviours instead of bootstrap plumbing. When a bootstrap failure
 occurs the fixture panics with a `SKIP-TEST-CLUSTER` prefix, so higher-level
 behaviour tests can convert known transient errors into soft skips.
 
+## Fast test isolation with template databases
+
+For test suites where per-test cluster bootstrap is too slow, use
+`shared_test_cluster` to share a single cluster across all tests and clone
+template databases for isolation:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::{test_support::shared_test_cluster, TestCluster};
+use rstest::rstest;
+
+#[rstest]
+fn fast_isolated_test(shared_test_cluster: &'static TestCluster) {
+    // Clone a pre-migrated template (milliseconds, not seconds)
+    shared_test_cluster
+        .create_database_from_template("my_test_db", "migrated_template")
+        .unwrap();
+
+    let url = shared_test_cluster.connection().database_url("my_test_db");
+    // ... run test queries ...
+
+    shared_test_cluster.drop_database("my_test_db").unwrap();
+}
+```
+
+Key features:
+
+- **`shared_cluster()`** – process-global cluster initialised once per binary
+- **`create_database_from_template()`** – clone databases via PostgreSQL's
+  `TEMPLATE` clause (filesystem copy, completes in milliseconds)
+- **`ensure_template_exists()`** – concurrent-safe template creation with
+  per-template locking
+- **`hash_directory()`** – generate content-based template names that
+  auto-invalidate when migrations change
+
+See [`docs/users-guide.md`](docs/users-guide.md) for complete examples and
+performance guidance.
+
 ## Behaviour-driven diagnostics
 
 Behavioural coverage relies on `rstest-bdd` (Behaviour-Driven Development, BDD)
