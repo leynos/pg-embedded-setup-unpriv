@@ -200,4 +200,56 @@ mod tests {
         assert_eq!(temp.name(), "test_db");
         assert!(temp.url().contains("test_db"));
     }
+
+    #[test]
+    fn drop_database_returns_error_on_connection_failure() {
+        let temp = TemporaryDatabase::new(
+            "test_db".to_owned(),
+            "postgresql://user:pass@localhost:59999/postgres".to_owned(),
+            "postgresql://user:pass@localhost:59999/test_db".to_owned(),
+        );
+
+        let result = temp.drop_database();
+        let Err(err) = result else {
+            panic!("expected error when database unreachable");
+        };
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("failed to connect"),
+            "expected connection failure, got: {err_str}"
+        );
+    }
+
+    #[test]
+    fn force_drop_returns_error_on_connection_failure() {
+        let temp = TemporaryDatabase::new(
+            "test_db".to_owned(),
+            "postgresql://user:pass@localhost:59999/postgres".to_owned(),
+            "postgresql://user:pass@localhost:59999/test_db".to_owned(),
+        );
+
+        let result = temp.force_drop();
+        let Err(err) = result else {
+            panic!("expected error when database unreachable");
+        };
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("failed to connect"),
+            "expected connection failure, got: {err_str}"
+        );
+    }
+
+    #[test]
+    fn drop_trait_does_not_panic_on_connection_failure() {
+        // Create a TemporaryDatabase with an unreachable URL
+        let temp = TemporaryDatabase::new(
+            "test_db".to_owned(),
+            "postgresql://user:pass@localhost:59999/postgres".to_owned(),
+            "postgresql://user:pass@localhost:59999/test_db".to_owned(),
+        );
+
+        // Dropping should not panic even when cleanup fails
+        // The Drop impl logs a warning but does not propagate errors
+        drop(temp);
+    }
 }
