@@ -378,9 +378,9 @@ The following table compares test isolation approaches:
 
 | Approach                        | Bootstrap | Per-test overhead | Isolation |
 | ------------------------------- | --------- | ----------------- | --------- |
-| Per-test `TestCluster`          | Per test  | 20-30 seconds     | Full      |
-| Shared cluster, fresh database  | Once      | 1-5 seconds       | Database  |
-| Shared cluster, template clone  | Once      | 10-50 ms          | Database  |
+| Per-test `TestCluster`          | Per test  | 20–30 seconds     | Full      |
+| Shared cluster, fresh database  | Once      | 1–5 seconds       | Database  |
+| Shared cluster, template clone  | Once      | 10–50 ms          | Database  |
 
 **When to use each approach:**
 
@@ -485,11 +485,11 @@ let temp_db = cluster.temporary_database_from_template("test_db", "migrated_temp
 
 **Drop behaviour:**
 
-- `drop_database()` - Explicitly drop the database, failing if connections
+- `drop_database()` — Explicitly drop the database, failing if connections
   exist. Consumes the guard.
-- `force_drop()` - Terminate active connections before dropping. Useful when
+- `force_drop()` — Terminate active connections before dropping. Useful when
   connection pools haven't been drained.
-- Implicit drop (guard goes out of scope) - Best-effort drop with a warning
+- Implicit drop (guard goes out of scope) — Best-effort drop with a warning
   logged on failure.
 
 ## Privilege detection and idempotence

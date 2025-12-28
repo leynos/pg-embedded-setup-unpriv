@@ -229,7 +229,7 @@ Include these sections as appropriate to the decision's complexity:
 - **Options Considered:** Describe the alternatives evaluated. Use a comparison
   table when contrasting multiple options across several dimensions.
 - **Decision Outcome / Proposed Direction:** State the chosen approach and
-  summarise the rationale. For `Proposed` ADRs, describe the recommended
+  summarize the rationale. For `Proposed` ADRs, describe the recommended
   direction.
 - **Goals and Non-Goals:** Clarify what the decision aims to achieve and what
   is explicitly out of scope.
@@ -244,10 +244,11 @@ Include these sections as appropriate to the decision's complexity:
 
 ### Formatting guidance
 
-- Use second-level headings (`##`) for major sections.
+- Structure major sections with second-level headings (`##`).
 - Use third-level headings (`###`) for subsections (e.g. phases, option names).
-- Use tables to compare options when multiple dimensions are relevant. Include
-  a caption below the table (e.g. "_Table 1: Trade-offs between X and Y._").
+- Present option comparisons in tables when multiple dimensions are relevant.
+  Include a caption below the table (e.g. "_Table 1: Trade-offs between X and
+  Y._").
 - Include code snippets with language identifiers when illustrating technical
   approaches. Use `no_run` for illustrative Rust code that should not be
   executed.
@@ -294,7 +295,7 @@ _Table 1: Comparison of options._
 
 ## Decision Outcome / Proposed Direction
 
-<State the chosen or recommended approach and summarise the rationale.>
+<State the chosen or recommended approach and summarize the rationale.>
 
 ## Known Risks and Limitations
 

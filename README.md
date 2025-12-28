@@ -57,7 +57,7 @@ inside your own launcher.
    The `-E` flag preserves any exported `PG_*` variables for the run.
 
 4. On success the command exits with status `0`. The PostgreSQL payload is
-   downloaded into `PG_RUNTIME_DIR`, initialised into `PG_DATA_DIR`, and both
+   downloaded into `PG_RUNTIME_DIR`, initialized into `PG_DATA_DIR`, and both
    paths are owned by `nobody`. Any failure emits a structured error via
    `color-eyre` to standard error and the process exits with status `1`.
 
@@ -123,7 +123,7 @@ fn fast_isolated_test(shared_test_cluster: &'static TestCluster) {
 
 Key features:
 
-- **`shared_cluster()`** – process-global cluster initialised once per binary
+- **`shared_cluster()`** – process-global cluster initialized once per binary
 - **`create_database_from_template()`** – clone databases via PostgreSQL's
   `TEMPLATE` clause (filesystem copy, completes in milliseconds)
 - **`ensure_template_exists()`** – concurrency-safe template creation with
