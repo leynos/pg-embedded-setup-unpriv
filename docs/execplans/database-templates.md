@@ -117,7 +117,7 @@ bootstrap overhead.
 
 ## 3. Template support with concurrency safety
 
-Add template database cloning and concurrent-safe template creation.
+Add template database cloning and concurrency-safe template creation.
 
 ### 3.1. Template cloning
 

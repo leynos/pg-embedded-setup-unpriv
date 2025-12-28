@@ -126,7 +126,7 @@ Key features:
 - **`shared_cluster()`** – process-global cluster initialised once per binary
 - **`create_database_from_template()`** – clone databases via PostgreSQL's
   `TEMPLATE` clause (filesystem copy, completes in milliseconds)
-- **`ensure_template_exists()`** – concurrent-safe template creation with
+- **`ensure_template_exists()`** – concurrency-safe template creation with
   per-template locking
 - **`hash_directory()`** – generate content-based template names that
   auto-invalidate when migrations change

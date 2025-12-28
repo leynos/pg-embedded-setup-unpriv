@@ -133,4 +133,55 @@ mod tests {
             "hash should be hex"
         );
     }
+
+    #[test]
+    fn hash_directory_handles_nested_directories() {
+        let temp = TempDir::new().expect("tempdir");
+
+        // Create nested directory structure
+        let subdir = temp.path().join("migrations");
+        fs::create_dir(&subdir).expect("create subdir");
+        fs::write(subdir.join("001_init.sql"), "CREATE TABLE users;").expect("write");
+
+        let nested = subdir.join("nested");
+        fs::create_dir(&nested).expect("create nested");
+        fs::write(nested.join("002_add_posts.sql"), "CREATE TABLE posts;").expect("write");
+
+        // Root level file
+        fs::write(temp.path().join("schema.sql"), "-- schema").expect("write");
+
+        let hash1 = hash_directory(temp.path()).expect("hash1");
+        let hash2 = hash_directory(temp.path()).expect("hash2");
+
+        assert_eq!(
+            hash1, hash2,
+            "nested directory hash should be deterministic"
+        );
+
+        // Modify nested file and verify hash changes
+        fs::write(nested.join("002_add_posts.sql"), "CREATE TABLE comments;").expect("write");
+        let hash3 = hash_directory(temp.path()).expect("hash3");
+
+        assert_ne!(hash1, hash3, "nested file change should affect hash");
+    }
+
+    #[test]
+    fn hash_directory_handles_empty_directory() {
+        let temp = TempDir::new().expect("tempdir");
+
+        let hash = hash_directory(temp.path()).expect("hash");
+
+        // Empty directory should produce a valid hash
+        assert_eq!(hash.len(), 64, "empty directory hash should be 64 chars");
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "empty directory hash should be hex"
+        );
+
+        // Add a file and verify hash changes
+        fs::write(temp.path().join("file.sql"), "SELECT 1;").expect("write");
+        let hash2 = hash_directory(temp.path()).expect("hash2");
+
+        assert_ne!(hash, hash2, "adding file should change hash");
+    }
 }
