@@ -330,6 +330,47 @@ where
 }
 ```
 
+The following diagram illustrates the concurrency-safe template creation flow:
+
+```mermaid
+sequenceDiagram
+    actor Test
+    participant TestCluster
+    participant TestClusterConnection as Conn
+    participant TemplateLocks as Locks
+    participant Postgres as PG
+
+    Test->>TestCluster: ensure_template_exists(name, setup_fn)
+    TestCluster->>Conn: ensure_template_exists(name, setup_fn)
+    Conn->>Locks: template_locks()
+    Locks-->>Conn: DashMap reference
+    Conn->>Locks: entry(name.to_owned()).or_insert_with(Mutex::new)
+    Locks-->>Conn: Mutex
+    Conn->>Conn: lock on Mutex
+
+    alt template does not exist
+        Conn->>Conn: database_exists(name)
+        Conn->>PG: admin_client()
+        PG-->>Conn: Client
+        Conn->>PG: SELECT EXISTS FROM pg_database
+        PG-->>Conn: false
+        Conn->>Conn: create_database(name)
+        Conn->>PG: CREATE DATABASE "name"
+        PG-->>Conn: ok
+        Conn->>Test: setup_fn(name)
+        Test-->>Conn: ok
+    else template already exists
+        Conn->>Conn: database_exists(name)
+        Conn->>PG: admin_client()
+        PG-->>Conn: Client
+        Conn->>PG: SELECT EXISTS FROM pg_database
+        PG-->>Conn: true
+    end
+
+    Conn-->>TestCluster: Ok(())
+    TestCluster-->>Test: Ok(())
+```
+
 ### Phase 4: Documentation and examples
 
 Update the user guide and README with:
