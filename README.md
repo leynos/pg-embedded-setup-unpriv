@@ -3,7 +3,7 @@
 `pg_embedded_setup_unpriv` prepares a `postgresql_embedded` data directory
 while you are running as `root`, dropping privileges to `nobody` only for the
 filesystem mutations that must occur as the target user. The binary is useful
-when you need to initialise PostgreSQL assets inside build pipelines or CI
+when you need to initialize PostgreSQL assets inside build pipelines or CI
 images where direct access to the `nobody` account is required.
 
 ## Prerequisites

@@ -17,16 +17,21 @@
 //! ```
 
 mod connection;
+mod delegation;
 mod lifecycle;
 mod runtime;
 mod temporary_database;
 mod worker_invoker;
+mod worker_operation;
 
 pub use self::connection::{ConnectionMetadata, TestClusterConnection};
 pub use self::lifecycle::DatabaseName;
 pub use self::temporary_database::TemporaryDatabase;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use self::worker_invoker::WorkerInvoker;
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+#[doc(hidden)]
+pub use self::worker_operation::WorkerOperation;
 
 use self::runtime::build_runtime;
 use self::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
@@ -37,59 +42,9 @@ use crate::observability::LOG_TARGET;
 use crate::{ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings};
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::fmt::Display;
-use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::time;
 use tracing::{info, info_span};
-
-/// Generates delegation methods on `TestCluster` that forward to `TestClusterConnection`.
-///
-/// Each invocation generates a method that calls `self.connection().$method(...)`.
-macro_rules! delegate_to_connection {
-    // Single argument, unit return
-    (
-        $(#[$meta:meta])*
-        fn $name:ident(&self, $arg:ident: $arg_ty:ty) -> BootstrapResult<()>
-    ) => {
-        $(#[$meta])*
-        pub fn $name(&self, $arg: $arg_ty) -> BootstrapResult<()> {
-            self.connection().$name($arg)
-        }
-    };
-
-    // Two arguments, unit return
-    (
-        $(#[$meta:meta])*
-        fn $name:ident(&self, $arg1:ident: $arg1_ty:ty, $arg2:ident: $arg2_ty:ty) -> BootstrapResult<()>
-    ) => {
-        $(#[$meta])*
-        pub fn $name(&self, $arg1: $arg1_ty, $arg2: $arg2_ty) -> BootstrapResult<()> {
-            self.connection().$name($arg1, $arg2)
-        }
-    };
-
-    // Single argument, custom return type
-    (
-        $(#[$meta:meta])*
-        fn $name:ident(&self, $arg:ident: $arg_ty:ty) -> BootstrapResult<$ret:ty>
-    ) => {
-        $(#[$meta])*
-        pub fn $name(&self, $arg: $arg_ty) -> BootstrapResult<$ret> {
-            self.connection().$name($arg)
-        }
-    };
-
-    // Two arguments, custom return type
-    (
-        $(#[$meta:meta])*
-        fn $name:ident(&self, $arg1:ident: $arg1_ty:ty, $arg2:ident: $arg2_ty:ty) -> BootstrapResult<$ret:ty>
-    ) => {
-        $(#[$meta])*
-        pub fn $name(&self, $arg1: $arg1_ty, $arg2: $arg2_ty) -> BootstrapResult<$ret> {
-            self.connection().$name($arg1, $arg2)
-        }
-    };
-}
 
 /// Embedded `PostgreSQL` instance whose lifecycle follows Rust's drop semantics.
 #[derive(Debug)]
@@ -199,8 +154,8 @@ impl TestCluster {
         invoker: &ClusterWorkerInvoker<'_>,
         embedded: &mut PostgreSQL,
     ) -> BootstrapResult<()> {
-        invoker.invoke(WorkerOperation::Setup, async { embedded.setup().await })?;
-        invoker.invoke(WorkerOperation::Start, async { embedded.start().await })
+        invoker.invoke(worker_operation::WorkerOperation::Setup, async { embedded.setup().await })?;
+        invoker.invoke(worker_operation::WorkerOperation::Start, async { embedded.start().await })
     }
 
     /// Extends the cluster lifetime to cover additional scoped environment guards.
@@ -250,196 +205,6 @@ impl TestCluster {
     #[must_use]
     pub fn connection(&self) -> TestClusterConnection {
         TestClusterConnection::new(&self.bootstrap)
-    }
-
-    delegate_to_connection! {
-        /// Creates a new database with the given name.
-        ///
-        /// Delegates to [`TestClusterConnection::create_database`].
-        ///
-        /// # Errors
-        ///
-        /// Returns an error if the database already exists or if the connection
-        /// fails.
-        ///
-        /// # Examples
-        ///
-        /// ```no_run
-        /// use pg_embedded_setup_unpriv::TestCluster;
-        ///
-        /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
-        /// let cluster = TestCluster::new()?;
-        /// cluster.create_database("my_test_db")?;
-        /// # Ok(())
-        /// # }
-        /// ```
-        fn create_database(&self, name: &str) -> BootstrapResult<()>
-    }
-
-    delegate_to_connection! {
-        /// Creates a new database by cloning an existing template.
-        ///
-        /// Delegates to [`TestClusterConnection::create_database_from_template`].
-        ///
-        /// # Errors
-        ///
-        /// Returns an error if the target database already exists, the template
-        /// does not exist, the template has active connections, or if the
-        /// connection fails.
-        ///
-        /// # Examples
-        ///
-        /// ```no_run
-        /// use pg_embedded_setup_unpriv::TestCluster;
-        ///
-        /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
-        /// let cluster = TestCluster::new()?;
-        /// cluster.create_database("my_template")?;
-        /// // ... run migrations on my_template ...
-        /// cluster.create_database_from_template("test_db", "my_template")?;
-        /// # Ok(())
-        /// # }
-        /// ```
-        fn create_database_from_template(&self, name: &str, template: &str) -> BootstrapResult<()>
-    }
-
-    delegate_to_connection! {
-        /// Drops an existing database.
-        ///
-        /// Delegates to [`TestClusterConnection::drop_database`].
-        ///
-        /// # Errors
-        ///
-        /// Returns an error if the database does not exist, has active connections,
-        /// or if the connection fails.
-        ///
-        /// # Examples
-        ///
-        /// ```no_run
-        /// use pg_embedded_setup_unpriv::TestCluster;
-        ///
-        /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
-        /// let cluster = TestCluster::new()?;
-        /// cluster.create_database("temp_db")?;
-        /// cluster.drop_database("temp_db")?;
-        /// # Ok(())
-        /// # }
-        /// ```
-        fn drop_database(&self, name: &str) -> BootstrapResult<()>
-    }
-
-    delegate_to_connection! {
-        /// Checks whether a database with the given name exists.
-        ///
-        /// Delegates to [`TestClusterConnection::database_exists`].
-        ///
-        /// # Errors
-        ///
-        /// Returns an error if the connection fails.
-        ///
-        /// # Examples
-        ///
-        /// ```no_run
-        /// use pg_embedded_setup_unpriv::TestCluster;
-        ///
-        /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
-        /// let cluster = TestCluster::new()?;
-        /// assert!(cluster.database_exists("postgres")?);
-        /// assert!(!cluster.database_exists("nonexistent")?);
-        /// # Ok(())
-        /// # }
-        /// ```
-        fn database_exists(&self, name: &str) -> BootstrapResult<bool>
-    }
-
-    /// Ensures a template database exists, creating it if necessary.
-    ///
-    /// Delegates to [`TestClusterConnection::ensure_template_exists`].
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if database creation fails or if `setup_fn` returns
-    /// an error.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use pg_embedded_setup_unpriv::TestCluster;
-    ///
-    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
-    /// let cluster = TestCluster::new()?;
-    ///
-    /// // Ensure template exists, running migrations if needed
-    /// cluster.ensure_template_exists("my_template", |db_name| {
-    ///     // Run migrations on the newly created template database
-    ///     Ok(())
-    /// })?;
-    ///
-    /// // Clone the template for each test
-    /// cluster.create_database_from_template("test_db_1", "my_template")?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn ensure_template_exists<F>(&self, name: &str, setup_fn: F) -> BootstrapResult<()>
-    where
-        F: FnOnce(&str) -> BootstrapResult<()>,
-    {
-        self.connection().ensure_template_exists(name, setup_fn)
-    }
-
-    delegate_to_connection! {
-        /// Creates a temporary database that is dropped when the guard is dropped.
-        ///
-        /// Delegates to [`TestClusterConnection::temporary_database`].
-        ///
-        /// # Errors
-        ///
-        /// Returns an error if the database already exists or if the connection
-        /// fails.
-        ///
-        /// # Examples
-        ///
-        /// ```no_run
-        /// use pg_embedded_setup_unpriv::TestCluster;
-        ///
-        /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
-        /// let cluster = TestCluster::new()?;
-        /// let temp_db = cluster.temporary_database("my_temp_db")?;
-        ///
-        /// // Database is dropped automatically when temp_db goes out of scope
-        /// # Ok(())
-        /// # }
-        /// ```
-        fn temporary_database(&self, name: &str) -> BootstrapResult<TemporaryDatabase>
-    }
-
-    delegate_to_connection! {
-        /// Creates a temporary database from a template.
-        ///
-        /// Delegates to [`TestClusterConnection::temporary_database_from_template`].
-        ///
-        /// # Errors
-        ///
-        /// Returns an error if the target database already exists, the template
-        /// does not exist, the template has active connections, or if the
-        /// connection fails.
-        ///
-        /// # Examples
-        ///
-        /// ```no_run
-        /// use pg_embedded_setup_unpriv::TestCluster;
-        ///
-        /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
-        /// let cluster = TestCluster::new()?;
-        /// cluster.ensure_template_exists("migrated_template", |_| Ok(()))?;
-        ///
-        /// let temp_db = cluster.temporary_database_from_template("test_db", "migrated_template")?;
-        ///
-        /// // Database is dropped automatically when temp_db goes out of scope
-        /// # Ok(())
-        /// # }
-        /// ```
-        fn temporary_database_from_template(&self, name: &str, template: &str) -> BootstrapResult<TemporaryDatabase>
     }
 
     fn stop_context(settings: &Settings) -> String {
@@ -518,44 +283,6 @@ mod tests {
     }
 }
 
-#[doc(hidden)]
-/// Identifies worker lifecycle operations executed via the helper binary.
-#[derive(Clone, Copy)]
-pub enum WorkerOperation {
-    Setup,
-    Start,
-    Stop,
-}
-
-impl WorkerOperation {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Setup => "setup",
-            Self::Start => "start",
-            Self::Stop => "stop",
-        }
-    }
-
-    #[must_use]
-    pub const fn error_context(self) -> &'static str {
-        match self {
-            Self::Setup => "postgresql_embedded::setup() failed",
-            Self::Start => "postgresql_embedded::start() failed",
-            Self::Stop => "postgresql_embedded::stop() failed",
-        }
-    }
-
-    #[must_use]
-    pub const fn timeout(self, bootstrap: &TestBootstrapSettings) -> Duration {
-        match self {
-            Self::Setup => bootstrap.setup_timeout,
-            Self::Start => bootstrap.start_timeout,
-            Self::Stop => bootstrap.shutdown_timeout,
-        }
-    }
-}
-
 impl Drop for TestCluster {
     #[expect(
         clippy::cognitive_complexity,
@@ -572,7 +299,7 @@ impl Drop for TestCluster {
 
         if self.is_managed_via_worker {
             let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
-            if let Err(err) = invoker.invoke_as_root(WorkerOperation::Stop) {
+            if let Err(err) = invoker.invoke_as_root(worker_operation::WorkerOperation::Stop) {
                 Self::warn_stop_failure(&context, &err);
             }
         } else if let Some(postgres) = self.postgres.take() {
