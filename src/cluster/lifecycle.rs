@@ -9,9 +9,63 @@ use color_eyre::eyre::WrapErr;
 use dashmap::DashMap;
 use tracing::info_span;
 
-use super::connection::{escape_identifier, TestClusterConnection};
+use super::connection::{TestClusterConnection, escape_identifier};
 use super::temporary_database::TemporaryDatabase;
 use crate::error::BootstrapResult;
+
+/// A strongly-typed database name for use with lifecycle operations.
+///
+/// This newtype provides type safety for database name parameters, preventing
+/// accidental misuse of raw strings while still allowing convenient conversion
+/// from string literals.
+///
+/// # Examples
+///
+/// ```
+/// use pg_embedded_setup_unpriv::DatabaseName;
+///
+/// // From string literal
+/// let name: DatabaseName = "my_database".into();
+/// assert_eq!(name.as_str(), "my_database");
+///
+/// // From owned String
+/// let name: DatabaseName = String::from("another_db").into();
+/// assert_eq!(name.as_str(), "another_db");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DatabaseName(String);
+
+impl DatabaseName {
+    /// Creates a new `DatabaseName` from a string.
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    /// Returns the database name as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for DatabaseName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for DatabaseName {
+    fn from(s: &str) -> Self {
+        Self(s.to_owned())
+    }
+}
+
+impl From<String> for DatabaseName {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
 
 /// Global per-template locks to prevent concurrent template creation.
 ///
@@ -24,6 +78,25 @@ fn template_locks() -> &'static DashMap<String, Mutex<()>> {
 }
 
 impl TestClusterConnection {
+    /// Executes a DDL command for database creation or deletion.
+    ///
+    /// This private helper consolidates the common pattern of escaping an
+    /// identifier, formatting SQL, and executing it via `batch_execute`.
+    fn execute_ddl_command(
+        &self,
+        sql_template: &str,
+        name: &str,
+        error_msg_verb: &str,
+    ) -> BootstrapResult<()> {
+        let mut client = self.admin_client()?;
+        let escaped = escape_identifier(name);
+        let sql = sql_template.replace("{}", &format!("\"{escaped}\""));
+        client
+            .batch_execute(&sql)
+            .wrap_err(format!("failed to {error_msg_verb} database '{name}'"))
+            .map_err(crate::error::BootstrapError::from)
+    }
+
     /// Creates a new database with the given name.
     ///
     /// Connects to the `postgres` database as superuser and executes
@@ -45,15 +118,10 @@ impl TestClusterConnection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn create_database(&self, name: &str) -> BootstrapResult<()> {
-        let _span = info_span!("create_database", db = %name).entered();
-        let mut client = self.admin_client()?;
-        let escaped = escape_identifier(name);
-        let sql = format!("CREATE DATABASE \"{escaped}\"");
-        client
-            .batch_execute(&sql)
-            .wrap_err(format!("failed to create database '{name}'"))
-            .map_err(crate::error::BootstrapError::from)
+    pub fn create_database(&self, name: impl Into<DatabaseName>) -> BootstrapResult<()> {
+        let db_name = name.into();
+        let _span = info_span!("create_database", db = %db_name.as_str()).entered();
+        self.execute_ddl_command("CREATE DATABASE {}", db_name.as_str(), "create")
     }
 
     /// Creates a new database by cloning an existing template.
@@ -88,17 +156,25 @@ impl TestClusterConnection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn create_database_from_template(&self, name: &str, template: &str) -> BootstrapResult<()> {
+    pub fn create_database_from_template(
+        &self,
+        name: impl Into<DatabaseName>,
+        template: impl Into<DatabaseName>,
+    ) -> BootstrapResult<()> {
+        let db_name = name.into();
+        let template_name = template.into();
         let _span =
-            info_span!("create_database_from_template", db = %name, template = %template).entered();
+            info_span!("create_database_from_template", db = %db_name.as_str(), template = %template_name.as_str()).entered();
         let mut client = self.admin_client()?;
-        let escaped_name = escape_identifier(name);
-        let escaped_template = escape_identifier(template);
+        let escaped_name = escape_identifier(db_name.as_str());
+        let escaped_template = escape_identifier(template_name.as_str());
         let sql = format!("CREATE DATABASE \"{escaped_name}\" TEMPLATE \"{escaped_template}\"");
         client
             .batch_execute(&sql)
             .wrap_err(format!(
-                "failed to create database '{name}' from template '{template}'"
+                "failed to create database '{}' from template '{}'",
+                db_name.as_str(),
+                template_name.as_str()
             ))
             .map_err(crate::error::BootstrapError::from)
     }
@@ -125,15 +201,10 @@ impl TestClusterConnection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn drop_database(&self, name: &str) -> BootstrapResult<()> {
-        let _span = info_span!("drop_database", db = %name).entered();
-        let mut client = self.admin_client()?;
-        let escaped = escape_identifier(name);
-        let sql = format!("DROP DATABASE \"{escaped}\"");
-        client
-            .batch_execute(&sql)
-            .wrap_err(format!("failed to drop database '{name}'"))
-            .map_err(crate::error::BootstrapError::from)
+    pub fn drop_database(&self, name: impl Into<DatabaseName>) -> BootstrapResult<()> {
+        let db_name = name.into();
+        let _span = info_span!("drop_database", db = %db_name.as_str()).entered();
+        self.execute_ddl_command("DROP DATABASE {}", db_name.as_str(), "drop")
     }
 
     /// Checks whether a database with the given name exists.
@@ -154,12 +225,13 @@ impl TestClusterConnection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn database_exists(&self, name: &str) -> BootstrapResult<bool> {
+    pub fn database_exists(&self, name: impl Into<DatabaseName>) -> BootstrapResult<bool> {
+        let db_name = name.into();
         let mut client = self.admin_client()?;
         let row = client
             .query_one(
                 "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)",
-                &[&name],
+                &[&db_name.as_str()],
             )
             .wrap_err("failed to query pg_database")
             .map_err(crate::error::BootstrapError::from)?;
@@ -197,22 +269,27 @@ impl TestClusterConnection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn ensure_template_exists<F>(&self, name: &str, setup_fn: F) -> BootstrapResult<()>
+    pub fn ensure_template_exists<F>(
+        &self,
+        name: impl Into<DatabaseName>,
+        setup_fn: F,
+    ) -> BootstrapResult<()>
     where
         F: FnOnce(&str) -> BootstrapResult<()>,
     {
-        let _span = info_span!("ensure_template_exists", template = %name).entered();
+        let db_name = name.into();
+        let _span = info_span!("ensure_template_exists", template = %db_name.as_str()).entered();
         let locks = template_locks();
         let lock = locks
-            .entry(name.to_owned())
+            .entry(db_name.as_str().to_owned())
             .or_insert_with(|| Mutex::new(()));
         let _guard = lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-        if !self.database_exists(name)? {
-            self.create_database(name)?;
-            setup_fn(name)?;
+        if !self.database_exists(db_name.as_str())? {
+            self.create_database(db_name.as_str())?;
+            setup_fn(db_name.as_str())?;
         }
         Ok(())
     }
@@ -242,13 +319,17 @@ impl TestClusterConnection {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn temporary_database(&self, name: &str) -> BootstrapResult<TemporaryDatabase> {
-        let _span = info_span!("temporary_database", db = %name).entered();
-        self.create_database(name)?;
+    pub fn temporary_database(
+        &self,
+        name: impl Into<DatabaseName>,
+    ) -> BootstrapResult<TemporaryDatabase> {
+        let db_name = name.into();
+        let _span = info_span!("temporary_database", db = %db_name.as_str()).entered();
+        self.create_database(db_name.as_str())?;
         Ok(TemporaryDatabase::new(
-            name.to_owned(),
+            db_name.as_str().to_owned(),
             self.database_url("postgres"),
-            self.database_url(name),
+            self.database_url(db_name.as_str()),
         ))
     }
 
@@ -285,17 +366,19 @@ impl TestClusterConnection {
     /// ```
     pub fn temporary_database_from_template(
         &self,
-        name: &str,
-        template: &str,
+        name: impl Into<DatabaseName>,
+        template: impl Into<DatabaseName>,
     ) -> BootstrapResult<TemporaryDatabase> {
+        let db_name = name.into();
+        let template_name = template.into();
         let _span =
-            info_span!("temporary_database_from_template", db = %name, template = %template)
+            info_span!("temporary_database_from_template", db = %db_name.as_str(), template = %template_name.as_str())
                 .entered();
-        self.create_database_from_template(name, template)?;
+        self.create_database_from_template(db_name.as_str(), template_name.as_str())?;
         Ok(TemporaryDatabase::new(
-            name.to_owned(),
+            db_name.as_str().to_owned(),
             self.database_url("postgres"),
-            self.database_url(name),
+            self.database_url(db_name.as_str()),
         ))
     }
 }

@@ -23,6 +23,7 @@ mod temporary_database;
 mod worker_invoker;
 
 pub use self::connection::{ConnectionMetadata, TestClusterConnection};
+pub use self::lifecycle::DatabaseName;
 pub use self::temporary_database::TemporaryDatabase;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use self::worker_invoker::WorkerInvoker;
