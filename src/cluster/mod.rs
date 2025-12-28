@@ -17,6 +17,7 @@
 //! ```
 
 mod connection;
+mod lifecycle;
 mod runtime;
 mod temporary_database;
 mod worker_invoker;
