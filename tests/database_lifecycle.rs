@@ -4,10 +4,11 @@
 use std::cell::RefCell;
 
 use color_eyre::eyre::{Context, Result, ensure, eyre};
-use pg_embedded_setup_unpriv::TestCluster;
+use pg_embedded_setup_unpriv::{TemporaryDatabase, TestCluster};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
 use std::ffi::{OsStr, OsString};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs;
@@ -30,6 +31,12 @@ use scenario::expect_fixture;
 use serial::{ScenarioSerialGuard, serial_guard};
 
 const TEST_DB_NAME: &str = "test_lifecycle_db";
+const TEMP_DB_NAME: &str = "temp_lifecycle_db";
+const TEMPLATE_NAME: &str = "test_template_db";
+const CLONED_DB_NAME: &str = "cloned_from_template_db";
+
+/// Global counter for tracking setup function invocations across scenarios.
+static SETUP_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 struct DatabaseWorld {
     sandbox: TestSandbox,
@@ -38,6 +45,8 @@ struct DatabaseWorld {
     drop_error: Option<String>,
     skip_reason: Option<String>,
     bootstrap_error: Option<String>,
+    temp_database: Option<TemporaryDatabase>,
+    setup_call_count_at_start: usize,
 }
 
 impl DatabaseWorld {
@@ -49,6 +58,8 @@ impl DatabaseWorld {
             drop_error: None,
             skip_reason: None,
             bootstrap_error: None,
+            temp_database: None,
+            setup_call_count_at_start: SETUP_CALL_COUNT.load(Ordering::SeqCst),
         })
     }
 
@@ -76,6 +87,8 @@ impl DatabaseWorld {
         self.drop_error = None;
         self.bootstrap_error = None;
         self.skip_reason = None;
+        self.temp_database = None;
+        self.setup_call_count_at_start = SETUP_CALL_COUNT.load(Ordering::SeqCst);
     }
 
     fn record_bootstrap_error(&mut self, err: impl std::fmt::Display + std::fmt::Debug) {
@@ -321,6 +334,137 @@ fn then_missing_error(world: &DatabaseWorldFixture) -> Result<()> {
     verify_error(world, false, &["does not exist"], "missing database")
 }
 
+// --- Temporary database scenario steps ---
+
+#[when("a temporary database is created")]
+fn when_temp_database_created(world: &DatabaseWorldFixture) -> Result<()> {
+    let world_cell = borrow_world(world)?;
+    if world_cell.borrow().is_skipped() {
+        return Ok(());
+    }
+    let temp_db = world_cell
+        .borrow()
+        .cluster()?
+        .temporary_database(TEMP_DB_NAME)?;
+    world_cell.borrow_mut().temp_database = Some(temp_db);
+    Ok(())
+}
+
+#[then("the temporary database exists")]
+fn then_temp_database_exists(world: &DatabaseWorldFixture) -> Result<()> {
+    check_db_exists(world, TEMP_DB_NAME, true)
+}
+
+#[when("the temporary database guard is dropped")]
+fn when_temp_database_dropped(world: &DatabaseWorldFixture) -> Result<()> {
+    let world_cell = borrow_world(world)?;
+    if world_cell.borrow().is_skipped() {
+        return Ok(());
+    }
+    // Take the temp database out, dropping it
+    let _ = world_cell.borrow_mut().temp_database.take();
+    Ok(())
+}
+
+#[then("the temporary database no longer exists")]
+fn then_temp_database_does_not_exist(world: &DatabaseWorldFixture) -> Result<()> {
+    check_db_exists(world, TEMP_DB_NAME, false)
+}
+
+// --- Ensure template exists scenario steps ---
+
+#[when("ensure_template_exists is called with a setup function")]
+fn when_ensure_template_called(world: &DatabaseWorldFixture) -> Result<()> {
+    let world_cell = borrow_world(world)?;
+    if world_cell.borrow().is_skipped() {
+        return Ok(());
+    }
+    world_cell
+        .borrow()
+        .cluster()?
+        .ensure_template_exists(TEMPLATE_NAME, |_db_name| {
+            SETUP_CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })?;
+    Ok(())
+}
+
+#[then("the template database exists")]
+fn then_template_exists(world: &DatabaseWorldFixture) -> Result<()> {
+    check_db_exists(world, TEMPLATE_NAME, true)
+}
+
+#[then("the setup function was called exactly once")]
+fn then_setup_called_once(world: &DatabaseWorldFixture) -> Result<()> {
+    let world_cell = borrow_world(world)?;
+    if world_cell.borrow().is_skipped() {
+        return Ok(());
+    }
+    let start = world_cell.borrow().setup_call_count_at_start;
+    let current = SETUP_CALL_COUNT.load(Ordering::SeqCst);
+    let calls = current - start;
+    ensure!(
+        calls == 1,
+        "expected setup function to be called exactly once, was called {calls} times"
+    );
+    Ok(())
+}
+
+#[when("ensure_template_exists is called again for the same template")]
+fn when_ensure_template_called_again(world: &DatabaseWorldFixture) -> Result<()> {
+    let world_cell = borrow_world(world)?;
+    if world_cell.borrow().is_skipped() {
+        return Ok(());
+    }
+    world_cell
+        .borrow()
+        .cluster()?
+        .ensure_template_exists(TEMPLATE_NAME, |_db_name| {
+            SETUP_CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })?;
+    Ok(())
+}
+
+#[then("the setup function was still called exactly once")]
+fn then_setup_still_called_once(world: &DatabaseWorldFixture) -> Result<()> {
+    then_setup_called_once(world)
+}
+
+// --- Create from template scenario steps ---
+
+#[when("a template database is created and populated")]
+fn when_template_created_and_populated(world: &DatabaseWorldFixture) -> Result<()> {
+    let world_cell = borrow_world(world)?;
+    if world_cell.borrow().is_skipped() {
+        return Ok(());
+    }
+    world_cell
+        .borrow()
+        .cluster()?
+        .connection()
+        .create_database(TEMPLATE_NAME)?;
+    Ok(())
+}
+
+#[when("a database is created from the template")]
+fn when_database_created_from_template(world: &DatabaseWorldFixture) -> Result<()> {
+    execute_db_op(
+        world,
+        |cluster| {
+            cluster
+                .connection()
+                .create_database_from_template(CLONED_DB_NAME, TEMPLATE_NAME)
+        },
+        true,
+    )
+}
+
+#[then("the cloned database exists")]
+fn then_cloned_database_exists(world: &DatabaseWorldFixture) -> Result<()> {
+    check_db_exists(world, CLONED_DB_NAME, true)
+}
+
 #[scenario(path = "tests/features/database_lifecycle.feature", index = 0)]
 fn scenario_create_and_drop(serial_guard: ScenarioSerialGuard, world: DatabaseWorldFixture) {
     let _guard = serial_guard;
@@ -343,4 +487,22 @@ fn scenario_drop_nonexistent(serial_guard: ScenarioSerialGuard, world: DatabaseW
 fn scenario_delegation_methods(serial_guard: ScenarioSerialGuard, world: DatabaseWorldFixture) {
     let _guard = serial_guard;
     let _ = expect_fixture(world, "database lifecycle delegation world");
+}
+
+#[scenario(path = "tests/features/database_lifecycle.feature", index = 4)]
+fn scenario_temp_database_cleanup(serial_guard: ScenarioSerialGuard, world: DatabaseWorldFixture) {
+    let _guard = serial_guard;
+    let _ = expect_fixture(world, "database lifecycle temp database world");
+}
+
+#[scenario(path = "tests/features/database_lifecycle.feature", index = 5)]
+fn scenario_ensure_template_exists(serial_guard: ScenarioSerialGuard, world: DatabaseWorldFixture) {
+    let _guard = serial_guard;
+    let _ = expect_fixture(world, "database lifecycle ensure template world");
+}
+
+#[scenario(path = "tests/features/database_lifecycle.feature", index = 6)]
+fn scenario_create_from_template(serial_guard: ScenarioSerialGuard, world: DatabaseWorldFixture) {
+    let _guard = serial_guard;
+    let _ = expect_fixture(world, "database lifecycle create from template world");
 }
