@@ -5,6 +5,7 @@ use std::cell::RefCell;
 
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use pg_embedded_setup_unpriv::{TemporaryDatabase, TestCluster};
+use postgres::NoTls;
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
 use std::ffi::{OsStr, OsString};
@@ -36,6 +37,11 @@ const TEMPLATE_NAME: &str = "test_template_db";
 const CLONED_DB_NAME: &str = "cloned_from_template_db";
 
 /// Global counter for tracking setup function invocations across scenarios.
+///
+/// # Safety
+///
+/// Correctness requires that all scenarios hold the `serial_guard` fixture,
+/// ensuring serial execution and preventing concurrent increments.
 static SETUP_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 struct DatabaseWorld {
@@ -439,11 +445,20 @@ fn when_template_created_and_populated(world: &DatabaseWorldFixture) -> Result<(
     if world_cell.borrow().is_skipped() {
         return Ok(());
     }
-    world_cell
-        .borrow()
-        .cluster()?
-        .connection()
-        .create_database(TEMPLATE_NAME)?;
+    let world_ref = world_cell.borrow();
+    let cluster = world_ref.cluster()?;
+    cluster.connection().create_database(TEMPLATE_NAME)?;
+
+    // Populate the template with test data
+    let url = cluster.connection().database_url(TEMPLATE_NAME);
+    let mut client =
+        postgres::Client::connect(&url, NoTls).context("connect to template database")?;
+    client
+        .batch_execute(
+            "CREATE TABLE test_table (id SERIAL PRIMARY KEY, value TEXT); \
+             INSERT INTO test_table (value) VALUES ('template_data');",
+        )
+        .context("create test table and insert data")?;
     Ok(())
 }
 
@@ -463,6 +478,28 @@ fn when_database_created_from_template(world: &DatabaseWorldFixture) -> Result<(
 #[then("the cloned database exists")]
 fn then_cloned_database_exists(world: &DatabaseWorldFixture) -> Result<()> {
     check_db_exists(world, CLONED_DB_NAME, true)
+}
+
+#[then("the cloned database contains the template data")]
+fn then_cloned_database_contains_template_data(world: &DatabaseWorldFixture) -> Result<()> {
+    let world_cell = borrow_world(world)?;
+    if world_cell.borrow().is_skipped() {
+        return Ok(());
+    }
+    let world_ref = world_cell.borrow();
+    let cluster = world_ref.cluster()?;
+    let url = cluster.connection().database_url(CLONED_DB_NAME);
+    let mut client =
+        postgres::Client::connect(&url, NoTls).context("connect to cloned database")?;
+    let row = client
+        .query_one("SELECT value FROM test_table WHERE id = 1", &[])
+        .context("query test_table")?;
+    let value: String = row.get("value");
+    ensure!(
+        value == "template_data",
+        "expected 'template_data' but got '{value}'"
+    );
+    Ok(())
 }
 
 #[scenario(path = "tests/features/database_lifecycle.feature", index = 0)]

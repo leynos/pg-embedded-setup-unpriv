@@ -4,19 +4,11 @@
 //! scope, mirroring the `TestCluster` lifecycle semantics.
 
 use color_eyre::eyre::WrapErr;
-use postgres::{Client, NoTls};
 use tracing::info_span;
 
-use super::connection::escape_identifier;
+use super::connection::{connect_admin, escape_identifier};
 use crate::error::BootstrapResult;
 use crate::observability::LOG_TARGET;
-
-/// Creates a new admin client connection from the given URL.
-fn admin_client(url: &str) -> BootstrapResult<Client> {
-    Client::connect(url, NoTls)
-        .wrap_err("failed to connect to admin database")
-        .map_err(crate::error::BootstrapError::from)
-}
 
 /// RAII guard that drops a database when it goes out of scope.
 ///
@@ -135,7 +127,7 @@ impl TemporaryDatabase {
     /// ```
     pub fn force_drop(self) -> BootstrapResult<()> {
         let _span = info_span!("force_drop_database", db = %self.name).entered();
-        let mut client = admin_client(&self.admin_url)?;
+        let mut client = connect_admin(&self.admin_url)?;
 
         // Terminate active connections using parameterized query
         client
@@ -167,7 +159,7 @@ impl TemporaryDatabase {
     /// Used by the `Drop` implementation for best-effort cleanup.
     fn try_drop(&self) -> BootstrapResult<()> {
         let _span = info_span!("drop_database", db = %self.name).entered();
-        let mut client = admin_client(&self.admin_url)?;
+        let mut client = connect_admin(&self.admin_url)?;
 
         let escaped = escape_identifier(&self.name);
         let sql = format!("DROP DATABASE \"{escaped}\"");

@@ -44,3 +44,4 @@ Feature: Database lifecycle management
     When a template database is created and populated
     And a database is created from the template
     Then the cloned database exists
+    And the cloned database contains the template data

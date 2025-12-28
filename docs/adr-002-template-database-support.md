@@ -403,15 +403,15 @@ impl TemporaryDatabase {
     /// Drops the database, terminating any active connections first.
     pub fn force_drop(self) -> BootstrapResult<()> {
         let mut client = Client::connect(&self.admin_url, NoTls)?;
-        // Terminate active connections
-        client.batch_execute(&format!(
+        // Terminate active connections using a parameterized query
+        client.execute(
             concat!(
                 "SELECT pg_terminate_backend(pid) ",
                 "FROM pg_stat_activity ",
-                "WHERE datname = '{0}' AND pid <> pg_backend_pid()"
+                "WHERE datname = $1 AND pid <> pg_backend_pid()"
             ),
-            self.name
-        ))?;
+            &[&self.name],
+        )?;
         client.batch_execute(&format!("DROP DATABASE \"{}\"", self.name))?;
         Ok(())
     }

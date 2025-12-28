@@ -170,7 +170,7 @@ conditions into soft skips via the shared `skip_message` helper.
 ### Shared cluster fixture for fast test isolation
 
 When test execution time is critical, use the `shared_test_cluster` fixture
-instead of `test_cluster`. The shared fixture initialises a single
+instead of `test_cluster`. The shared fixture initializes a single
 `PostgreSQL` cluster on first access and reuses it across all tests in the
 same binary, eliminating per-test bootstrap overhead.
 

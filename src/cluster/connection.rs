@@ -20,6 +20,16 @@ pub(crate) fn escape_identifier(name: &str) -> String {
     name.replace('"', "\"\"")
 }
 
+/// Creates a new `PostgreSQL` client connection from the given URL.
+///
+/// This is a shared helper for admin database connections used by both
+/// `TestClusterConnection` and `TemporaryDatabase`.
+pub(crate) fn connect_admin(url: &str) -> BootstrapResult<Client> {
+    Client::connect(url, NoTls)
+        .wrap_err("failed to connect to admin database")
+        .map_err(crate::error::BootstrapError::from)
+}
+
 /// Global per-template locks to prevent concurrent template creation.
 ///
 /// Uses a `DashMap` to allow lock-free reads and concurrent access to
@@ -455,9 +465,7 @@ impl TestClusterConnection {
 
     /// Connects to the `postgres` administration database.
     fn admin_client(&self) -> BootstrapResult<Client> {
-        Client::connect(&self.database_url("postgres"), NoTls)
-            .wrap_err("failed to connect to postgres database")
-            .map_err(crate::error::BootstrapError::from)
+        connect_admin(&self.database_url("postgres"))
     }
 }
 
