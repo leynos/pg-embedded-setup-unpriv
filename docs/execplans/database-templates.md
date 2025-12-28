@@ -15,7 +15,7 @@ bootstrapping fresh clusters for each test.
 Add database creation and deletion methods to enable programmatic database
 management on a running cluster.
 
-### 1.1. Database DDL methods on TestClusterConnection
+### 1.1. Database Data Definition Language (DDL) methods on TestClusterConnection
 
 - [ ] **1.1.1.** Implement `create_database(name: &str) -> BootstrapResult<()>`
   - [ ] Add `postgres` crate dependency (`postgres = "0.19"`) to `Cargo.toml`.
@@ -85,8 +85,8 @@ bootstrap overhead.
 
 - [ ] **2.1.1.** Implement
       `shared_cluster() -> BootstrapResult<&'static TestCluster>`
-  - [ ] Use `OnceLock<TestCluster>` for lazy initialisation.
-  - [ ] Use `get_or_try_init` for fallible initialisation.
+  - [ ] Use `OnceLock<TestCluster>` for lazy initialization.
+  - [ ] Use `get_or_try_init` for fallible initialization.
   - [ ] Handle worker environment setup via existing `ensure_worker_env()`.
 
 - [ ] **2.1.2.** Implement rstest fixture wrapper
@@ -150,7 +150,7 @@ Add template database cloning and concurrent-safe template creation.
 
 - [ ] **3.2.3.** Add unit tests
   - [ ] Test `ensure_template_exists` only calls setup once.
-  - [ ] Test concurrent calls are serialised (no duplicate setup).
+  - [ ] Test concurrent calls are serialized (no duplicate setup).
   - [ ] Test setup function errors are propagated.
 
 - [ ] **3.2.4.** Add behavioural tests
@@ -237,7 +237,8 @@ Comprehensive documentation of the template database pattern.
 
 ## 5. Cleanup automation
 
-Add RAII guard for automatic database cleanup.
+Add Resource Acquisition Is Initialization (RAII) guard for automatic database
+cleanup.
 
 ### 5.1. TemporaryDatabase struct
 

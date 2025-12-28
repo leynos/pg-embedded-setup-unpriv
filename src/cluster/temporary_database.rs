@@ -7,6 +7,7 @@ use color_eyre::eyre::WrapErr;
 use postgres::{Client, NoTls};
 use tracing::info_span;
 
+use super::connection::escape_identifier;
 use crate::error::BootstrapResult;
 use crate::observability::LOG_TARGET;
 
@@ -131,23 +132,23 @@ impl TemporaryDatabase {
             .wrap_err("failed to connect to admin database")
             .map_err(crate::error::BootstrapError::from)?;
 
-        // Terminate active connections
-        let terminate_sql = format!(
-            "SELECT pg_terminate_backend(pid) \
-             FROM pg_stat_activity \
-             WHERE datname = '{}' AND pid <> pg_backend_pid()",
-            self.name
-        );
+        // Terminate active connections using parameterized query
         client
-            .batch_execute(&terminate_sql)
+            .execute(
+                "SELECT pg_terminate_backend(pid) \
+                 FROM pg_stat_activity \
+                 WHERE datname = $1 AND pid <> pg_backend_pid()",
+                &[&self.name],
+            )
             .wrap_err(format!(
                 "failed to terminate connections to database '{}'",
                 self.name
             ))
             .map_err(crate::error::BootstrapError::from)?;
 
-        // Drop the database
-        let drop_sql = format!("DROP DATABASE \"{}\"", self.name);
+        // Drop the database with escaped identifier
+        let escaped = escape_identifier(&self.name);
+        let drop_sql = format!("DROP DATABASE \"{escaped}\"");
         client
             .batch_execute(&drop_sql)
             .wrap_err(format!("failed to drop database '{}'", self.name))
@@ -165,7 +166,8 @@ impl TemporaryDatabase {
             .wrap_err("failed to connect to admin database")
             .map_err(crate::error::BootstrapError::from)?;
 
-        let sql = format!("DROP DATABASE \"{}\"", self.name);
+        let escaped = escape_identifier(&self.name);
+        let sql = format!("DROP DATABASE \"{escaped}\"");
         client
             .batch_execute(&sql)
             .wrap_err(format!("failed to drop database '{}'", self.name))

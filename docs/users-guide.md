@@ -335,9 +335,9 @@ cluster.create_database_from_template("test_db_2", "my_template")?;
 # }
 ```
 
-The `ensure_template_exists` method provides concurrent-safe template creation
+The `ensure_template_exists` method provides concurrency-safe template creation
 with per-template locking to prevent race conditions when multiple tests try
-to initialise the same template simultaneously:
+to initialize the same template simultaneously:
 
 ```rust,no_run
 use pg_embedded_setup_unpriv::TestCluster;

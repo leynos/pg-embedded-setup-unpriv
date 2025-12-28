@@ -34,7 +34,6 @@ const TEST_DB_NAME: &str = "test_lifecycle_db";
 struct DatabaseWorld {
     sandbox: TestSandbox,
     cluster: Option<TestCluster>,
-    db_exists_result: Option<bool>,
     create_error: Option<String>,
     drop_error: Option<String>,
     skip_reason: Option<String>,
@@ -46,7 +45,6 @@ impl DatabaseWorld {
         Ok(Self {
             sandbox: TestSandbox::new("database-lifecycle").context("create sandbox")?,
             cluster: None,
-            db_exists_result: None,
             create_error: None,
             drop_error: None,
             skip_reason: None,
@@ -74,7 +72,6 @@ impl DatabaseWorld {
 
     fn record_cluster(&mut self, cluster: TestCluster) {
         self.cluster = Some(cluster);
-        self.db_exists_result = None;
         self.create_error = None;
         self.drop_error = None;
         self.bootstrap_error = None;
@@ -96,12 +93,6 @@ impl DatabaseWorld {
         self.cluster
             .as_ref()
             .ok_or_else(|| eyre!("TestCluster was not created"))
-    }
-}
-
-impl Drop for DatabaseWorld {
-    fn drop(&mut self) {
-        drop(self.cluster.take());
     }
 }
 

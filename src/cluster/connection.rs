@@ -12,6 +12,14 @@ use super::temporary_database::TemporaryDatabase;
 use crate::TestBootstrapSettings;
 use crate::error::BootstrapResult;
 
+/// Escapes a SQL identifier by doubling embedded double quotes.
+///
+/// `PostgreSQL` identifiers are quoted with double quotes. Any embedded
+/// double quote must be escaped by doubling it.
+pub(crate) fn escape_identifier(name: &str) -> String {
+    name.replace('"', "\"\"")
+}
+
 /// Global per-template locks to prevent concurrent template creation.
 ///
 /// Uses a `DashMap` to allow lock-free reads and concurrent access to
@@ -194,8 +202,8 @@ impl TestClusterConnection {
     pub fn create_database(&self, name: &str) -> BootstrapResult<()> {
         let _span = info_span!("create_database", db = %name).entered();
         let mut client = self.admin_client()?;
-        // Database names are quoted to handle special characters safely
-        let sql = format!("CREATE DATABASE \"{name}\"");
+        let escaped = escape_identifier(name);
+        let sql = format!("CREATE DATABASE \"{escaped}\"");
         client
             .batch_execute(&sql)
             .wrap_err(format!("failed to create database '{name}'"))
@@ -238,7 +246,9 @@ impl TestClusterConnection {
         let _span =
             info_span!("create_database_from_template", db = %name, template = %template).entered();
         let mut client = self.admin_client()?;
-        let sql = format!("CREATE DATABASE \"{name}\" TEMPLATE \"{template}\"");
+        let escaped_name = escape_identifier(name);
+        let escaped_template = escape_identifier(template);
+        let sql = format!("CREATE DATABASE \"{escaped_name}\" TEMPLATE \"{escaped_template}\"");
         client
             .batch_execute(&sql)
             .wrap_err(format!(
@@ -272,7 +282,8 @@ impl TestClusterConnection {
     pub fn drop_database(&self, name: &str) -> BootstrapResult<()> {
         let _span = info_span!("drop_database", db = %name).entered();
         let mut client = self.admin_client()?;
-        let sql = format!("DROP DATABASE \"{name}\"");
+        let escaped = escape_identifier(name);
+        let sql = format!("DROP DATABASE \"{escaped}\"");
         client
             .batch_execute(&sql)
             .wrap_err(format!("failed to drop database '{name}'"))

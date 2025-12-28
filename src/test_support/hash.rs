@@ -43,12 +43,20 @@ fn hash_directory_recursive(
     current: &Path,
     hasher: &mut Sha256,
 ) -> BootstrapResult<()> {
-    let mut entries: Vec<_> = fs::read_dir(current)
-        .map_err(|e| {
-            color_eyre::eyre::eyre!("failed to read directory '{}': {e}", current.display())
-        })?
-        .filter_map(Result::ok)
-        .collect();
+    let read_dir = fs::read_dir(current).map_err(|e| {
+        color_eyre::eyre::eyre!("failed to read directory '{}': {e}", current.display())
+    })?;
+
+    let mut entries: Vec<_> = read_dir
+        .map(|entry| {
+            entry.map_err(|e| {
+                color_eyre::eyre::eyre!(
+                    "failed to read directory entry in '{}': {e}",
+                    current.display()
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     // Sort entries for deterministic ordering
     entries.sort_by_key(std::fs::DirEntry::file_name);

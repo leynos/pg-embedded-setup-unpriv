@@ -60,7 +60,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt"], optional = true }
 openssl-sys = { version = "0.9.110", features = ["vendored"] }
 pq-sys = { version = "0.7.4", optional = true, features = ["bundled"] }
 rstest = "0.18"
-dashmap = "6"
+dashmap = "6.1.0"
 sha2 = "0.10"
 
 [features]
