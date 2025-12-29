@@ -57,7 +57,7 @@ impl TestCluster {
     delegate_to_connection! {
         /// Creates a new database with the given name.
         ///
-        /// Delegates to [`TestClusterConnection::create_database`].
+        /// Delegates to [`crate::TestClusterConnection::create_database`].
         ///
         /// # Errors
         ///
@@ -81,7 +81,7 @@ impl TestCluster {
     delegate_to_connection! {
         /// Creates a new database by cloning an existing template.
         ///
-        /// Delegates to [`TestClusterConnection::create_database_from_template`].
+        /// Delegates to [`crate::TestClusterConnection::create_database_from_template`].
         ///
         /// # Errors
         ///
@@ -108,7 +108,7 @@ impl TestCluster {
     delegate_to_connection! {
         /// Drops an existing database.
         ///
-        /// Delegates to [`TestClusterConnection::drop_database`].
+        /// Delegates to [`crate::TestClusterConnection::drop_database`].
         ///
         /// # Errors
         ///
@@ -133,7 +133,7 @@ impl TestCluster {
     delegate_to_connection! {
         /// Checks whether a database with the given name exists.
         ///
-        /// Delegates to [`TestClusterConnection::database_exists`].
+        /// Delegates to [`crate::TestClusterConnection::database_exists`].
         ///
         /// # Errors
         ///
@@ -156,7 +156,7 @@ impl TestCluster {
 
     /// Ensures a template database exists, creating it if necessary.
     ///
-    /// Delegates to [`TestClusterConnection::ensure_template_exists`].
+    /// Delegates to [`crate::TestClusterConnection::ensure_template_exists`].
     ///
     /// # Errors
     ///
@@ -192,7 +192,7 @@ impl TestCluster {
     delegate_to_connection! {
         /// Creates a temporary database that is dropped when the guard is dropped.
         ///
-        /// Delegates to [`TestClusterConnection::temporary_database`].
+        /// Delegates to [`crate::TestClusterConnection::temporary_database`].
         ///
         /// # Errors
         ///
@@ -218,7 +218,7 @@ impl TestCluster {
     delegate_to_connection! {
         /// Creates a temporary database from a template.
         ///
-        /// Delegates to [`TestClusterConnection::temporary_database_from_template`].
+        /// Delegates to [`crate::TestClusterConnection::temporary_database_from_template`].
         ///
         /// # Errors
         ///
