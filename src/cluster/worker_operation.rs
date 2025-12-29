@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use crate::TestBootstrapSettings;
 
-#[doc(hidden)]
 /// Identifies worker lifecycle operations executed via the helper binary.
+#[doc(hidden)]
 #[derive(Clone, Copy)]
 pub enum WorkerOperation {
     Setup,

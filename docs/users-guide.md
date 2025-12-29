@@ -392,7 +392,7 @@ The following table compares test isolation approaches:
   is acceptable.
 - **Shared cluster with template cloning (`shared_test_cluster` fixture):** Use
   for maximum performance when tests only need database-level isolation.
-  Requires upfront template creation but reduces per-test overhead by orders
+  Requires upfront template creation, but reduces per-test overhead by orders
   of magnitude.
 
 ### Database cleanup strategies

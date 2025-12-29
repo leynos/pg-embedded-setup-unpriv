@@ -71,18 +71,30 @@ fn hash_directory_recursive(
         if path.is_dir() {
             hash_directory_recursive(base, &path, hasher)?;
         } else if path.is_file() {
-            // Hash file contents
-            let mut file = fs::File::open(&path).map_err(|e| {
-                color_eyre::eyre::eyre!("failed to open file '{}': {e}", path.display())
-            })?;
-            let mut buffer = Vec::new();
-            file.read_to_end(&mut buffer).map_err(|e| {
-                color_eyre::eyre::eyre!("failed to read file '{}': {e}", path.display())
-            })?;
-            hasher.update(&buffer);
+            hash_file_contents(&path, hasher)?;
         }
     }
 
+    Ok(())
+}
+
+/// Hashes file contents using chunked streaming I/O.
+fn hash_file_contents(path: &Path, hasher: &mut Sha256) -> BootstrapResult<()> {
+    let mut file = fs::File::open(path).map_err(|e| {
+        color_eyre::eyre::eyre!("failed to open file '{}': {e}", path.display())
+    })?;
+    let mut buffer = [0u8; 8192];
+    loop {
+        let bytes_read = file.read(&mut buffer).map_err(|e| {
+            color_eyre::eyre::eyre!("failed to read file '{}': {e}", path.display())
+        })?;
+        if bytes_read == 0 {
+            break;
+        }
+        if let Some(chunk) = buffer.get(..bytes_read) {
+            hasher.update(chunk);
+        }
+    }
     Ok(())
 }
 

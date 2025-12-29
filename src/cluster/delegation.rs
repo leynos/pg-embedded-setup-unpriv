@@ -1,7 +1,7 @@
 //! Delegation methods that forward `TestCluster` calls to `TestClusterConnection`.
 
-use super::temporary_database::TemporaryDatabase;
 use super::TestCluster;
+use super::temporary_database::TemporaryDatabase;
 use crate::error::BootstrapResult;
 
 /// Generates delegation methods on `TestCluster` that forward to `TestClusterConnection`.
