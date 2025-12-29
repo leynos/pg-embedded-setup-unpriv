@@ -170,9 +170,9 @@ conditions into soft skips via the shared `skip_message` helper.
 ### Shared cluster fixture for fast test isolation
 
 When test execution time is critical, use the `shared_test_cluster` fixture
-instead of `test_cluster`. The shared fixture initializes a single
-`PostgreSQL` cluster on first access and reuses it across all tests in the
-same binary, eliminating per-test bootstrap overhead.
+instead of `test_cluster`. The shared fixture initializes a single `PostgreSQL`
+cluster on first access and reuses it across all tests in the same binary,
+eliminating per-test bootstrap overhead.
 
 ```rust,no_run
 use pg_embedded_setup_unpriv::{test_support::shared_test_cluster, TestCluster};
@@ -209,10 +209,10 @@ assert!(std::ptr::eq(cluster, cluster2));
 
 **When to use each fixture:**
 
-| Fixture               | Use case                                           |
-| --------------------- | -------------------------------------------------- |
-| `test_cluster`        | Tests that modify cluster-level settings or state  |
-| `shared_test_cluster` | Tests that only need database-level isolation      |
+| Fixture               | Use case                                          |
+| --------------------- | ------------------------------------------------- |
+| `test_cluster`        | Tests that modify cluster-level settings or state |
+| `shared_test_cluster` | Tests that only need database-level isolation     |
 
 The shared cluster is particularly effective when combined with template
 databases (see "Database lifecycle management" below) to reduce per-test
@@ -314,9 +314,9 @@ Data Definition Language (DDL) statements. Errors are returned when:
 ### Template databases for fast test isolation
 
 PostgreSQL's `CREATE DATABASE ... TEMPLATE` mechanism clones an existing
-database via a filesystem-level copy, completing in milliseconds regardless
-of schema complexity. This is significantly faster than running migrations
-on each test database.
+database via a filesystem-level copy, completing in milliseconds regardless of
+schema complexity. This is significantly faster than running migrations on each
+test database.
 
 ```rust,no_run
 use pg_embedded_setup_unpriv::TestCluster;
@@ -336,8 +336,8 @@ cluster.create_database_from_template("test_db_2", "my_template")?;
 ```
 
 The `ensure_template_exists` method provides concurrency-safe template creation
-with per-template locking to prevent race conditions when multiple tests try
-to initialize the same template simultaneously:
+with per-template locking to prevent race conditions when multiple tests try to
+initialize the same template simultaneously:
 
 ```rust,no_run
 use pg_embedded_setup_unpriv::TestCluster;
@@ -376,11 +376,11 @@ let template_name = format!("template_{}", &hash[..8]);
 
 The following table compares test isolation approaches:
 
-| Approach                        | Bootstrap | Per-test overhead | Isolation |
-| ------------------------------- | --------- | ----------------- | --------- |
-| Per-test `TestCluster`          | Per test  | 20–30 seconds     | Full      |
-| Shared cluster, fresh database  | Once      | 1–5 seconds       | Database  |
-| Shared cluster, template clone  | Once      | 10–50 ms          | Database  |
+| Approach                       | Bootstrap | Per-test overhead | Isolation |
+| ------------------------------ | --------- | ----------------- | --------- |
+| Per-test `TestCluster`         | Per test  | 20–30 seconds     | Full      |
+| Shared cluster, fresh database | Once      | 1–5 seconds       | Database  |
+| Shared cluster, template clone | Once      | 10–50 ms          | Database  |
 
 **When to use each approach:**
 
@@ -388,8 +388,8 @@ The following table compares test isolation approaches:
   cluster-level settings, require specific PostgreSQL versions, or need
   complete isolation from other tests.
 - **Shared cluster with fresh databases:** Use when tests need database-level
-  isolation but can share the same cluster. Suitable when migration overhead
-  is acceptable.
+  isolation but can share the same cluster. Suitable when migration overhead is
+  acceptable.
 - **Shared cluster with template cloning (`shared_test_cluster` fixture):** Use
   for maximum performance when tests only need database-level isolation.
   Requires upfront template creation, but reduces per-test overhead by orders
@@ -419,8 +419,8 @@ cluster.drop_database(&db_name)?; // Explicit cleanup
 ```
 
 **Cluster teardown cleanup:** Let the shared cluster drop all databases when
-the test binary exits. This is simpler but uses more disk space during the
-test run:
+the test binary exits. This is simpler but uses more disk space during the test
+run:
 
 ```rust,no_run
 use pg_embedded_setup_unpriv::test_support::shared_cluster;
