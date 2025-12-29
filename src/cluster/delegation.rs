@@ -1,6 +1,11 @@
 //! Delegation methods that forward `TestCluster` calls to `TestClusterConnection`.
+//!
+//! This module provides ergonomic access to database lifecycle operations directly from
+//! `TestCluster`, eliminating the need for callers to explicitly call `.connection()`
+//! before invoking methods like `create_database` or `drop_database`.
 
 use super::TestCluster;
+use super::lifecycle::DatabaseName;
 use super::temporary_database::TemporaryDatabase;
 use crate::error::BootstrapResult;
 
@@ -75,7 +80,7 @@ impl TestCluster {
         /// # Ok(())
         /// # }
         /// ```
-        fn create_database(&self, name: &str) -> BootstrapResult<()>
+        fn create_database(&self, name: impl Into<DatabaseName>) -> BootstrapResult<()>
     }
 
     delegate_to_connection! {
@@ -102,7 +107,7 @@ impl TestCluster {
         /// # Ok(())
         /// # }
         /// ```
-        fn create_database_from_template(&self, name: &str, template: &str) -> BootstrapResult<()>
+        fn create_database_from_template(&self, name: impl Into<DatabaseName>, template: impl Into<DatabaseName>) -> BootstrapResult<()>
     }
 
     delegate_to_connection! {
@@ -127,7 +132,7 @@ impl TestCluster {
         /// # Ok(())
         /// # }
         /// ```
-        fn drop_database(&self, name: &str) -> BootstrapResult<()>
+        fn drop_database(&self, name: impl Into<DatabaseName>) -> BootstrapResult<()>
     }
 
     delegate_to_connection! {
@@ -151,7 +156,7 @@ impl TestCluster {
         /// # Ok(())
         /// # }
         /// ```
-        fn database_exists(&self, name: &str) -> BootstrapResult<bool>
+        fn database_exists(&self, name: impl Into<DatabaseName>) -> BootstrapResult<bool>
     }
 
     /// Ensures a template database exists, creating it if necessary.
@@ -182,7 +187,11 @@ impl TestCluster {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn ensure_template_exists<F>(&self, name: &str, setup_fn: F) -> BootstrapResult<()>
+    pub fn ensure_template_exists<F>(
+        &self,
+        name: impl Into<DatabaseName>,
+        setup_fn: F,
+    ) -> BootstrapResult<()>
     where
         F: FnOnce(&str) -> BootstrapResult<()>,
     {
@@ -212,7 +221,7 @@ impl TestCluster {
         /// # Ok(())
         /// # }
         /// ```
-        fn temporary_database(&self, name: &str) -> BootstrapResult<TemporaryDatabase>
+        fn temporary_database(&self, name: impl Into<DatabaseName>) -> BootstrapResult<TemporaryDatabase>
     }
 
     delegate_to_connection! {
@@ -241,6 +250,6 @@ impl TestCluster {
         /// # Ok(())
         /// # }
         /// ```
-        fn temporary_database_from_template(&self, name: &str, template: &str) -> BootstrapResult<TemporaryDatabase>
+        fn temporary_database_from_template(&self, name: impl Into<DatabaseName>, template: impl Into<DatabaseName>) -> BootstrapResult<TemporaryDatabase>
     }
 }

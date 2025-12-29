@@ -313,7 +313,7 @@ Data Definition Language (DDL) statements. Errors are returned when:
 
 ### Template databases for fast test isolation
 
-PostgreSQL's `CREATE DATABASE ... TEMPLATE` mechanism clones an existing
+PostgreSQL's `CREATE DATABASE … TEMPLATE` mechanism clones an existing
 database via a filesystem-level copy, completing in milliseconds regardless of
 schema complexity. This is significantly faster than running migrations on each
 test database.
