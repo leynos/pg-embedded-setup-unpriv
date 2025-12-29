@@ -1,12 +1,30 @@
 //! Connection helpers for `TestCluster`, including metadata accessors and optional Diesel support.
+
 use camino::{Utf8Path, Utf8PathBuf};
-#[cfg(feature = "diesel-support")]
 use color_eyre::eyre::WrapErr;
+use postgres::{Client, NoTls};
 use postgresql_embedded::Settings;
 
 use crate::TestBootstrapSettings;
-#[cfg(feature = "diesel-support")]
 use crate::error::BootstrapResult;
+
+/// Escapes a SQL identifier by doubling embedded double quotes.
+///
+/// `PostgreSQL` identifiers are quoted with double quotes. Any embedded
+/// double quote must be escaped by doubling it.
+pub(crate) fn escape_identifier(name: &str) -> String {
+    name.replace('"', "\"\"")
+}
+
+/// Creates a new `PostgreSQL` client connection from the given URL.
+///
+/// This is a shared helper for admin database connections used by both
+/// `TestClusterConnection` and `TemporaryDatabase`.
+pub(crate) fn connect_admin(url: &str) -> BootstrapResult<Client> {
+    Client::connect(url, NoTls)
+        .wrap_err("failed to connect to admin database")
+        .map_err(crate::error::BootstrapError::from)
+}
 
 /// Provides ergonomic accessors for connection-oriented cluster metadata.
 ///
@@ -154,6 +172,11 @@ impl TestClusterConnection {
         diesel::PgConnection::establish(&self.database_url(database))
             .wrap_err(format!("failed to connect to {database} via Diesel"))
             .map_err(crate::error::BootstrapError::from)
+    }
+
+    /// Connects to the `postgres` administration database.
+    pub(super) fn admin_client(&self) -> BootstrapResult<Client> {
+        connect_admin(&self.database_url("postgres"))
     }
 }
 

@@ -167,6 +167,57 @@ If PostgreSQL cannot start, the fixture panics with a
 tests fail immediately, while behaviour tests can convert known transient
 conditions into soft skips via the shared `skip_message` helper.
 
+### Shared cluster fixture for fast test isolation
+
+When test execution time is critical, use the `shared_test_cluster` fixture
+instead of `test_cluster`. The shared fixture initializes a single `PostgreSQL`
+cluster on first access and reuses it across all tests in the same binary,
+eliminating per-test bootstrap overhead.
+
+```rust,no_run
+use pg_embedded_setup_unpriv::{test_support::shared_test_cluster, TestCluster};
+use rstest::rstest;
+
+#[rstest]
+fn uses_shared_cluster(shared_test_cluster: &'static TestCluster) {
+    // Create a per-test database for isolation
+    shared_test_cluster.create_database("my_test_db").unwrap();
+
+    // Run tests against the database
+    let url = shared_test_cluster.connection().database_url("my_test_db");
+    assert!(url.contains("my_test_db"));
+
+    // Clean up (optional - the database is dropped when the cluster shuts down)
+    shared_test_cluster.drop_database("my_test_db").unwrap();
+}
+```
+
+For programmatic access without `rstest`, use `shared_cluster()` directly:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::test_support::shared_cluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = shared_cluster()?;
+
+// Multiple calls return the same instance
+let cluster2 = shared_cluster()?;
+assert!(std::ptr::eq(cluster, cluster2));
+# Ok(())
+# }
+```
+
+**When to use each fixture:**
+
+| Fixture               | Use case                                          |
+| --------------------- | ------------------------------------------------- |
+| `test_cluster`        | Tests that modify cluster-level settings or state |
+| `shared_test_cluster` | Tests that only need database-level isolation     |
+
+The shared cluster is particularly effective when combined with template
+databases (see "Database lifecycle management" below) to reduce per-test
+overhead from seconds to milliseconds.
+
 ### Connection helpers and Diesel integration
 
 `TestCluster::connection()` exposes `TestClusterConnection`, a lightweight view
@@ -206,6 +257,240 @@ assert!(url.starts_with("postgresql://"));
 # Ok(())
 # }
 ```
+
+### Database lifecycle management
+
+`TestClusterConnection` provides methods for programmatically creating and
+dropping databases on the running cluster. These are useful for test isolation
+patterns where each test creates its own database to avoid cross-test
+interference.
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+let conn = cluster.connection();
+
+// Create a new database
+conn.create_database("my_test_db")?;
+
+// Check if a database exists
+assert!(conn.database_exists("my_test_db")?);
+assert!(conn.database_exists("postgres")?); // Built-in database
+
+// Drop the database when done
+conn.drop_database("my_test_db")?;
+assert!(!conn.database_exists("my_test_db")?);
+# Ok(())
+# }
+```
+
+The `TestCluster` type also exposes convenience wrappers that delegate to the
+connection methods:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+
+// These delegate to cluster.connection().create_database(...) etc.
+cluster.create_database("my_test_db")?;
+assert!(cluster.database_exists("my_test_db")?);
+cluster.drop_database("my_test_db")?;
+# Ok(())
+# }
+```
+
+All methods connect to the `postgres` database as the superuser to execute the
+Data Definition Language (DDL) statements. Errors are returned when:
+
+- Creating a database that already exists
+- Dropping a database that does not exist
+- Dropping a database with active connections
+- Connection to the cluster fails
+
+### Template databases for fast test isolation
+
+PostgreSQL's `CREATE DATABASE … TEMPLATE` mechanism clones an existing
+database via a filesystem-level copy, completing in milliseconds regardless of
+schema complexity. This is significantly faster than running migrations on each
+test database.
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+
+// Create a template database and apply migrations
+cluster.create_database("my_template")?;
+// ... run migrations on my_template ...
+
+// Clone the template for each test (milliseconds vs seconds)
+cluster.create_database_from_template("test_db_1", "my_template")?;
+cluster.create_database_from_template("test_db_2", "my_template")?;
+# Ok(())
+# }
+```
+
+The `ensure_template_exists` method provides concurrency-safe template creation
+with per-template locking to prevent race conditions when multiple tests try to
+initialize the same template simultaneously:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+
+// Only creates and migrates if the template doesn't exist
+cluster.ensure_template_exists("migrated_template", |db_name| {
+    // Run migrations on the newly created database
+    // e.g., diesel::migration::run(&mut conn)?;
+    Ok(())
+})?;
+
+// Clone for the test
+cluster.create_database_from_template("test_db", "migrated_template")?;
+# Ok(())
+# }
+```
+
+For versioned template names that automatically invalidate when migrations
+change, use the `hash_directory` helper to generate a content-based hash:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::test_support::hash_directory;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let hash = hash_directory("migrations")?;
+let template_name = format!("template_{}", &hash[..8]);
+// Template name changes when any migration file changes
+# Ok(())
+# }
+```
+
+### Performance comparison
+
+The following table compares test isolation approaches:
+
+| Approach                       | Bootstrap | Per-test overhead | Isolation |
+| ------------------------------ | --------- | ----------------- | --------- |
+| Per-test `TestCluster`         | Per test  | 20–30 seconds     | Full      |
+| Shared cluster, fresh database | Once      | 1–5 seconds       | Database  |
+| Shared cluster, template clone | Once      | 10–50 ms          | Database  |
+
+**When to use each approach:**
+
+- **Per-test cluster (`test_cluster` fixture):** Use when tests modify
+  cluster-level settings, require specific PostgreSQL versions, or need
+  complete isolation from other tests.
+- **Shared cluster with fresh databases:** Use when tests need database-level
+  isolation but can share the same cluster. Suitable when migration overhead is
+  acceptable.
+- **Shared cluster with template cloning (`shared_test_cluster` fixture):** Use
+  for maximum performance when tests only need database-level isolation.
+  Requires upfront template creation, but reduces per-test overhead by orders
+  of magnitude.
+
+### Database cleanup strategies
+
+When using a shared cluster, databases created during tests persist until
+explicitly dropped or the cluster shuts down. Consider these strategies:
+
+**Explicit cleanup:** Drop databases after each test to reclaim disk space and
+prevent name collisions:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+let db_name = format!("test_{}", uuid::Uuid::new_v4());
+cluster.create_database_from_template(&db_name, "my_template")?;
+
+// ... run test ...
+
+cluster.drop_database(&db_name)?; // Explicit cleanup
+# Ok(())
+# }
+```
+
+**Cluster teardown cleanup:** Let the shared cluster drop all databases when
+the test binary exits. This is simpler but uses more disk space during the test
+run:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::test_support::shared_cluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = shared_cluster()?;
+let db_name = format!("test_{}", uuid::Uuid::new_v4());
+cluster.create_database_from_template(&db_name, "my_template")?;
+
+// ... run test ...
+// Database dropped automatically when cluster shuts down
+# Ok(())
+# }
+```
+
+**Active connection handling:** Dropping a database with active connections
+fails. Ensure all connections are closed before calling `drop_database`. If
+using connection pools, drain the pool first.
+
+### Automatic cleanup with TemporaryDatabase
+
+The `TemporaryDatabase` guard provides RAII cleanup semantics. When the guard
+goes out of scope, the database is automatically dropped:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+
+// Create a temporary database with automatic cleanup
+let temp_db = cluster.temporary_database("my_test_db")?;
+
+// Use the database
+let url = temp_db.url();
+// ... run queries ...
+
+// Database is dropped automatically when temp_db goes out of scope
+drop(temp_db);
+# Ok(())
+# }
+```
+
+For template-based workflows, use `temporary_database_from_template`:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?;
+
+// Ensure the template exists
+cluster.ensure_template_exists("migrated_template", |_| Ok(()))?;
+
+// Create a temporary database from the template
+let temp_db = cluster.temporary_database_from_template("test_db", "migrated_template")?;
+
+// Database is automatically dropped when temp_db goes out of scope
+# Ok(())
+# }
+```
+
+**Drop behaviour:**
+
+- `drop_database()` — Explicitly drop the database, failing if connections
+  exist. Consumes the guard.
+- `force_drop()` — Terminate active connections before dropping. Useful when
+  connection pools haven't been drained.
+- Implicit drop (guard goes out of scope) — Best-effort drop with a warning
+  logged on failure.
 
 ## Privilege detection and idempotence
 

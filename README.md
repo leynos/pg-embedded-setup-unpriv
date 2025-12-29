@@ -3,7 +3,7 @@
 `pg_embedded_setup_unpriv` prepares a `postgresql_embedded` data directory
 while you are running as `root`, dropping privileges to `nobody` only for the
 filesystem mutations that must occur as the target user. The binary is useful
-when you need to initialise PostgreSQL assets inside build pipelines or CI
+when you need to initialize PostgreSQL assets inside build pipelines or CI
 images where direct access to the `nobody` account is required.
 
 ## Prerequisites
@@ -57,7 +57,7 @@ inside your own launcher.
    The `-E` flag preserves any exported `PG_*` variables for the run.
 
 4. On success the command exits with status `0`. The PostgreSQL payload is
-   downloaded into `PG_RUNTIME_DIR`, initialised into `PG_DATA_DIR`, and both
+   downloaded into `PG_RUNTIME_DIR`, initialized into `PG_DATA_DIR`, and both
    paths are owned by `nobody`. Any failure emits a structured error via
    `color-eyre` to standard error and the process exits with status `1`.
 
@@ -96,6 +96,43 @@ Because the fixture handles environment preparation, tests stay declarative and
 can focus on behaviours instead of bootstrap plumbing. When a bootstrap failure
 occurs the fixture panics with a `SKIP-TEST-CLUSTER` prefix, so higher-level
 behaviour tests can convert known transient errors into soft skips.
+
+## Fast test isolation with template databases
+
+For test suites where per-test cluster bootstrap is too slow, use
+`shared_test_cluster` to share a single cluster across all tests and clone
+template databases for isolation:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::{test_support::shared_test_cluster, TestCluster};
+use rstest::rstest;
+
+#[rstest]
+fn fast_isolated_test(shared_test_cluster: &'static TestCluster) {
+    // Clone a pre-migrated template (milliseconds, not seconds)
+    shared_test_cluster
+        .create_database_from_template("my_test_db", "migrated_template")
+        .unwrap();
+
+    let url = shared_test_cluster.connection().database_url("my_test_db");
+    // ... run test queries ...
+
+    shared_test_cluster.drop_database("my_test_db").unwrap();
+}
+```
+
+Key features:
+
+- **`shared_cluster()`** – process-global cluster initialized once per binary
+- **`create_database_from_template()`** – clone databases via PostgreSQL's
+  `TEMPLATE` clause (filesystem copy, completes in milliseconds)
+- **`ensure_template_exists()`** – concurrency-safe template creation with
+  per-template locking
+- **`hash_directory()`** – generate content-based template names that
+  auto-invalidate when migrations change
+
+See [`docs/users-guide.md`](docs/users-guide.md) for complete examples and
+performance guidance.
 
 ## Behaviour-driven diagnostics
 

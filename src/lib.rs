@@ -163,11 +163,15 @@ pub use cluster::WorkerInvoker;
 #[cfg(any(test, feature = "cluster-unit-tests"))]
 #[doc(hidden)]
 pub use cluster::WorkerOperation;
-pub use cluster::{ConnectionMetadata, TestCluster, TestClusterConnection};
+pub use cluster::{
+    ConnectionMetadata, DatabaseName, TemporaryDatabase, TestCluster, TestClusterConnection,
+};
 #[doc(hidden)]
 pub use error::BootstrapResult;
 pub use error::PgEmbeddedError as Error;
-pub use error::{BootstrapError, BootstrapErrorKind, PgEmbeddedError, Result};
+pub use error::{
+    BootstrapError, BootstrapErrorKind, PgEmbeddedError, PrivilegeError, PrivilegeResult, Result,
+};
 #[cfg(feature = "privileged-tests")]
 #[cfg(all(
     unix,

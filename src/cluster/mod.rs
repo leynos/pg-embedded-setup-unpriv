@@ -17,12 +17,21 @@
 //! ```
 
 mod connection;
+mod delegation;
+mod lifecycle;
 mod runtime;
+mod temporary_database;
 mod worker_invoker;
+mod worker_operation;
 
 pub use self::connection::{ConnectionMetadata, TestClusterConnection};
+pub use self::lifecycle::DatabaseName;
+pub use self::temporary_database::TemporaryDatabase;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use self::worker_invoker::WorkerInvoker;
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+#[doc(hidden)]
+pub use self::worker_operation::WorkerOperation;
 
 use self::runtime::build_runtime;
 use self::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
@@ -33,7 +42,6 @@ use crate::observability::LOG_TARGET;
 use crate::{ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings};
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::fmt::Display;
-use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::time;
 use tracing::{info, info_span};
@@ -146,8 +154,12 @@ impl TestCluster {
         invoker: &ClusterWorkerInvoker<'_>,
         embedded: &mut PostgreSQL,
     ) -> BootstrapResult<()> {
-        invoker.invoke(WorkerOperation::Setup, async { embedded.setup().await })?;
-        invoker.invoke(WorkerOperation::Start, async { embedded.start().await })
+        invoker.invoke(worker_operation::WorkerOperation::Setup, async {
+            embedded.setup().await
+        })?;
+        invoker.invoke(worker_operation::WorkerOperation::Start, async {
+            embedded.start().await
+        })
     }
 
     /// Extends the cluster lifetime to cover additional scoped environment guards.
@@ -275,44 +287,6 @@ mod tests {
     }
 }
 
-#[doc(hidden)]
-/// Identifies worker lifecycle operations executed via the helper binary.
-#[derive(Clone, Copy)]
-pub enum WorkerOperation {
-    Setup,
-    Start,
-    Stop,
-}
-
-impl WorkerOperation {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Setup => "setup",
-            Self::Start => "start",
-            Self::Stop => "stop",
-        }
-    }
-
-    #[must_use]
-    pub const fn error_context(self) -> &'static str {
-        match self {
-            Self::Setup => "postgresql_embedded::setup() failed",
-            Self::Start => "postgresql_embedded::start() failed",
-            Self::Stop => "postgresql_embedded::stop() failed",
-        }
-    }
-
-    #[must_use]
-    pub const fn timeout(self, bootstrap: &TestBootstrapSettings) -> Duration {
-        match self {
-            Self::Setup => bootstrap.setup_timeout,
-            Self::Start => bootstrap.start_timeout,
-            Self::Stop => bootstrap.shutdown_timeout,
-        }
-    }
-}
-
 impl Drop for TestCluster {
     #[expect(
         clippy::cognitive_complexity,
@@ -329,7 +303,7 @@ impl Drop for TestCluster {
 
         if self.is_managed_via_worker {
             let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
-            if let Err(err) = invoker.invoke_as_root(WorkerOperation::Stop) {
+            if let Err(err) = invoker.invoke_as_root(worker_operation::WorkerOperation::Stop) {
                 Self::warn_stop_failure(&context, &err);
             }
         } else if let Some(postgres) = self.postgres.take() {
