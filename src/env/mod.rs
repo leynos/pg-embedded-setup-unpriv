@@ -5,8 +5,8 @@
 //! still occurs in reverse order.
 //!
 //! # Example
-//! ```no_run
-//! use pg_embedded_setup_unpriv::env::ScopedEnv;
+//! ```ignore
+//! use pg_embedded_setup_unpriv::ScopedEnv;
 //!
 //! # fn main() {
 //! let guard = ScopedEnv::apply(&[(
