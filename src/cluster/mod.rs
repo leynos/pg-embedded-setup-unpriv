@@ -154,12 +154,8 @@ impl TestCluster {
         invoker: &ClusterWorkerInvoker<'_>,
         embedded: &mut PostgreSQL,
     ) -> BootstrapResult<()> {
-        invoker.invoke(worker_operation::WorkerOperation::Setup, async {
-            embedded.setup().await
-        })?;
-        invoker.invoke(worker_operation::WorkerOperation::Start, async {
-            embedded.start().await
-        })
+        invoker.invoke(worker_operation::WorkerOperation::Setup, async { embedded.setup().await })?;
+        invoker.invoke(worker_operation::WorkerOperation::Start, async { embedded.start().await })
     }
 
     /// Extends the cluster lifetime to cover additional scoped environment guards.

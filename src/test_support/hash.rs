@@ -79,10 +79,13 @@ fn hash_directory_recursive(
 }
 
 /// Hashes file contents using chunked streaming I/O.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "bytes_read is always <= buffer.len()"
+)]
 fn hash_file_contents(path: &Path, hasher: &mut Sha256) -> BootstrapResult<()> {
-    let mut file = fs::File::open(path).map_err(|e| {
-        color_eyre::eyre::eyre!("failed to open file '{}': {e}", path.display())
-    })?;
+    let mut file = fs::File::open(path)
+        .map_err(|e| color_eyre::eyre::eyre!("failed to open file '{}': {e}", path.display()))?;
     let mut buffer = [0u8; 8192];
     loop {
         let bytes_read = file.read(&mut buffer).map_err(|e| {
@@ -91,9 +94,7 @@ fn hash_file_contents(path: &Path, hasher: &mut Sha256) -> BootstrapResult<()> {
         if bytes_read == 0 {
             break;
         }
-        if let Some(chunk) = buffer.get(..bytes_read) {
-            hasher.update(chunk);
-        }
+        hasher.update(&buffer[..bytes_read]);
     }
     Ok(())
 }
