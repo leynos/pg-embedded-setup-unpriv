@@ -8,7 +8,7 @@ mod privileges;
 
 pub(crate) use self::output::render_failure_for_tests;
 use self::output::{append_error_context, combine_errors, render_failure};
-use crate::cluster::WorkerOperation;
+use crate::cluster::worker_operation::WorkerOperation;
 use crate::error::{BootstrapError, BootstrapResult};
 use crate::observability::LOG_TARGET;
 use crate::worker::WorkerPayload;

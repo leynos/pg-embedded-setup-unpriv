@@ -22,7 +22,7 @@ mod lifecycle;
 mod runtime;
 mod temporary_database;
 mod worker_invoker;
-mod worker_operation;
+pub(crate) mod worker_operation;
 
 pub use self::connection::{ConnectionMetadata, TestClusterConnection};
 pub use self::lifecycle::DatabaseName;

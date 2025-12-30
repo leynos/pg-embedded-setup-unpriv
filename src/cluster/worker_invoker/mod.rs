@@ -9,7 +9,7 @@ use crate::observability::LOG_TARGET;
 use crate::worker_process::{self, WorkerRequest};
 use crate::{ExecutionMode, ExecutionPrivileges, TestBootstrapSettings};
 
-use super::WorkerOperation;
+use super::worker_operation::WorkerOperation;
 use tracing::{error, info, info_span};
 
 /// Executes worker operations whilst respecting configured privileges.

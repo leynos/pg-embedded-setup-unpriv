@@ -36,7 +36,7 @@ pub mod worker_process_test_api {
     use camino::Utf8Path;
     use postgresql_embedded::Settings;
 
-    pub use crate::cluster::WorkerOperation;
+    pub use crate::cluster::worker_operation::WorkerOperation;
     use crate::worker_process;
 
     #[cfg(all(
