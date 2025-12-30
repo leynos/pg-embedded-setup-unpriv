@@ -313,10 +313,10 @@ Data Definition Language (DDL) statements. Errors are returned when:
 
 ### Template databases for fast test isolation
 
-PostgreSQL's `CREATE DATABASE … TEMPLATE` mechanism clones an existing
-database via a filesystem-level copy, completing in milliseconds regardless of
-schema complexity. This is significantly faster than running migrations on each
-test database.
+PostgreSQL's `CREATE DATABASE … TEMPLATE` mechanism clones an existing database
+via a filesystem-level copy, completing in milliseconds regardless of schema
+complexity. This is significantly faster than running migrations on each test
+database.
 
 ```rust,no_run
 use pg_embedded_setup_unpriv::TestCluster;
@@ -334,6 +334,11 @@ cluster.create_database_from_template("test_db_2", "my_template")?;
 # Ok(())
 # }
 ```
+
+Template helpers live on `TestClusterConnection` and are also exposed on
+`TestCluster` for convenience. Use unique database names (for example,
+`format!("test_{}", uuid::Uuid::new_v4())`) to avoid collisions under parallel
+execution.
 
 The `ensure_template_exists` method provides concurrency-safe template creation
 with per-template locking to prevent race conditions when multiple tests try to
@@ -371,6 +376,10 @@ let template_name = format!("template_{}", &hash[..8]);
 # Ok(())
 # }
 ```
+
+If you already track a migration version, include it in the template name
+instead (for example, `format!("template_v{SCHEMA_VERSION}")`). This keeps
+template invalidation explicit without hashing the migration directory.
 
 ### Performance comparison
 
