@@ -11,7 +11,7 @@ NIXIE ?= nixie
 build: target/debug/$(APP) ## Build debug binary
 release: target/release/$(APP) ## Build release binary
 
-all: release ## Default target builds release binary
+all: check-fmt lint test ## Perform all commit gate checks
 
 clean: ## Remove build artifacts
 	$(CARGO) clean
