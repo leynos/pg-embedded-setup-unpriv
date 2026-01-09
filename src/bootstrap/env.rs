@@ -110,6 +110,23 @@ pub(super) struct TimezoneEnv {
     pub(super) zone: String,
 }
 
+/// Holds filesystem and time zone settings used by the bootstrap tests.
+///
+/// # Examples
+/// ```
+/// use camino::Utf8PathBuf;
+/// use pg_embedded_setup_unpriv::TestBootstrapEnvironment;
+///
+/// let environment = TestBootstrapEnvironment {
+///     home: Utf8PathBuf::from("/tmp/home"),
+///     xdg_cache_home: Utf8PathBuf::from("/tmp/home/cache"),
+///     xdg_runtime_dir: Utf8PathBuf::from("/tmp/home/run"),
+///     pgpass_file: Utf8PathBuf::from("/tmp/home/.pgpass"),
+///     tz_dir: None,
+///     timezone: "UTC".into(),
+/// };
+/// assert_eq!(environment.to_env().len(), 6);
+/// ```
 #[derive(Debug, Clone)]
 pub struct TestBootstrapEnvironment {
     /// Effective home directory for the `PostgreSQL` user during the tests.
