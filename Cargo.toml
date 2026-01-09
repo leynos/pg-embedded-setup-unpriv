@@ -72,12 +72,12 @@ cluster-unit-tests = ["dep:tracing-subscriber"]
 dev-worker = ["dep:tracing-subscriber"]
 diesel-support = ["dep:diesel", "dep:pq-sys"]
 
-[workspace.lints.rust]
+[lints.rust]
 unknown_lints             = "deny"
 renamed_and_removed_lints = "deny"
 missing_docs              = "deny"
 
-[workspace.lints.rustdoc]
+[lints.rustdoc]
 missing_crate_level_docs     = "deny"
 broken_intra_doc_links       = "deny"
 private_intra_doc_links      = "deny"

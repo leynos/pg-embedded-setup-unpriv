@@ -27,6 +27,19 @@ pub enum ExecutionMode {
     Subprocess,
 }
 
+/// Detects whether the process is running with root privileges.
+///
+/// # Examples
+/// ```
+/// use pg_embedded_setup_unpriv::{detect_execution_privileges, ExecutionPrivileges};
+///
+/// let privileges = detect_execution_privileges();
+/// let mode = match privileges {
+///     ExecutionPrivileges::Root => "subprocess",
+///     ExecutionPrivileges::Unprivileged => "in-process",
+/// };
+/// assert!(matches!(mode, "subprocess" | "in-process"));
+/// ```
 #[must_use]
 pub fn detect_execution_privileges() -> ExecutionPrivileges {
     #[cfg(unix)]
