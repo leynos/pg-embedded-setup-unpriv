@@ -84,31 +84,16 @@ pub fn dummy_settings(privileges: ExecutionPrivileges) -> TestBootstrapSettings 
     }
 }
 
-/// `rstest` fixture that yields a running [`TestCluster`].
-///
-/// The fixture blocks until `PostgreSQL` is ready, making it ideal for
-/// integration tests that only need to declare a `cluster: TestCluster`
-/// parameter without invoking [`TestCluster::new`] manually.
-///
-/// # Examples
-/// ```no_run
-/// use pg_embedded_setup_unpriv::TestCluster;
-/// use pg_embedded_setup_unpriv::test_support::test_cluster;
-/// use rstest::rstest;
-///
-/// #[rstest]
-/// fn exercises_database(test_cluster: TestCluster) {
-///     let metadata = test_cluster.connection().metadata();
-///     assert!(metadata.port() > 0);
-/// }
-/// ```
-#[fixture]
 #[must_use]
+#[cfg_attr(not(doc), fixture)]
 pub fn test_cluster() -> TestCluster {
     let worker_guard = ensure_worker_env();
-    let cluster = TestCluster::new().unwrap_or_else(|err| {
-        panic!("SKIP-TEST-CLUSTER: test_cluster fixture failed to start PostgreSQL: {err:?}")
-    });
+    let cluster = match TestCluster::new() {
+        Ok(cluster) => cluster,
+        Err(err) => {
+            panic!("SKIP-TEST-CLUSTER: test_cluster fixture failed to start PostgreSQL: {err:?}")
+        }
+    };
     cluster.with_worker_guard(worker_guard)
 }
 
@@ -117,11 +102,11 @@ fn ensure_worker_env() -> Option<ScopedEnv> {
         return None;
     }
 
-    let worker = worker_binary().unwrap_or_else(|| {
+    let Some(worker) = worker_binary() else {
         panic!(
             "SKIP-TEST-CLUSTER: PG_EMBEDDED_WORKER is not set and pg_worker binary was not found"
-        )
-    });
+        );
+    };
 
     Some(scoped_env(vec![(
         OsString::from("PG_EMBEDDED_WORKER"),
@@ -256,35 +241,13 @@ pub fn shared_cluster() -> BootstrapResult<&'static TestCluster> {
     }
 }
 
-/// `rstest` fixture that yields a reference to the shared [`TestCluster`].
-///
-/// This fixture provides access to a process-global cluster that is
-/// initialised once and reused across all tests in the same binary. Use this
-/// when tests can share a cluster and create per-test databases for isolation.
-///
-/// # Panics
-///
-/// Panics with a `SKIP-TEST-CLUSTER:`-prefixed message if the shared cluster
-/// cannot be started. This allows test harnesses to detect and skip tests when
-/// `PostgreSQL` is unavailable.
-///
-/// # Examples
-///
-/// ```no_run
-/// use pg_embedded_setup_unpriv::TestCluster;
-/// use pg_embedded_setup_unpriv::test_support::shared_test_cluster;
-/// use rstest::rstest;
-///
-/// #[rstest]
-/// fn uses_shared_cluster(shared_test_cluster: &'static TestCluster) {
-///     let metadata = shared_test_cluster.connection().metadata();
-///     assert!(metadata.port() > 0);
-/// }
-/// ```
-#[fixture]
 #[must_use]
+#[cfg_attr(not(doc), fixture)]
 pub fn shared_test_cluster() -> &'static TestCluster {
-    shared_cluster().unwrap_or_else(|err| {
-        panic!("SKIP-TEST-CLUSTER: shared_test_cluster fixture failed to start PostgreSQL: {err:?}")
-    })
+    match shared_cluster() {
+        Ok(cluster) => cluster,
+        Err(err) => panic!(
+            "SKIP-TEST-CLUSTER: shared_test_cluster fixture failed to start PostgreSQL: {err:?}"
+        ),
+    }
 }

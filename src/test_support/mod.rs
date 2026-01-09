@@ -18,16 +18,20 @@ mod hook;
 mod logging;
 mod scoped_env;
 
+#[cfg(doc)]
+mod fixtures_docs;
+
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use errors::{bootstrap_error, privilege_error};
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use filesystem::{
     CapabilityTempDir, ambient_dir_and_path, ensure_dir_exists, metadata, set_permissions,
 };
-pub use fixtures::{
-    dummy_environment, dummy_settings, shared_cluster, shared_test_cluster, test_cluster,
-    test_runtime,
-};
+pub use fixtures::{dummy_environment, dummy_settings, shared_cluster, test_runtime};
+#[cfg(not(doc))]
+pub use fixtures::{shared_test_cluster, test_cluster};
+#[cfg(doc)]
+pub use fixtures_docs::{shared_test_cluster, test_cluster};
 pub use hash::hash_directory;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use hook::{

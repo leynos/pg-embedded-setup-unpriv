@@ -28,9 +28,10 @@ pub mod test_support;
 pub mod worker;
 pub(crate) mod worker_process;
 
-/// Integration test shims for worker process orchestration.
 #[doc(hidden)]
 pub mod worker_process_test_api {
+    //! Integration test shims for worker process orchestration.
+
     use std::time::Duration;
 
     use camino::Utf8Path;
@@ -58,11 +59,6 @@ pub mod worker_process_test_api {
     pub struct WorkerRequest<'a>(worker_process::WorkerRequest<'a>);
 
     impl<'a> WorkerRequest<'a> {
-        #[must_use]
-        #[expect(
-            clippy::too_many_arguments,
-            reason = "test helper mirrors worker request constructor"
-        )]
         /// Constructs a worker request for invoking an operation in tests.
         ///
         /// # Examples
@@ -84,6 +80,11 @@ pub mod worker_process_test_api {
         /// );
         /// # let _ = request;
         /// ```
+        #[must_use]
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "test helper mirrors worker request constructor"
+        )]
         pub const fn new(
             worker: &'a Utf8Path,
             settings: &'a Settings,
@@ -107,6 +108,7 @@ pub mod worker_process_test_api {
         worker_process::run(request.inner())
     }
 
+    /// Guard that restores the privilege-drop toggle when tests finish.
     #[cfg(all(
         unix,
         any(
@@ -117,11 +119,12 @@ pub mod worker_process_test_api {
             target_os = "dragonfly",
         ),
     ))]
-    /// Guard that restores the privilege-drop toggle when tests finish.
     pub struct PrivilegeDropGuard {
         _inner: InnerPrivilegeDropGuard,
     }
 
+    /// Temporarily disables privilege dropping so tests can run deterministic
+    /// worker binaries without adjusting file ownership.
     #[cfg(all(
         unix,
         any(
@@ -133,16 +136,14 @@ pub mod worker_process_test_api {
         ),
     ))]
     #[must_use]
-    /// Temporarily disables privilege dropping so tests can run deterministic
-    /// worker binaries without adjusting file ownership.
     pub fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
         PrivilegeDropGuard {
             _inner: worker_process::disable_privilege_drop_for_tests(),
         }
     }
 
-    #[must_use]
     /// Renders a worker failure for assertion-friendly error strings.
+    #[must_use]
     pub fn render_failure_for_tests(
         context: &str,
         output: &std::process::Output,

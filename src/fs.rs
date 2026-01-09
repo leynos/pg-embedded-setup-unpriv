@@ -4,7 +4,7 @@ use crate::observability::LOG_TARGET;
 use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::{
     ambient_authority,
-    fs::{Dir, Permissions, PermissionsExt},
+    fs::{Dir, Metadata, Permissions, PermissionsExt},
 };
 use color_eyre::eyre::{Context, Result};
 use std::io::ErrorKind;
@@ -122,14 +122,21 @@ fn handle_permission_error(path: &Utf8Path, mode: u32, err: std::io::Error) -> R
 }
 
 fn ensure_existing_path_is_dir(path: &Utf8Path) -> Result<()> {
-    match std::fs::metadata(path.as_std_path()) {
+    let (dir, relative) = ambient_dir_and_path(path)?;
+    let metadata_result = if relative.as_str().is_empty() {
+        dir.dir_metadata()
+    } else {
+        dir.metadata(relative.as_std_path())
+    };
+
+    match metadata_result {
         Ok(metadata) => handle_existing_metadata(path, &metadata),
         Err(err) => Err(log_dir_metadata_error(path, err))
             .with_context(|| format!("create {}", path.as_str())),
     }
 }
 
-fn handle_existing_metadata(path: &Utf8Path, metadata: &std::fs::Metadata) -> Result<()> {
+fn handle_existing_metadata(path: &Utf8Path, metadata: &Metadata) -> Result<()> {
     if metadata.is_dir() {
         info!(target: LOG_TARGET, path = %path, "directory already existed");
         Ok(())

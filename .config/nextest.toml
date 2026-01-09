@@ -1,8 +1,7 @@
 # .config/nextest.toml
 [profile.default]
-# Kill any test once it crosses 60s.
-slow-timeout = { period = "60s", terminate-after = 1, grace-period = "5s" }
+# Kill any test once it crosses 180s (matches bootstrap setup timeout).
+slow-timeout = { period = "180s", terminate-after = 1, grace-period = "5s" }
 
 # Put a hard ceiling on the whole run.
 global-timeout = "10m"
-

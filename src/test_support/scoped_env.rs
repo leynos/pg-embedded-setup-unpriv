@@ -5,7 +5,6 @@ use std::ffi::OsString;
 
 use crate::env::ScopedEnv;
 
-#[doc(hidden)]
 /// Applies environment overrides for tests using the library's shared guard.
 ///
 /// # Examples
@@ -19,6 +18,7 @@ use crate::env::ScopedEnv;
 /// ]);
 /// drop(guard);
 /// ```
+#[doc(hidden)]
 pub fn scoped_env<I>(vars: I) -> ScopedEnv
 where
     I: IntoIterator<Item = (OsString, Option<OsString>)>,

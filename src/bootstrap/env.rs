@@ -2,16 +2,17 @@
 //! resulting configuration for the filesystem preparers.
 
 use std::env::{self, VarError};
-use std::fs;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::error::{BootstrapError, BootstrapErrorKind, BootstrapResult};
+use crate::fs::ambient_dir_and_path;
 
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use cap_std::fs::PermissionsExt;
 
 pub(super) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_SHUTDOWN_TIMEOUT_SECS: u64 = 600;
@@ -73,8 +74,14 @@ pub(super) fn worker_binary_from_env() -> BootstrapResult<Option<Utf8PathBuf>> {
 }
 
 fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {
-    let metadata = fs::metadata(path.as_std_path()).map_err(|err| {
-        if err.kind() == std::io::ErrorKind::NotFound {
+    let (dir, relative) = ambient_dir_and_path(path)?;
+    let metadata = if relative.as_str().is_empty() {
+        dir.dir_metadata()
+    } else {
+        dir.metadata(relative.as_std_path())
+    }
+    .map_err(|err| {
+        if err.kind() == ErrorKind::NotFound {
             return BootstrapError::new(
                 BootstrapErrorKind::WorkerBinaryMissing,
                 color_eyre::eyre::eyre!("failed to access PG_EMBEDDED_WORKER at {path}: {err}"),

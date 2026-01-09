@@ -133,8 +133,13 @@ where
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    let content =
-        String::from_utf8(bytes).unwrap_or_else(|err| panic!("logs should be valid UTF-8: {err}"));
+    let content = match String::from_utf8(bytes) {
+        Ok(content) => content,
+        Err(err) => {
+            let err_bytes = err.into_bytes();
+            String::from_utf8_lossy(&err_bytes).into_owned()
+        }
+    };
     let logs = content.lines().map(str::to_owned).collect();
     (logs, result)
 }

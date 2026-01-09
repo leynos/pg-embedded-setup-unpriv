@@ -84,11 +84,6 @@ pub(crate) struct WorkerRequest<'a> {
 }
 
 impl<'a> WorkerRequest<'a> {
-    #[must_use]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "request captures all invocation context"
-    )]
     /// Constructs a new worker request that can be executed via [`run`].
     ///
     /// # Examples
@@ -113,6 +108,11 @@ impl<'a> WorkerRequest<'a> {
     /// );
     /// # let _ = request;
     /// ```
+    #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "request captures all invocation context"
+    )]
     pub(crate) const fn new(
         worker: &'a Utf8Path,
         settings: &'a Settings,

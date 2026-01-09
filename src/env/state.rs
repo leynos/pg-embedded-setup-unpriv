@@ -156,10 +156,10 @@ impl ThreadState {
 
     fn finish_scope(&mut self, index: usize) {
         {
-            let state = self
-                .stack
-                .get_mut(index)
-                .unwrap_or_else(|| panic!("ScopedEnv finished out of order: index {index}"));
+            let Some(state) = self.stack.get_mut(index) else {
+                debug_assert!(false, "ScopedEnv finished out of order: index {index}");
+                return;
+            };
             debug_assert!(
                 !state.finished,
                 "ScopedEnv finished twice for index {index}"
