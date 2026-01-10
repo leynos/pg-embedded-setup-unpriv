@@ -1,5 +1,6 @@
 //! Thread-local state and mutex management for scoped environment guards.
 
+use crate::observability::LOG_TARGET;
 use std::env;
 use std::ffi::OsString;
 use std::sync::{Mutex, MutexGuard};
@@ -78,7 +79,10 @@ impl ThreadState {
 
     fn ensure_lock_is_clean() {
         if ENV_LOCK.is_poisoned() {
-            tracing::warn!("ENV_LOCK was poisoned; clearing poison and proceeding");
+            tracing::warn!(
+                target: LOG_TARGET,
+                "ENV_LOCK was poisoned; clearing poison and proceeding"
+            );
             ENV_LOCK.clear_poison();
         }
     }
@@ -210,7 +214,10 @@ impl ThreadState {
     }
 
     fn log_corruption(reason: &str) {
-        tracing::error!("{reason}; restoring environment and resetting state");
+        tracing::error!(
+            target: LOG_TARGET,
+            "{reason}; restoring environment and resetting state"
+        );
     }
 
     fn ensure_lock_for_restore(&mut self) {
