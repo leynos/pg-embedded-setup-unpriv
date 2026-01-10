@@ -34,6 +34,7 @@ use wait_timeout::ChildExt;
         target_os = "openbsd",
         target_os = "dragonfly",
     ),
+    any(test, doc, feature = "privileged-tests"),
 ))]
 pub(crate) use privileges::{PrivilegeDropGuard, disable_privilege_drop_for_tests};
 
@@ -41,7 +42,7 @@ pub(crate) use privileges::{PrivilegeDropGuard, disable_privilege_drop_for_tests
 ///
 /// Bundles the worker binary path, cluster settings, environment variables,
 /// requested operation, and execution timeout into a single value consumed by
-/// [`run`].
+/// the worker process runner.
 ///
 /// # Examples
 ///
@@ -50,21 +51,41 @@ pub(crate) use privileges::{PrivilegeDropGuard, disable_privilege_drop_for_tests
 ///
 /// use camino::Utf8Path;
 /// use pg_embedded_setup_unpriv::cluster::WorkerOperation;
-/// use pg_embedded_setup_unpriv::worker_process::WorkerRequest;
+/// use pg_embedded_setup_unpriv::worker_process::{WorkerRequest, WorkerRequestArgs};
 /// use postgresql_embedded::Settings;
 ///
 /// let worker = Utf8Path::new("/usr/local/bin/pg_worker");
 /// let settings = Settings::default();
 /// let env_vars: Vec<(String, Option<String>)> = Vec::new();
-/// let request = WorkerRequest::new(
+/// let args = WorkerRequestArgs {
 ///     worker,
-///     &settings,
-///     &env_vars,
-///     WorkerOperation::Setup,
-///     Duration::from_secs(30),
-/// );
+///     settings: &settings,
+///     env_vars: &env_vars,
+///     operation: WorkerOperation::Setup,
+///     timeout: Duration::from_secs(30),
+/// };
+/// let request = WorkerRequest::new(&args);
 /// # let _ = request;
 /// ```
+pub struct WorkerRequestArgs<'a> {
+    /// Filesystem path to the worker binary that will execute the requested
+    /// privileged operation.
+    pub worker: &'a Utf8Path,
+    /// Cluster configuration that is serialised into the worker payload so the
+    /// child process can bootstrap itself consistently with the parent.
+    pub settings: &'a Settings,
+    /// Environment variable overrides propagated to the worker to reproduce the
+    /// launcher context (values may be unset via `None`).
+    pub env_vars: &'a [(String, Option<String>)],
+    /// Specific worker action that determines the command-line flag passed to
+    /// the worker binary.
+    pub operation: WorkerOperation,
+    /// Maximum duration the worker is allowed to run before it is terminated
+    /// and treated as a timeout failure.
+    pub timeout: Duration,
+}
+
+/// Concrete worker request built from [`WorkerRequestArgs`].
 pub(crate) struct WorkerRequest<'a> {
     /// Filesystem path to the worker binary that will execute the requested
     /// privileged operation.
@@ -93,39 +114,30 @@ impl<'a> WorkerRequest<'a> {
     ///
     /// use camino::Utf8Path;
     /// use pg_embedded_setup_unpriv::cluster::WorkerOperation;
-    /// use pg_embedded_setup_unpriv::worker_process::WorkerRequest;
+    /// use pg_embedded_setup_unpriv::worker_process::{WorkerRequest, WorkerRequestArgs};
     /// use postgresql_embedded::Settings;
     ///
     /// let worker = Utf8Path::new("/usr/local/bin/pg_worker");
     /// let settings = Settings::default();
     /// let env_vars: Vec<(String, Option<String>)> = Vec::new();
-    /// let request = WorkerRequest::new(
+    /// let args = WorkerRequestArgs {
     ///     worker,
-    ///     &settings,
-    ///     &env_vars,
-    ///     WorkerOperation::Setup,
-    ///     Duration::from_secs(30),
-    /// );
+    ///     settings: &settings,
+    ///     env_vars: &env_vars,
+    ///     operation: WorkerOperation::Setup,
+    ///     timeout: Duration::from_secs(30),
+    /// };
+    /// let request = WorkerRequest::new(&args);
     /// # let _ = request;
     /// ```
     #[must_use]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "request captures all invocation context"
-    )]
-    pub(crate) const fn new(
-        worker: &'a Utf8Path,
-        settings: &'a Settings,
-        env_vars: &'a [(String, Option<String>)],
-        operation: WorkerOperation,
-        timeout: Duration,
-    ) -> Self {
+    pub(crate) const fn new(args: &WorkerRequestArgs<'a>) -> Self {
         Self {
-            worker,
-            settings,
-            env_vars,
-            operation,
-            timeout,
+            worker: args.worker,
+            settings: args.settings,
+            env_vars: args.env_vars,
+            operation: args.operation,
+            timeout: args.timeout,
         }
     }
 }
@@ -155,19 +167,20 @@ impl<'a> WorkerRequest<'a> {
 /// use camino::Utf8Path;
 /// use pg_embedded_setup_unpriv::cluster::WorkerOperation;
 /// use pg_embedded_setup_unpriv::error::BootstrapResult;
-/// use pg_embedded_setup_unpriv::worker_process::{run, WorkerRequest};
+/// use pg_embedded_setup_unpriv::worker_process::{run, WorkerRequest, WorkerRequestArgs};
 ///
 /// fn invoke_worker() -> BootstrapResult<()> {
 ///     let worker = Utf8Path::new("/usr/local/bin/pg_worker");
 ///     let settings = load_cluster_settings();
 ///     let env = vec![("DATABASE_URL".to_owned(), Some("postgres://...".to_owned()))];
-///     let request = WorkerRequest::new(
+///     let args = WorkerRequestArgs {
 ///         worker,
-///         &settings,
-///         &env,
-///         WorkerOperation::Setup,
-///         Duration::from_secs(30),
-///     );
+///         settings: &settings,
+///         env_vars: &env,
+///         operation: WorkerOperation::Setup,
+///         timeout: Duration::from_secs(30),
+///     };
+///     let request = WorkerRequest::new(&args);
 ///
 ///     run(&request)
 /// }

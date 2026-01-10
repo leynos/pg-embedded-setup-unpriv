@@ -304,9 +304,9 @@ fn ensure_pgpass_for_user(path: &Utf8PathBuf, user: &User) -> BootstrapResult<()
     use nix::sys::stat::{Mode, fchmod};
     use std::os::fd::AsRawFd;
 
-    // Refuse to follow symlinks or other indirections before changing
-    // ownership/mode so an attacker cannot redirect the helper to a
-    // privileged target in between operations.
+    // O_NOFOLLOW ensures the final path component is not a symlink. This
+    // does not protect against symlinks in ancestor directories, so we only
+    // guard against last-hop substitution here.
     let (dir, relative) = crate::fs::ambient_dir_and_path(path)?;
     if relative.as_str().is_empty() {
         return Err(BootstrapError::from(color_eyre::eyre::eyre!(

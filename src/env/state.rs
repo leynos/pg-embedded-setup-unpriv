@@ -47,10 +47,15 @@ impl ThreadState {
     }
 
     pub fn exit_scope(&mut self, index: usize) {
-        debug_assert!(self.depth > 0, "ScopedEnv drop without matching apply");
+        if self.depth == 0 {
+            self.force_restore_and_reset("ScopedEnv drop without matching apply");
+            return;
+        }
         self.depth -= 1;
 
-        self.finish_scope(index);
+        if !self.finish_scope(index) {
+            return;
+        }
 
         if self.depth == 0 {
             self.release_outermost_lock();
@@ -154,38 +159,35 @@ impl ThreadState {
         previous
     }
 
-    fn finish_scope(&mut self, index: usize) {
+    fn finish_scope(&mut self, index: usize) -> bool {
         {
             let Some(state) = self.stack.get_mut(index) else {
-                debug_assert!(false, "ScopedEnv finished out of order: index {index}");
-                return;
+                self.force_restore_and_reset("ScopedEnv finished out of order");
+                return false;
             };
-            debug_assert!(
-                !state.finished,
-                "ScopedEnv finished twice for index {index}"
-            );
+            if state.finished {
+                self.force_restore_and_reset("ScopedEnv finished twice");
+                return false;
+            }
             state.finished = true;
         }
 
-        self.restore_finished_scopes();
+        self.restore_finished_scopes()
     }
 
-    fn restore_finished_scopes(&mut self) {
+    fn restore_finished_scopes(&mut self) -> bool {
         while self
             .stack
             .last()
             .is_some_and(|candidate| candidate.finished)
         {
-            if let Some(finished) = self.stack.pop() {
-                restore_saved(finished.saved);
-            } else {
-                debug_assert!(
-                    false,
-                    "Finished scope missing from stack during restoration"
-                );
-                break;
-            }
+            let Some(finished) = self.stack.pop() else {
+                self.force_restore_and_reset("ScopedEnv stack corrupted during restoration");
+                return false;
+            };
+            restore_saved(finished.saved);
         }
+        true
     }
 
     fn release_outermost_lock(&mut self) {
@@ -197,6 +199,37 @@ impl ThreadState {
             drop(guard);
         } else {
             debug_assert!(false, "ScopedEnv mutex guard missing at depth zero");
+        }
+    }
+
+    fn force_restore_and_reset(&mut self, reason: &str) {
+        Self::log_corruption(reason);
+        self.ensure_lock_for_restore();
+        self.restore_all_scopes();
+        self.reset_depth_and_unlock();
+    }
+
+    fn log_corruption(reason: &str) {
+        tracing::error!("{reason}; restoring environment and resetting state");
+    }
+
+    fn ensure_lock_for_restore(&mut self) {
+        if self.lock.is_none() {
+            Self::ensure_lock_is_clean();
+            self.lock = Some(Self::lock_env_mutex());
+        }
+    }
+
+    fn restore_all_scopes(&mut self) {
+        while let Some(state) = self.stack.pop() {
+            restore_saved(state.saved);
+        }
+    }
+
+    fn reset_depth_and_unlock(&mut self) {
+        self.depth = 0;
+        if let Some(guard) = self.lock.take() {
+            drop(guard);
         }
     }
 }

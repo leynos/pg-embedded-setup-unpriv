@@ -3,6 +3,7 @@
 use super::scoped_env::scoped_env;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Result, eyre};
+#[cfg(not(doc))]
 use rstest::fixture;
 use std::ffi::OsString;
 use std::sync::OnceLock;

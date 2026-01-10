@@ -69,6 +69,12 @@ pub(super) fn worker_binary_from_env() -> BootstrapResult<Option<Utf8PathBuf>> {
         ))
     })?;
 
+    if path.as_str().is_empty() {
+        return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+            "PG_EMBEDDED_WORKER must not be empty"
+        )));
+    }
+
     validate_worker_binary(&path)?;
     Ok(Some(path))
 }
