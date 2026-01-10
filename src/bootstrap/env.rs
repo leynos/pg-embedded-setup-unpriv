@@ -74,6 +74,11 @@ pub(super) fn worker_binary_from_env() -> BootstrapResult<Option<Utf8PathBuf>> {
             "PG_EMBEDDED_WORKER must not be empty"
         )));
     }
+    if path.as_str() == "/" {
+        return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+            "PG_EMBEDDED_WORKER must not point at the filesystem root"
+        )));
+    }
 
     validate_worker_binary(&path)?;
     Ok(Some(path))

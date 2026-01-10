@@ -329,6 +329,18 @@ fn ensure_pgpass_for_user(path: &Utf8PathBuf, user: &User) -> BootstrapResult<()
             )));
         }
     };
+    let metadata = file.metadata().map_err(|err| {
+        BootstrapError::from(color_eyre::eyre::eyre!(
+            "stat {} failed: {err}",
+            path.as_str()
+        ))
+    })?;
+    if !metadata.is_file() {
+        return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+            "PGPASSFILE must reference a regular file: {}",
+            path.as_str()
+        )));
+    }
 
     let fd = file.as_raw_fd();
     fchown(fd, Some(user.uid), Some(user.gid)).map_err(|err| {

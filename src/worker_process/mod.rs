@@ -50,8 +50,9 @@ pub(crate) use privileges::{PrivilegeDropGuard, disable_privilege_drop_for_tests
 /// use std::time::Duration;
 ///
 /// use camino::Utf8Path;
-/// use pg_embedded_setup_unpriv::cluster::WorkerOperation;
-/// use pg_embedded_setup_unpriv::worker_process::{WorkerRequest, WorkerRequestArgs};
+/// use pg_embedded_setup_unpriv::worker_process_test_api::{
+///     WorkerOperation, WorkerRequest, WorkerRequestArgs,
+/// };
 /// use postgresql_embedded::Settings;
 ///
 /// let worker = Utf8Path::new("/usr/local/bin/pg_worker");
@@ -67,6 +68,7 @@ pub(crate) use privileges::{PrivilegeDropGuard, disable_privilege_drop_for_tests
 /// let request = WorkerRequest::new(&args);
 /// # let _ = request;
 /// ```
+#[derive(Debug, Clone, Copy)]
 pub struct WorkerRequestArgs<'a> {
     /// Filesystem path to the worker binary that will execute the requested
     /// privileged operation.
@@ -113,8 +115,9 @@ impl<'a> WorkerRequest<'a> {
     /// use std::time::Duration;
     ///
     /// use camino::Utf8Path;
-    /// use pg_embedded_setup_unpriv::cluster::WorkerOperation;
-    /// use pg_embedded_setup_unpriv::worker_process::{WorkerRequest, WorkerRequestArgs};
+    /// use pg_embedded_setup_unpriv::worker_process_test_api::{
+    ///     WorkerOperation, WorkerRequest, WorkerRequestArgs,
+    /// };
     /// use postgresql_embedded::Settings;
     ///
     /// let worker = Utf8Path::new("/usr/local/bin/pg_worker");
@@ -165,9 +168,10 @@ impl<'a> WorkerRequest<'a> {
 /// use std::time::Duration;
 ///
 /// use camino::Utf8Path;
-/// use pg_embedded_setup_unpriv::cluster::WorkerOperation;
 /// use pg_embedded_setup_unpriv::error::BootstrapResult;
-/// use pg_embedded_setup_unpriv::worker_process::{run, WorkerRequest, WorkerRequestArgs};
+/// use pg_embedded_setup_unpriv::worker_process_test_api::{
+///     run, WorkerOperation, WorkerRequest, WorkerRequestArgs,
+/// };
 ///
 /// fn invoke_worker() -> BootstrapResult<()> {
 ///     let worker = Utf8Path::new("/usr/local/bin/pg_worker");
