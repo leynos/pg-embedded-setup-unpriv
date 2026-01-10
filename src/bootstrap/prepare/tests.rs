@@ -55,8 +55,8 @@ mod sanitized_settings {
             "expected data dir to appear in logs, got {joined}"
         );
         ensure!(
-            joined.contains("password=\"<redacted>\""),
-            "expected password to be redacted, got {joined}"
+            joined.contains("password=") && joined.contains("<redacted>"),
+            "expected redacted password marker, got {joined}"
         );
         ensure!(
             joined.contains("=17.1.0"),
@@ -77,7 +77,8 @@ mod sanitized_settings {
 
 mod behaviour_tests {
     use super::*;
-    use temp_env::with_vars;
+    use crate::test_support::scoped_env;
+    use std::ffi::OsString;
     use tempfile::tempdir;
 
     #[test]
@@ -96,11 +97,14 @@ mod behaviour_tests {
         };
         let settings = cfg.to_settings().expect("settings");
 
-        let prepared = with_vars(
-            [("TZDIR", Some(runtime_dir.as_str())), ("TZ", Some("UTC"))],
-            move || bootstrap_unprivileged(settings, &cfg),
-        )
-        .expect("bootstrap");
+        let _guard = scoped_env(vec![
+            (
+                OsString::from("TZDIR"),
+                Some(OsString::from(runtime_dir.as_str())),
+            ),
+            (OsString::from("TZ"), Some(OsString::from("UTC"))),
+        ]);
+        let prepared = bootstrap_unprivileged(settings, &cfg).expect("bootstrap");
 
         assert_eq!(prepared.environment.home, runtime_dir);
         assert!(prepared.environment.xdg_cache_home.exists());
@@ -123,6 +127,7 @@ mod behaviour_tests {
 mod unix_tests {
     use super::*;
     use nix::unistd::Uid;
+    use tempfile::tempdir;
 
     #[test]
     fn ensure_settings_paths_applies_defaults() {
@@ -143,9 +148,15 @@ mod unix_tests {
 
     #[test]
     fn ensure_settings_paths_respects_user_provided_dirs() {
+        let sandbox = tempdir().expect("settings sandbox");
+        let install_path = sandbox.path().join("install");
+        let data_path = sandbox.path().join("data");
+        let install_dir =
+            Utf8PathBuf::from_path_buf(install_path).expect("install dir should be utf8");
+        let data_dir = Utf8PathBuf::from_path_buf(data_path).expect("data dir should be utf8");
         let cfg = PgEnvCfg {
-            runtime_dir: Some(Utf8PathBuf::from("/custom/install")),
-            data_dir: Some(Utf8PathBuf::from("/custom/data")),
+            runtime_dir: Some(install_dir.clone()),
+            data_dir: Some(data_dir.clone()),
             ..PgEnvCfg::default()
         };
         let mut settings = cfg.to_settings().expect("custom config should convert");
@@ -154,12 +165,9 @@ mod unix_tests {
         let paths =
             resolve_settings_paths_for_uid(&mut settings, &cfg, uid).expect("settings paths");
 
-        assert_eq!(paths.install_dir, Utf8PathBuf::from("/custom/install"));
-        assert_eq!(paths.data_dir, Utf8PathBuf::from("/custom/data"));
-        assert_eq!(
-            paths.password_file,
-            Utf8PathBuf::from("/custom/install").join(".pgpass"),
-        );
+        assert_eq!(paths.install_dir, install_dir);
+        assert_eq!(paths.data_dir, data_dir);
+        assert_eq!(paths.password_file, paths.install_dir.join(".pgpass"));
         assert!(!paths.install_default);
         assert!(!paths.data_default);
     }

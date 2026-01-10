@@ -1,7 +1,8 @@
 //! Tests for environment scoping and logging.
 
 use super::ScopedEnv;
-use super::state::ENV_LOCK;
+use super::THREAD_STATE;
+use super::state::{ENV_LOCK, ThreadState};
 #[cfg(feature = "cluster-unit-tests")]
 use crate::test_support::capture_info_logs;
 use std::env;
@@ -77,6 +78,43 @@ fn apply_os_rejects_invalid_keys() {
         result.is_err(),
         "apply_os must reject environment names containing '='"
     );
+}
+
+#[test]
+fn thread_state_recovers_from_invalid_index() {
+    let key = OsString::from("THREAD_STATE_INVALID_INDEX");
+    let original = env::var_os(&key);
+    let mut state = ThreadState::new();
+    let index = state.enter_scope(vec![(key.clone(), Some(OsString::from("value")))]);
+
+    assert_eq!(env::var_os(&key), Some(OsString::from("value")));
+
+    state.exit_scope(index + 1);
+
+    assert_eq!(env::var_os(&key), original);
+    assert_eq!(state.depth, 0);
+    assert!(state.stack.is_empty());
+    assert!(state.lock.is_none());
+}
+
+#[test]
+fn scoped_env_recovers_from_corrupt_exit() {
+    let key = OsString::from("SCOPED_ENV_CORRUPT_EXIT");
+    let original = env::var_os(&key);
+    let guard = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("value")))]);
+
+    THREAD_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        state.exit_scope(usize::MAX);
+    });
+
+    assert_eq!(env::var_os(&key), original);
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| drop(guard)));
+    assert!(
+        result.is_ok(),
+        "dropping guard after corruption should not panic"
+    );
+    assert_eq!(env::var_os(&key), original);
 }
 
 #[cfg(feature = "cluster-unit-tests")]

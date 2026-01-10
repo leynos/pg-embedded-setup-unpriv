@@ -5,3 +5,7 @@ slow-timeout = { period = "180s", terminate-after = 1, grace-period = "5s" }
 
 # Put a hard ceiling on the whole run.
 global-timeout = "10m"
+
+[[profile.default.overrides]]
+filter = "binary(=pg_embedded_setup_unpriv)"
+slow-timeout = { period = "30s", terminate-after = 1, grace-period = "5s" }
