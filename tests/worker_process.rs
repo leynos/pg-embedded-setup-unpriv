@@ -79,7 +79,7 @@ const fn request<'a>(
         operation: WorkerOperation::Setup,
         timeout,
     };
-    WorkerRequest::new(&args)
+    WorkerRequest::new(args)
 }
 
 fn require_contains(message: &str, needle: &str, description: &str) -> BootstrapResult<()> {

@@ -231,7 +231,7 @@ impl<'a> WorkerInvoker<'a> {
             operation,
             timeout: operation.timeout(self.bootstrap),
         };
-        let request = WorkerRequest::new(&args);
+        let request = WorkerRequest::new(args);
 
         worker_process::run(&request)
     }

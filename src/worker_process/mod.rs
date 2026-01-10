@@ -65,7 +65,7 @@ pub(crate) use privileges::{PrivilegeDropGuard, disable_privilege_drop_for_tests
 ///     operation: WorkerOperation::Setup,
 ///     timeout: Duration::from_secs(30),
 /// };
-/// let request = WorkerRequest::new(&args);
+/// let request = WorkerRequest::new(args);
 /// # let _ = request;
 /// ```
 #[derive(Debug, Clone, Copy)]
@@ -130,11 +130,11 @@ impl<'a> WorkerRequest<'a> {
     ///     operation: WorkerOperation::Setup,
     ///     timeout: Duration::from_secs(30),
     /// };
-    /// let request = WorkerRequest::new(&args);
+    /// let request = WorkerRequest::new(args);
     /// # let _ = request;
     /// ```
     #[must_use]
-    pub(crate) const fn new(args: &WorkerRequestArgs<'a>) -> Self {
+    pub(crate) const fn new(args: WorkerRequestArgs<'a>) -> Self {
         Self {
             worker: args.worker,
             settings: args.settings,
@@ -184,7 +184,7 @@ impl<'a> WorkerRequest<'a> {
 ///         operation: WorkerOperation::Setup,
 ///         timeout: Duration::from_secs(30),
 ///     };
-///     let request = WorkerRequest::new(&args);
+///     let request = WorkerRequest::new(args);
 ///
 ///     run(&request)
 /// }

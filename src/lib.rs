@@ -78,11 +78,11 @@ pub mod worker_process_test_api {
         ///     operation: WorkerOperation::Setup,
         ///     timeout: Duration::from_secs(1),
         /// };
-        /// let request = WorkerRequest::new(&args);
+        /// let request = WorkerRequest::new(args);
         /// # let _ = request;
         /// ```
         #[must_use]
-        pub const fn new(args: &WorkerRequestArgs<'a>) -> Self {
+        pub const fn new(args: WorkerRequestArgs<'a>) -> Self {
             Self(worker_process::WorkerRequest::new(args))
         }
 
