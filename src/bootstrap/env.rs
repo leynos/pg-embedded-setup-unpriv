@@ -2,7 +2,6 @@
 //! resulting configuration for the filesystem preparers.
 
 use std::env::{self, VarError};
-use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -86,14 +85,20 @@ pub(super) fn worker_binary_from_env() -> BootstrapResult<Option<Utf8PathBuf>> {
 }
 
 fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {
-    let (dir, relative) =
-        ambient_dir_and_path(path).map_err(|err| match fs::metadata(path.as_std_path()) {
-            Err(meta_err) if meta_err.kind() == ErrorKind::NotFound => BootstrapError::new(
-                BootstrapErrorKind::WorkerBinaryMissing,
-                color_eyre::eyre::eyre!("failed to access PG_EMBEDDED_WORKER at {path}: {err}"),
-            ),
-            _ => BootstrapError::from(err),
-        })?;
+    let (dir, relative) = ambient_dir_and_path(path).map_err(|err| {
+        let is_not_found = err
+            .chain()
+            .filter_map(|source| source.downcast_ref::<std::io::Error>())
+            .any(|source| source.kind() == ErrorKind::NotFound);
+        let report = color_eyre::eyre::eyre!(err)
+            .wrap_err(format!("failed to access PG_EMBEDDED_WORKER at {path}"));
+
+        if is_not_found {
+            BootstrapError::new(BootstrapErrorKind::WorkerBinaryMissing, report)
+        } else {
+            BootstrapError::from(report)
+        }
+    })?;
     let metadata = dir.metadata(relative.as_std_path()).map_err(|err| {
         if err.kind() == ErrorKind::NotFound {
             BootstrapError::new(
