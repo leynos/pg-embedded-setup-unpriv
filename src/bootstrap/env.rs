@@ -90,7 +90,7 @@ fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {
         ambient_dir_and_path(path).map_err(|err| worker_binary_error(path, err))?;
     let metadata = dir
         .metadata(relative.as_std_path())
-        .map_err(|err| worker_binary_error(path, color_eyre::eyre::eyre!(err)))?;
+        .map_err(|err| worker_binary_error(path, Report::new(err)))?;
 
     if !metadata.is_file() {
         return Err(BootstrapError::from(color_eyre::eyre::eyre!(

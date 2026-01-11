@@ -10,6 +10,7 @@ use serial_test::serial;
 use std::env;
 use std::ffi::OsString;
 use std::panic;
+use std::sync::TryLockError;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -111,7 +112,6 @@ fn thread_state_recovers_from_invalid_index() {
 }
 
 #[rstest]
-#[serial]
 #[case::corrupt_exit(CorruptionCase {
     test_name: "CORRUPT_EXIT",
     setup_guards: setup_single_guard,
@@ -133,6 +133,7 @@ fn thread_state_recovers_from_invalid_index() {
     drop_guards: drop_guards_out_of_order,
     drop_message: "dropping outer guard out of order should not panic",
 })]
+#[serial]
 fn scoped_env_recovers_from_corrupt_exit(#[case] case: CorruptionCase) {
     assert_scoped_env_recovers_from_corrupt_exit(case.test_name, |key| {
         let original = env::var_os(key);
@@ -246,9 +247,17 @@ fn assert_thread_state_reset() {
 fn assert_env_lock_released() {
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
-        if let Ok(guard) = ENV_LOCK.try_lock() {
-            drop(guard);
-            return;
+        match ENV_LOCK.try_lock() {
+            Ok(guard) => {
+                drop(guard);
+                return;
+            }
+            Err(TryLockError::Poisoned(guard)) => {
+                drop(guard);
+                ENV_LOCK.clear_poison();
+                return;
+            }
+            Err(TryLockError::WouldBlock) => {}
         }
         assert!(Instant::now() < deadline, "ENV_LOCK should be released");
         thread::yield_now();

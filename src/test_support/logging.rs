@@ -159,7 +159,7 @@ fn decode_logs(bytes: Vec<u8>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_debug_logs, capture_info_logs_with_spans, decode_logs};
+    use super::{capture_debug_logs, capture_info_logs_with_spans, capture_warn_logs, decode_logs};
     use tracing::info_span;
 
     #[test]
@@ -196,9 +196,18 @@ mod tests {
 
     #[test]
     fn decode_logs_uses_lossy_utf8_for_invalid_bytes() {
-        let logs = decode_logs(vec![b'a', b'b', b'\n', 0xF0, 0x28, 0x8C, 0x28]);
+        let bytes = vec![b'a', b'b', b'\n', 0xF0, 0x28, 0x8C, 0x28];
+        let (warn_logs, logs) = capture_warn_logs(|| decode_logs(bytes));
 
-        assert!(logs.iter().any(|line| line.contains("ab")));
-        assert!(logs.iter().any(|line| line.contains("\u{FFFD}")));
+        assert_eq!(
+            logs,
+            vec![String::from("ab"), String::from("\u{FFFD}(\u{FFFD}(")]
+        );
+        assert!(
+            warn_logs.iter().any(
+                |line| line.contains("captured logs contained invalid UTF-8; decoding lossily")
+            ),
+            "expected invalid UTF-8 warning, got {warn_logs:?}"
+        );
     }
 }

@@ -174,35 +174,50 @@ fn log_dir_metadata_error(path: &Utf8Path, err: std::io::Error) -> std::io::Erro
 mod tests {
     use super::ensure_existing_path_is_dir;
     use camino::{Utf8Path, Utf8PathBuf};
+    use rstest::rstest;
     use std::fs::File;
     use tempfile::tempdir;
 
-    #[test]
-    fn ensure_existing_path_is_dir_accepts_directory() {
-        let temp = tempdir().expect("tempdir");
-        let path =
-            Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 tempdir path");
-
-        ensure_existing_path_is_dir(&path).expect("existing directory should be accepted");
+    struct ExistingPathCase {
+        create_file: bool,
+        error_contains: Option<&'static str>,
     }
 
-    #[test]
-    fn ensure_existing_path_is_dir_rejects_files() {
+    #[rstest]
+    #[case::directory(ExistingPathCase {
+        create_file: false,
+        error_contains: None,
+    })]
+    #[case::file(ExistingPathCase {
+        create_file: true,
+        error_contains: Some("exists but is not a directory"),
+    })]
+    fn ensure_existing_path_is_dir_handles_existing_paths(#[case] case: ExistingPathCase) {
         let temp = tempdir().expect("tempdir");
-        let file_path = temp.path().join("file");
-        File::create(&file_path).expect("create file");
-        let path = Utf8PathBuf::from_path_buf(file_path).expect("utf8 file path");
+        let path = if case.create_file {
+            let file_path = temp.path().join("file");
+            File::create(&file_path).expect("create file");
+            Utf8PathBuf::from_path_buf(file_path).expect("utf8 file path")
+        } else {
+            Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 tempdir path")
+        };
 
-        let err = ensure_existing_path_is_dir(&path).expect_err("file path should not be accepted");
-        let message = err
-            .chain()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(": ");
-        assert!(
-            message.contains("exists but is not a directory"),
-            "unexpected error chain: {message}"
-        );
+        let result = ensure_existing_path_is_dir(&path);
+
+        match case.error_contains {
+            Some(message) => {
+                let err = result.expect_err("existing file should be rejected as a directory path");
+                let chain = err
+                    .chain()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(": ");
+                assert!(chain.contains(message), "unexpected error chain: {chain}");
+            }
+            None => {
+                result.expect("existing directory should be accepted");
+            }
+        }
     }
 
     #[cfg(unix)]

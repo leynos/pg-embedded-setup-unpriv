@@ -49,7 +49,7 @@ impl ThreadState {
 
     pub fn exit_scope(&mut self, index: usize) {
         if self.depth == 0 {
-            self.force_restore_and_reset("ScopedEnv drop without matching apply");
+            self.force_restore_and_reset("ScopedEnv drop without matching apply", None);
             return;
         }
         self.depth -= 1;
@@ -166,11 +166,11 @@ impl ThreadState {
     fn finish_scope(&mut self, index: usize) -> bool {
         {
             let Some(state) = self.stack.get_mut(index) else {
-                self.force_restore_and_reset("ScopedEnv finished out of order");
+                self.force_restore_and_reset("ScopedEnv finished out of order", Some(index));
                 return false;
             };
             if state.finished {
-                self.force_restore_and_reset("ScopedEnv finished twice");
+                self.force_restore_and_reset("ScopedEnv finished twice", Some(index));
                 return false;
             }
             state.finished = true;
@@ -205,8 +205,8 @@ impl ThreadState {
         }
     }
 
-    fn force_restore_and_reset(&mut self, reason: &str) {
-        Self::log_corruption(reason);
+    fn force_restore_and_reset(&mut self, reason: &str, index: Option<usize>) {
+        self.log_corruption(reason, index);
         if self.stack.is_empty() {
             if self.lock.is_some() {
                 self.reset_depth_and_unlock();
@@ -220,9 +220,16 @@ impl ThreadState {
         self.reset_depth_and_unlock();
     }
 
-    fn log_corruption(reason: &str) {
+    fn log_corruption(&self, reason: &str, index: Option<usize>) {
+        let depth = self.depth;
+        let stack_len = self.stack.len();
+        let has_lock = self.lock.is_some();
         tracing::error!(
             target: LOG_TARGET,
+            depth,
+            stack_len,
+            has_lock,
+            index = ?index,
             "{reason}; restoring environment and resetting state"
         );
     }
