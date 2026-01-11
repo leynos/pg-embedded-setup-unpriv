@@ -6,6 +6,7 @@
 use std::io::{Result as IoResult, Write};
 use std::sync::{Arc, Mutex};
 
+use crate::observability::LOG_TARGET;
 use tracing::Level;
 use tracing::subscriber::with_default;
 use tracing_subscriber::fmt;
@@ -137,11 +138,19 @@ where
     (logs, result)
 }
 
+/// Decodes captured log output, warning and falling back to lossy UTF-8 when
+/// invalid byte sequences are encountered.
 fn decode_logs(bytes: Vec<u8>) -> Vec<String> {
     let content = match String::from_utf8(bytes) {
         Ok(content) => content,
         Err(err) => {
+            let utf8_error = err.utf8_error();
             let err_bytes = err.into_bytes();
+            tracing::warn!(
+                target: LOG_TARGET,
+                error = %utf8_error,
+                "captured logs contained invalid UTF-8; decoding lossily"
+            );
             String::from_utf8_lossy(&err_bytes).into_owned()
         }
     };

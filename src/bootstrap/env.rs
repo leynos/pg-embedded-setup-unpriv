@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use camino::{Utf8Path, Utf8PathBuf};
+use color_eyre::eyre::Report;
 
 use crate::error::{BootstrapError, BootstrapErrorKind, BootstrapResult};
 use crate::fs::ambient_dir_and_path;
@@ -85,32 +86,11 @@ pub(super) fn worker_binary_from_env() -> BootstrapResult<Option<Utf8PathBuf>> {
 }
 
 fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {
-    let (dir, relative) = ambient_dir_and_path(path).map_err(|err| {
-        let is_not_found = err
-            .chain()
-            .filter_map(|source| source.downcast_ref::<std::io::Error>())
-            .any(|source| source.kind() == ErrorKind::NotFound);
-        let report = color_eyre::eyre::eyre!(err)
-            .wrap_err(format!("failed to access PG_EMBEDDED_WORKER at {path}"));
-
-        if is_not_found {
-            BootstrapError::new(BootstrapErrorKind::WorkerBinaryMissing, report)
-        } else {
-            BootstrapError::from(report)
-        }
-    })?;
-    let metadata = dir.metadata(relative.as_std_path()).map_err(|err| {
-        if err.kind() == ErrorKind::NotFound {
-            BootstrapError::new(
-                BootstrapErrorKind::WorkerBinaryMissing,
-                color_eyre::eyre::eyre!("failed to access PG_EMBEDDED_WORKER at {path}: {err}"),
-            )
-        } else {
-            BootstrapError::from(color_eyre::eyre::eyre!(
-                "failed to access PG_EMBEDDED_WORKER at {path}: {err}"
-            ))
-        }
-    })?;
+    let (dir, relative) =
+        ambient_dir_and_path(path).map_err(|err| worker_binary_error(path, err))?;
+    let metadata = dir
+        .metadata(relative.as_std_path())
+        .map_err(|err| worker_binary_error(path, color_eyre::eyre::eyre!(err)))?;
 
     if !metadata.is_file() {
         return Err(BootstrapError::from(color_eyre::eyre::eyre!(
@@ -128,6 +108,24 @@ fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {
     }
 
     Ok(())
+}
+
+fn worker_binary_error(path: &Utf8Path, err: Report) -> BootstrapError {
+    let is_not_found = error_chain_has_not_found(&err);
+    let context = format!("failed to access PG_EMBEDDED_WORKER at {path}: {err}");
+    let report = err.wrap_err(context);
+
+    if is_not_found {
+        BootstrapError::new(BootstrapErrorKind::WorkerBinaryMissing, report)
+    } else {
+        BootstrapError::from(report)
+    }
+}
+
+fn error_chain_has_not_found(err: &Report) -> bool {
+    err.chain()
+        .filter_map(|source| source.downcast_ref::<std::io::Error>())
+        .any(|source| source.kind() == ErrorKind::NotFound)
 }
 
 #[derive(Debug, Clone)]

@@ -176,10 +176,11 @@ impl ThreadState {
             state.finished = true;
         }
 
-        self.restore_finished_scopes()
+        self.restore_finished_scopes();
+        true
     }
 
-    fn restore_finished_scopes(&mut self) -> bool {
+    fn restore_finished_scopes(&mut self) {
         while let Some(guard_state) = self.stack.pop() {
             if !guard_state.finished {
                 self.stack.push(guard_state);
@@ -187,7 +188,6 @@ impl ThreadState {
             }
             restore_saved(guard_state.saved);
         }
-        true
     }
 
     fn release_outermost_lock(&mut self) {
@@ -204,6 +204,14 @@ impl ThreadState {
 
     fn force_restore_and_reset(&mut self, reason: &str) {
         Self::log_corruption(reason);
+        if self.stack.is_empty() {
+            if self.lock.is_some() {
+                self.reset_depth_and_unlock();
+            } else {
+                self.depth = 0;
+            }
+            return;
+        }
         self.ensure_lock_for_restore();
         self.restore_all_scopes();
         self.reset_depth_and_unlock();

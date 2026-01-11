@@ -26,6 +26,7 @@ pub(crate) fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)
                     .to_path_buf();
                 (parent, relative)
             }
+            // Root paths have no parent; an empty relative path marks the ambient root.
             None => (path, Utf8PathBuf::new()),
         };
         let dir = Dir::open_ambient_dir(dir_path.as_std_path(), ambient_authority())
@@ -133,6 +134,7 @@ fn handle_permission_error(path: &Utf8Path, mode: u32, err: std::io::Error) -> R
 fn ensure_existing_path_is_dir(path: &Utf8Path) -> Result<()> {
     let (dir, relative) = ambient_dir_and_path(path)?;
     let metadata_result = if relative.as_str().is_empty() {
+        // Empty relative paths mean the ambient root, so query the directory itself.
         dir.dir_metadata()
     } else {
         dir.metadata(relative.as_std_path())
