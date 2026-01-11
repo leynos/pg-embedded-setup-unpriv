@@ -129,6 +129,36 @@ fn scoped_env_recovers_from_corrupt_exit() {
     assert_eq!(env::var_os(&key), original);
 }
 
+#[test]
+fn scoped_env_recovers_from_invalid_index_with_nested_scopes() {
+    let key = OsString::from("SCOPED_ENV_INVALID_INDEX_NESTED");
+    let original = env::var_os(&key);
+    let outer = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("outer")))]);
+    let inner = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("inner")))]);
+
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        THREAD_STATE.with(|cell| {
+            let mut state = cell.borrow_mut();
+            state.exit_scope(usize::MAX);
+        });
+    }));
+    assert!(
+        result.is_ok(),
+        "invalid scope exit should not panic in release builds"
+    );
+    assert_eq!(env::var_os(&key), original);
+
+    let drop_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        drop(inner);
+        drop(outer);
+    }));
+    assert!(
+        drop_result.is_ok(),
+        "dropping guards after invalid scope exit should not panic"
+    );
+    assert_eq!(env::var_os(&key), original);
+}
+
 #[cfg(feature = "cluster-unit-tests")]
 #[test]
 fn logs_application_and_restoration() {

@@ -32,6 +32,10 @@ name = "test_cluster"
 path = "tests/test_cluster.rs"
 required-features = ["cluster-unit-tests"]
 
+[[test]]
+name = "settings"
+path = "tests/settings.rs"
+
 [dependencies]
 postgresql_embedded = { version = "0.20.0", features = ["tokio"] }
 nix = { version = "0.28", default-features = false, features = ["user", "fs"] }
