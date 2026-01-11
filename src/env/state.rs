@@ -180,12 +180,12 @@ impl ThreadState {
     }
 
     fn restore_finished_scopes(&mut self) -> bool {
-        while let Some(finished) = self.stack.pop() {
-            if !finished.finished {
-                self.stack.push(finished);
+        while let Some(guard_state) = self.stack.pop() {
+            if !guard_state.finished {
+                self.stack.push(guard_state);
                 break;
             }
-            restore_saved(finished.saved);
+            restore_saved(guard_state.saved);
         }
         true
     }

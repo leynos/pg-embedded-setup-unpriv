@@ -44,8 +44,10 @@ pub(crate) use privileges::{PrivilegeDropGuard, disable_privilege_drop_for_tests
 /// requested operation, and execution timeout into a single value consumed by
 /// the worker process runner.
 ///
-/// This struct is part of the public API contract. Its fields are intentionally
-/// public and stable, so additions or renames are considered breaking changes.
+/// This struct is part of the public test support API exposed via
+/// [`crate::worker_process_test_api`]. Its fields are intentionally public and
+/// stable for integration test consumers, so additions or renames are
+/// considered breaking changes for that surface.
 ///
 /// # Examples
 ///

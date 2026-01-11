@@ -16,15 +16,18 @@ use tracing::{error, info, info_span};
 /// working directory.
 pub(crate) fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
     if path.has_root() {
-        let (dir_path, relative) = path.parent().map_or_else(
-            || (path, Utf8PathBuf::new()),
-            |parent| {
+        let (dir_path, relative) = match path.parent() {
+            Some(parent) => {
                 let relative = path
                     .strip_prefix(parent)
-                    .map_or_else(|_| path.to_path_buf(), Utf8Path::to_path_buf);
+                    .with_context(|| {
+                        format!("strip parent {} from {}", parent.as_str(), path.as_str())
+                    })?
+                    .to_path_buf();
                 (parent, relative)
-            },
-        );
+            }
+            None => (path, Utf8PathBuf::new()),
+        };
         let dir = Dir::open_ambient_dir(dir_path.as_std_path(), ambient_authority())
             .context("open ambient directory for absolute path")?;
         Ok((dir, relative))

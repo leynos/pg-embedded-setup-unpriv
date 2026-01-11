@@ -92,10 +92,7 @@ fn thread_state_recovers_from_invalid_index() {
     let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
         state.exit_scope(index + 1);
     }));
-    assert!(
-        result.is_ok(),
-        "invalid scope exit should not panic in release builds"
-    );
+    assert!(result.is_ok(), "invalid scope exit should not panic");
 
     assert_eq!(env::var_os(&key), original);
     assert_eq!(state.depth, 0);
@@ -105,8 +102,8 @@ fn thread_state_recovers_from_invalid_index() {
 
 #[test]
 fn scoped_env_recovers_from_corrupt_exit() {
-    assert_scoped_env_recovers_from_corrupt_exit("CORRUPT_EXIT", |key, original_value| {
-        let original = env::var_os(key).map(|_| original_value.clone());
+    assert_scoped_env_recovers_from_corrupt_exit("CORRUPT_EXIT", |key, _original_value| {
+        let original = env::var_os(key);
         let guard = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("value")))]);
 
         let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
@@ -115,10 +112,7 @@ fn scoped_env_recovers_from_corrupt_exit() {
                 state.exit_scope(usize::MAX);
             });
         }));
-        assert!(
-            result.is_ok(),
-            "invalid scope exit should not panic in release builds"
-        );
+        assert!(result.is_ok(), "invalid scope exit should not panic");
 
         assert_eq!(env::var_os(key), original);
         let drop_result = panic::catch_unwind(panic::AssertUnwindSafe(|| drop(guard)));
@@ -132,8 +126,8 @@ fn scoped_env_recovers_from_corrupt_exit() {
 
 #[test]
 fn scoped_env_recovers_from_invalid_index_with_nested_scopes() {
-    assert_scoped_env_recovers_from_corrupt_exit("INVALID_INDEX_NESTED", |key, original_value| {
-        let original = env::var_os(key).map(|_| original_value.clone());
+    assert_scoped_env_recovers_from_corrupt_exit("INVALID_INDEX_NESTED", |key, _original_value| {
+        let original = env::var_os(key);
         let outer = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("outer")))]);
         let inner = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("inner")))]);
 
@@ -143,10 +137,7 @@ fn scoped_env_recovers_from_invalid_index_with_nested_scopes() {
                 state.exit_scope(usize::MAX);
             });
         }));
-        assert!(
-            result.is_ok(),
-            "invalid scope exit should not panic in release builds"
-        );
+        assert!(result.is_ok(), "invalid scope exit should not panic");
         assert_eq!(env::var_os(key), original);
 
         let drop_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
@@ -161,15 +152,39 @@ fn scoped_env_recovers_from_invalid_index_with_nested_scopes() {
     });
 }
 
+#[test]
+fn scoped_env_recovers_from_out_of_order_drop() {
+    assert_scoped_env_recovers_from_corrupt_exit("OUT_OF_ORDER_DROP", |key, _original_value| {
+        let original = env::var_os(key);
+        let outer = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("outer")))]);
+        let inner = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("inner")))]);
+
+        let drop_outer = panic::catch_unwind(panic::AssertUnwindSafe(|| drop(outer)));
+        assert!(
+            drop_outer.is_ok(),
+            "dropping outer guard out of order should not panic"
+        );
+        assert_eq!(env::var_os(key), Some(OsString::from("inner")));
+
+        let drop_inner = panic::catch_unwind(panic::AssertUnwindSafe(|| drop(inner)));
+        assert!(
+            drop_inner.is_ok(),
+            "dropping inner guard after out-of-order drop should not panic"
+        );
+        assert_eq!(env::var_os(key), original);
+    });
+}
+
 fn assert_scoped_env_recovers_from_corrupt_exit<F>(test_name: &str, setup_and_corrupt: F)
 where
     F: FnOnce(&OsString, &OsString),
 {
     let key = OsString::from(format!("SCOPED_ENV_{test_name}"));
     let original = env::var_os(&key);
-    let original_value = original.clone().unwrap_or_default();
+    let fallback = OsString::new();
+    let original_value = original.as_ref().unwrap_or(&fallback);
 
-    setup_and_corrupt(&key, &original_value);
+    setup_and_corrupt(&key, original_value);
 
     assert_eq!(env::var_os(&key), original);
 }

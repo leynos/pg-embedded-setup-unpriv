@@ -94,12 +94,7 @@ fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {
             ),
             _ => BootstrapError::from(err),
         })?;
-    let metadata = if relative.as_str().is_empty() {
-        dir.dir_metadata()
-    } else {
-        dir.metadata(relative.as_std_path())
-    }
-    .map_err(|err| {
+    let metadata = dir.metadata(relative.as_std_path()).map_err(|err| {
         if err.kind() == ErrorKind::NotFound {
             BootstrapError::new(
                 BootstrapErrorKind::WorkerBinaryMissing,
