@@ -133,6 +133,11 @@ where
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
+    let logs = decode_logs(bytes);
+    (logs, result)
+}
+
+fn decode_logs(bytes: Vec<u8>) -> Vec<String> {
     let content = match String::from_utf8(bytes) {
         Ok(content) => content,
         Err(err) => {
@@ -140,13 +145,12 @@ where
             String::from_utf8_lossy(&err_bytes).into_owned()
         }
     };
-    let logs = content.lines().map(str::to_owned).collect();
-    (logs, result)
+    content.lines().map(str::to_owned).collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_debug_logs, capture_info_logs_with_spans};
+    use super::{capture_debug_logs, capture_info_logs_with_spans, decode_logs};
     use tracing::info_span;
 
     #[test]
@@ -179,5 +183,13 @@ mod tests {
                 .any(|line| line.contains("debug message for capture")),
             "expected debug log to be captured, got {logs:?}"
         );
+    }
+
+    #[test]
+    fn decode_logs_uses_lossy_utf8_for_invalid_bytes() {
+        let logs = decode_logs(vec![b'a', b'b', b'\n', 0xF0, 0x28, 0x8C, 0x28]);
+
+        assert!(logs.iter().any(|line| line.contains("ab")));
+        assert!(logs.iter().any(|line| line.contains("\u{FFFD}")));
     }
 }
