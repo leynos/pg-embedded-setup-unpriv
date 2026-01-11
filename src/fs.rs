@@ -12,16 +12,22 @@ use tracing::{error, info, info_span};
 
 /// Resolves a path to an ambient directory handle paired with the relative path component.
 ///
-/// Absolute paths are opened relative to the ambient root; relative paths reuse the current
+/// Absolute paths are opened relative to their parent directory; relative paths reuse the current
 /// working directory.
 pub(crate) fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
     if path.has_root() {
-        let stripped = path
-            .strip_prefix("/")
-            .map_or_else(|_| path.to_path_buf(), Utf8Path::to_path_buf);
-        let dir = Dir::open_ambient_dir("/", ambient_authority())
-            .context("open ambient root directory")?;
-        Ok((dir, stripped))
+        let (dir_path, relative) = path.parent().map_or_else(
+            || (path, Utf8PathBuf::new()),
+            |parent| {
+                let relative = path
+                    .strip_prefix(parent)
+                    .map_or_else(|_| path.to_path_buf(), Utf8Path::to_path_buf);
+                (parent, relative)
+            },
+        );
+        let dir = Dir::open_ambient_dir(dir_path.as_std_path(), ambient_authority())
+            .context("open ambient directory for absolute path")?;
+        Ok((dir, relative))
     } else {
         let dir = Dir::open_ambient_dir(".", ambient_authority())
             .context("open ambient working directory")?;

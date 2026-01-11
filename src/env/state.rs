@@ -180,15 +180,11 @@ impl ThreadState {
     }
 
     fn restore_finished_scopes(&mut self) -> bool {
-        while self
-            .stack
-            .last()
-            .is_some_and(|candidate| candidate.finished)
-        {
-            let Some(finished) = self.stack.pop() else {
-                self.force_restore_and_reset("ScopedEnv stack corrupted during restoration");
-                return false;
-            };
+        while let Some(finished) = self.stack.pop() {
+            if !finished.finished {
+                self.stack.push(finished);
+                break;
+            }
             restore_saved(finished.saved);
         }
         true

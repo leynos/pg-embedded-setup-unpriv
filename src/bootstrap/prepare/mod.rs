@@ -304,9 +304,9 @@ fn ensure_pgpass_for_user(path: &Utf8PathBuf, user: &User) -> BootstrapResult<()
     use nix::sys::stat::{Mode, fchmod};
     use std::os::fd::AsRawFd;
 
-    // O_NOFOLLOW ensures the final path component is not a symlink. This
-    // does not protect against symlinks in ancestor directories, so we only
-    // guard against last-hop substitution here.
+    // The descriptor-relative lookup anchors path resolution and prevents
+    // ancestor directory swap attacks. O_NOFOLLOW additionally ensures the
+    // final path component is not a symlink.
     let (dir, relative) = crate::fs::ambient_dir_and_path(path)?;
     if relative.as_str().is_empty() {
         return Err(BootstrapError::from(color_eyre::eyre::eyre!(
@@ -316,7 +316,6 @@ fn ensure_pgpass_for_user(path: &Utf8PathBuf, user: &User) -> BootstrapResult<()
     let mut options = OpenOptions::new();
     options
         .read(true)
-        .write(true)
         .create(false)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
     let file = match dir.open_with(relative.as_std_path(), &options) {

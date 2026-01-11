@@ -1,7 +1,8 @@
 # .config/nextest.toml
 [profile.default]
-# Default slow timeout is 180s (matches bootstrap setup timeout); the settings
-# suite is capped at 30s.
+# Default slow timeout is 180s; nextest sends SIGTERM after the period and
+# SIGKILL after the grace-period. The settings integration test binary
+# (`tests/settings.rs`) is capped at 30s.
 slow-timeout = { period = "180s", terminate-after = 1, grace-period = "5s" }
 
 # Put a hard ceiling on the whole run.

@@ -89,7 +89,13 @@ fn thread_state_recovers_from_invalid_index() {
 
     assert_eq!(env::var_os(&key), Some(OsString::from("value")));
 
-    state.exit_scope(index + 1);
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        state.exit_scope(index + 1);
+    }));
+    assert!(
+        result.is_ok(),
+        "invalid scope exit should not panic in release builds"
+    );
 
     assert_eq!(env::var_os(&key), original);
     assert_eq!(state.depth, 0);
@@ -103,15 +109,21 @@ fn scoped_env_recovers_from_corrupt_exit() {
     let original = env::var_os(&key);
     let guard = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("value")))]);
 
-    THREAD_STATE.with(|cell| {
-        let mut state = cell.borrow_mut();
-        state.exit_scope(usize::MAX);
-    });
-
-    assert_eq!(env::var_os(&key), original);
-    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| drop(guard)));
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        THREAD_STATE.with(|cell| {
+            let mut state = cell.borrow_mut();
+            state.exit_scope(usize::MAX);
+        });
+    }));
     assert!(
         result.is_ok(),
+        "invalid scope exit should not panic in release builds"
+    );
+
+    assert_eq!(env::var_os(&key), original);
+    let drop_result = panic::catch_unwind(panic::AssertUnwindSafe(|| drop(guard)));
+    assert!(
+        drop_result.is_ok(),
         "dropping guard after corruption should not panic"
     );
     assert_eq!(env::var_os(&key), original);
