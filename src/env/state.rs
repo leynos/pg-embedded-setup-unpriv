@@ -237,6 +237,21 @@ impl ThreadState {
     }
 }
 
+#[cfg(test)]
+impl ThreadState {
+    pub const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    pub fn is_stack_empty(&self) -> bool {
+        self.stack.is_empty()
+    }
+
+    pub const fn has_lock(&self) -> bool {
+        self.lock.is_some()
+    }
+}
+
 fn restore_saved(saved: Vec<(OsString, Option<OsString>)>) {
     for (key, value) in saved.into_iter().rev() {
         match value {

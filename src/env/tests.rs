@@ -96,9 +96,9 @@ fn thread_state_recovers_from_invalid_index() {
     assert!(result.is_ok(), "invalid scope exit should not panic");
 
     assert_eq!(env::var_os(&key), original);
-    assert_eq!(state.depth, 0);
-    assert!(state.stack.is_empty());
-    assert!(state.lock.is_none());
+    assert_eq!(state.depth(), 0);
+    assert!(state.is_stack_empty());
+    assert!(!state.has_lock());
 }
 
 #[rstest]
@@ -117,7 +117,7 @@ fn scoped_env_recovers_from_corrupt_exit(
     #[case] setup_guards: fn(&OsString) -> GuardSet,
     #[case] drop_message: &str,
 ) {
-    assert_scoped_env_recovers_from_corrupt_exit(test_name, |key, _original_value| {
+    assert_scoped_env_recovers_from_corrupt_exit(test_name, |key| {
         let original = env::var_os(key);
         let guards = setup_guards(key);
 
@@ -140,7 +140,7 @@ fn scoped_env_recovers_from_corrupt_exit(
 
 #[test]
 fn scoped_env_recovers_from_out_of_order_drop() {
-    assert_scoped_env_recovers_from_corrupt_exit("OUT_OF_ORDER_DROP", |key, _original_value| {
+    assert_scoped_env_recovers_from_corrupt_exit("OUT_OF_ORDER_DROP", |key| {
         let original = env::var_os(key);
         let outer = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("outer")))]);
         let inner = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("inner")))]);
@@ -163,16 +163,10 @@ fn scoped_env_recovers_from_out_of_order_drop() {
 
 fn assert_scoped_env_recovers_from_corrupt_exit<F>(test_name: &str, setup_and_corrupt: F)
 where
-    F: FnOnce(&OsString, &OsString),
+    F: FnOnce(&OsString),
 {
     let key = OsString::from(format!("SCOPED_ENV_{test_name}"));
-    let original = env::var_os(&key);
-    let fallback = OsString::new();
-    let original_value = original.as_ref().unwrap_or(&fallback);
-
-    setup_and_corrupt(&key, original_value);
-
-    assert_eq!(env::var_os(&key), original);
+    setup_and_corrupt(&key);
 }
 
 enum GuardSet {
