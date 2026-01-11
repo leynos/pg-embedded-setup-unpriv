@@ -5,6 +5,7 @@ use super::THREAD_STATE;
 use super::state::{ENV_LOCK, ThreadState};
 #[cfg(feature = "cluster-unit-tests")]
 use crate::test_support::capture_info_logs;
+use rstest::rstest;
 use std::env;
 use std::ffi::OsString;
 use std::panic;
@@ -100,11 +101,25 @@ fn thread_state_recovers_from_invalid_index() {
     assert!(state.lock.is_none());
 }
 
-#[test]
-fn scoped_env_recovers_from_corrupt_exit() {
-    assert_scoped_env_recovers_from_corrupt_exit("CORRUPT_EXIT", |key, _original_value| {
+#[rstest]
+#[case::corrupt_exit(
+    "CORRUPT_EXIT",
+    setup_single_guard,
+    "dropping guard after corruption should not panic"
+)]
+#[case::invalid_index_nested(
+    "INVALID_INDEX_NESTED",
+    setup_nested_guards,
+    "dropping guards after invalid scope exit should not panic"
+)]
+fn scoped_env_recovers_from_corrupt_exit(
+    #[case] test_name: &str,
+    #[case] setup_guards: fn(&OsString) -> GuardSet,
+    #[case] drop_message: &str,
+) {
+    assert_scoped_env_recovers_from_corrupt_exit(test_name, |key, _original_value| {
         let original = env::var_os(key);
-        let guard = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("value")))]);
+        let guards = setup_guards(key);
 
         let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
             THREAD_STATE.with(|cell| {
@@ -115,39 +130,10 @@ fn scoped_env_recovers_from_corrupt_exit() {
         assert!(result.is_ok(), "invalid scope exit should not panic");
 
         assert_eq!(env::var_os(key), original);
-        let drop_result = panic::catch_unwind(panic::AssertUnwindSafe(|| drop(guard)));
-        assert!(
-            drop_result.is_ok(),
-            "dropping guard after corruption should not panic"
-        );
-        assert_eq!(env::var_os(key), original);
-    });
-}
-
-#[test]
-fn scoped_env_recovers_from_invalid_index_with_nested_scopes() {
-    assert_scoped_env_recovers_from_corrupt_exit("INVALID_INDEX_NESTED", |key, _original_value| {
-        let original = env::var_os(key);
-        let outer = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("outer")))]);
-        let inner = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("inner")))]);
-
-        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            THREAD_STATE.with(|cell| {
-                let mut state = cell.borrow_mut();
-                state.exit_scope(usize::MAX);
-            });
-        }));
-        assert!(result.is_ok(), "invalid scope exit should not panic");
-        assert_eq!(env::var_os(key), original);
-
         let drop_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            drop(inner);
-            drop(outer);
+            guards.drop_in_order();
         }));
-        assert!(
-            drop_result.is_ok(),
-            "dropping guards after invalid scope exit should not panic"
-        );
+        assert!(drop_result.is_ok(), "{}", drop_message);
         assert_eq!(env::var_os(key), original);
     });
 }
@@ -187,6 +173,36 @@ where
     setup_and_corrupt(&key, original_value);
 
     assert_eq!(env::var_os(&key), original);
+}
+
+enum GuardSet {
+    Single(ScopedEnv),
+    Nested { outer: ScopedEnv, inner: ScopedEnv },
+}
+
+impl GuardSet {
+    fn drop_in_order(self) {
+        match self {
+            Self::Single(guard) => drop(guard),
+            Self::Nested { outer, inner } => {
+                drop(inner);
+                drop(outer);
+            }
+        }
+    }
+}
+
+fn setup_single_guard(key: &OsString) -> GuardSet {
+    GuardSet::Single(ScopedEnv::apply_os(vec![(
+        key.clone(),
+        Some(OsString::from("value")),
+    )]))
+}
+
+fn setup_nested_guards(key: &OsString) -> GuardSet {
+    let outer = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("outer")))]);
+    let inner = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("inner")))]);
+    GuardSet::Nested { outer, inner }
 }
 
 #[cfg(feature = "cluster-unit-tests")]
