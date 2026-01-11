@@ -181,6 +181,9 @@ impl ThreadState {
     }
 
     fn restore_finished_scopes(&mut self) {
+        if self.stack.last().is_some_and(|state| state.finished) {
+            self.ensure_lock_for_restore();
+        }
         while let Some(guard_state) = self.stack.pop() {
             if !guard_state.finished {
                 self.stack.push(guard_state);
@@ -232,6 +235,10 @@ impl ThreadState {
     }
 
     fn restore_all_scopes(&mut self) {
+        if self.stack.is_empty() {
+            return;
+        }
+        self.ensure_lock_for_restore();
         while let Some(state) = self.stack.pop() {
             restore_saved(state.saved);
         }
