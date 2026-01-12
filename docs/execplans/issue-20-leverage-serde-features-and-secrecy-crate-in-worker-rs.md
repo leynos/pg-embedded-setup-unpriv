@@ -130,7 +130,7 @@ conversions are used. Confirm whether any external modules rely on
 Stage B: decide and scaffold. Choose the minimal-change approach:
 
 - Prefer re-exporting or type aliasing `PlainSecret` to `SecretString` so the
-  name remains stable while serde and redaction come from `secrecy`.
+  name remains stable, while serde and redaction come from `secrecy`.
 - If aliasing is not viable, keep `PlainSecret` as a newtype and derive
   serde/Debug with `#[derive(Serialize, Deserialize, Debug)]` and
   `#[serde(transparent)]`. Document the decision in the Decision Log and update
@@ -159,25 +159,25 @@ long-running command.
 
 1) Inspect code and tests:
 
-```sh
-rg -n "SettingsSnapshot|WorkerPayload|PlainSecret" src/worker.rs \
-  tests/support/pg_worker.rs
-sed -n '1,220p' src/worker.rs
-sed -n '1,240p' tests/support/pg_worker.rs
-```
+   ```sh
+   rg -n "SettingsSnapshot|WorkerPayload|PlainSecret" src/worker.rs \
+     tests/support/pg_worker.rs
+   sed -n '1,220p' src/worker.rs
+   sed -n '1,240p' tests/support/pg_worker.rs
+   ```
 
 2) Implement changes (details depend on Stage B decision). Keep edits focused
    in `src/worker.rs` and update `tests/support/pg_worker.rs` as needed.
 
 3) Run format, lint, and tests:
 
-```sh
-make check-fmt | tee /tmp/issue-20-check-fmt.log
-make lint | tee /tmp/issue-20-lint.log
-make test | tee /tmp/issue-20-test.log
-```
+   ```sh
+   make check-fmt | tee /tmp/issue-20-check-fmt.log
+   make lint | tee /tmp/issue-20-lint.log
+   make test | tee /tmp/issue-20-test.log
+   ```
 
-If `make check-fmt` fails, run `make fmt` and then re-run `make check-fmt`.
+   If `make check-fmt` fails, run `make fmt` and then re-run `make check-fmt`.
 
 4) Commit with a descriptive message once all gates pass, then perform the
    post-commit refactor review per `AGENTS.md`.
@@ -222,7 +222,7 @@ Target interfaces to preserve or document:
 - `pg_embedded_setup_unpriv::worker::SettingsSnapshot`
 - `pg_embedded_setup_unpriv::worker::WorkerPayload`
 - `pg_embedded_setup_unpriv::worker::PlainSecret` (preferably preserved as a
-  name even if aliased to `SecretString`)
+  name, even if aliased to `SecretString`)
 
 Key dependencies and traits:
 
@@ -238,6 +238,8 @@ Key dependencies and traits:
   state.
 - Updated status, progress, and outcomes after completing the refactor and
   validations on 2026-01-12.
+- 2026-01-12: Indented Concrete Steps code blocks to keep list numbering
+  intact, and added commas for clarity.
 - 2026-01-12: Standardized spellings, expanded acronyms, and corrected list
   sequencing after PR review feedback.
 - 2026-01-12: Rewrapped risk bullets and switched command examples to fenced
