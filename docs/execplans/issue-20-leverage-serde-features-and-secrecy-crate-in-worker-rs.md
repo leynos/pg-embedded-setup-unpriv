@@ -45,16 +45,16 @@ Success is observable by running the full test suite and by round-tripping a
 
 - Risk: serde for `secrecy::SecretString` might encode differently than the
   current `PlainSecret` serde implementation, changing payload JSON. Severity:
-  medium Likelihood: medium Mitigation: compare JSON output in tests or add a
+  medium. Likelihood: medium. Mitigation: compare JSON output in tests or add a
   regression test.
 
 - Risk: replacing manual UTF-8 checks might move the failure point to
-  serialization or deserialization time. Severity: medium Likelihood: medium
+  serialisation or deserialisation time. Severity: medium. Likelihood: medium.
   Mitigation: keep explicit UTF-8 validation or document and test the new
   failure point.
 
 - Risk: removing `PlainSecret` could break tests or external users. Severity:
-  medium Likelihood: low Mitigation: prefer a type alias or re-export to
+  medium. Likelihood: low. Mitigation: prefer a type alias or re-export to
   preserve the name.
 
 ## Progress
@@ -175,7 +175,7 @@ long-running command.
    make test | tee /tmp/issue-20-test.log
    ```
 
-If `make check-fmt` fails, run `make fmt` and then re-run `make check-fmt`.
+   If `make check-fmt` fails, run `make fmt` and then re-run `make check-fmt`.
 
 4) Commit with a descriptive message once all gates pass, then perform the
    post-commit refactor review per `AGENTS.md`.
@@ -245,3 +245,5 @@ Key dependencies and traits:
   list requirements.
 - 2026-01-12: Rewrapped paragraphs and list items to 80 columns for
   markdownlint compliance.
+- 2026-01-12: Added punctuation to risk fields, updated en-GB spellings, and
+  indented the list continuation in Concrete Steps for markdownlint.
