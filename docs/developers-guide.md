@@ -3,6 +3,9 @@
 This guide captures contributor-focused notes for maintaining the library. It
 complements the user guide and omits consumer-facing usage details.
 
+If you are integrating the library, start with `docs/users-guide.md` for
+consumer-facing guidance.
+
 ## Test coverage notes
 
 - Unit and behavioural tests assert that `postmaster.pid` disappears after

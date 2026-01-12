@@ -559,3 +559,4 @@ still running as `root`, follow these steps:
 ## Further reading
 
 - `README.md` – overview, configuration reference, and troubleshooting tips.
+- `docs/developers-guide.md` – contributor notes and internal testing context.
