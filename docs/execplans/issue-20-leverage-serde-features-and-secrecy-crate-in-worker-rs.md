@@ -1,7 +1,8 @@
 # Refactor worker payload serde via secrecy
 
-This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
-`Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
+This Execution Plan (ExecPlan) is a living document. The sections
+`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
+`Decision Log`, and
 `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 Status: COMPLETE
@@ -10,7 +11,7 @@ PLANS.md was not found in the repository root on 2026-01-12.
 
 ## Purpose / Big Picture
 
-This change removes manual serialisation, deserialisation, and redaction
+This change removes manual serialization, deserialization, and redaction
 boilerplate in `src/worker.rs` by relying on existing serde ecosystem support.
 A successful change keeps the worker payload schema stable, keeps secrets
 redacted in `Debug`, and preserves UTF-8 validation for paths while reducing
@@ -22,8 +23,8 @@ handling changes.
 
 - Keep the public surface of `pg_embedded_setup_unpriv::worker` stable unless
   the user explicitly approves a breaking change.
-- Preserve `WorkerPayload` JSON field names and structure to avoid breaking IPC
-  compatibility.
+- Preserve `WorkerPayload` JSON field names and structure to avoid breaking
+  inter-process communication (IPC) compatibility.
 - Do not allow non-UTF-8 paths to be silently accepted or lossy-encoded.
 - Keep secret values redacted in `Debug` output.
 - Do not introduce new dependencies or Cargo features beyond those already in
@@ -45,12 +46,12 @@ handling changes.
 ## Risks
 
 - Risk: serde for `secrecy::SecretString` might encode differently than the
-  current `PlainSecret` serializer, changing payload JSON. Severity: medium
-  Likelihood: medium Mitigation: compare JSON output in tests and/or add a
-  regression test.
+  current `PlainSecret` serde implementation, changing payload JSON. Severity:
+  medium Likelihood: medium Mitigation: compare JSON output in tests and/or add
+  a regression test.
 
 - Risk: replacing manual UTF-8 checks might move the failure point to
-  serialisation or deserialisation time. Severity: medium Likelihood: medium
+  serialization or deserialization time. Severity: medium Likelihood: medium
   Mitigation: keep explicit UTF-8 validation or document and test the new
   failure point.
 
@@ -87,26 +88,26 @@ handling changes.
 
 - Decision: Defer the choice between `SecretString` direct use vs. aliasing
   `PlainSecret` until the implementation stage. Rationale: This requires
-  confirming how `PlainSecret` is used in tests and public APIs to minimise
-  breakage. Date/Author: 2026-01-12, Codex
+  confirming how `PlainSecret` is used in tests and public APIs to minimize
+  breakage. Date/Author: 2026-01-12, Codex.
 - Decision: Keep `PlainSecret` as a newtype over `SecretString` and derive
   `Deserialize` and `Debug` with `#[serde(transparent)]`. Rationale: Preserves
   the public name and method while reducing manual boilerplate and keeping JSON
-  compatibility. Date/Author: 2026-01-12, Codex
+  compatibility. Date/Author: 2026-01-12, Codex.
 - Decision: Implement `Serialize` manually for `PlainSecret` while deriving
   `Deserialize` and `Debug`. Rationale: `SecretString` does not implement
   `Serialize`, so deriving it for `PlainSecret` is not possible without a
-  custom serializer. Date/Author: 2026-01-12, Codex
+  custom Serde implementation. Date/Author: 2026-01-12, Codex.
 
 ## Outcomes & Retrospective
 
 - `PlainSecret` now derives `Deserialize` and `Debug` with a manual
   `Serialize`, keeping secrets redacted and payloads stable.
-- Added unit coverage for secret serialisation and redaction.
+- Added unit coverage for secret serialization and redaction.
 - Make targets `fmt`, `markdownlint`, `nixie`, `check-fmt`, `lint`, and `test`
   completed successfully.
 - Lessons learned: `SecretString` deliberately omits `Serialize`, so the manual
-  serializer remains required for IPC payloads.
+  Serde implementation remains required for IPC payloads.
 
 ## Context and Orientation
 
@@ -174,7 +175,7 @@ long-running command.
 
 If `make check-fmt` fails, run `make fmt` and then re-run `make check-fmt`.
 
-1) Commit with a descriptive message once all gates pass, then perform the
+4) Commit with a descriptive message once all gates pass, then perform the
    post-commit refactor review per `AGENTS.md`.
 
 ## Validation and Acceptance
@@ -200,7 +201,7 @@ All steps are safe to re-run. If a change introduces a regression, use
 `git checkout -- <file>` to revert only the specific file, then retry the step.
 Avoid destructive git operations.
 
-## Artifacts and Notes
+## Artefacts and Notes
 
 Expected log artefacts after validation:
 
@@ -220,7 +221,7 @@ Target interfaces to preserve or document:
 Key dependencies and traits:
 
 - `secrecy::SecretString` with `serde` feature for redaction and
-  serialisation.
+  serialization.
 - `camino::Utf8PathBuf` with `serde1` feature for UTF-8 paths.
 - `serde_with::DurationSeconds` and `serde_with::DisplayFromStr` already used
   for duration and version request handling.
@@ -231,3 +232,5 @@ Key dependencies and traits:
   state.
 - Updated status, progress, and outcomes after completing the refactor and
   validations on 2026-01-12.
+- 2026-01-12: Standardized spellings, expanded acronyms, and corrected list
+  sequencing after PR review feedback.
