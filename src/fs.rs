@@ -179,6 +179,8 @@ mod tests {
     use std::io::ErrorKind;
     use tempfile::tempdir;
 
+    /// Test-case container: `create_file` selects file vs directory, and
+    /// `error_kind` records the expected `ErrorKind` outcome.
     struct ExistingPathCase {
         create_file: bool,
         error_kind: Option<ErrorKind>,
