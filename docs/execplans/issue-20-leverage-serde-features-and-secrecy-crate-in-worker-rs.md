@@ -1,8 +1,9 @@
 # Refactor worker payload serde via secrecy
 
-This Execution Plan (ExecPlan) is a living document. The sections `Constraints`,
-`Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`,
-and `Outcomes & Retrospective` must be kept up to date as work proceeds.
+This Execution Plan (ExecPlan) is a living document. The sections
+`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
+`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
+proceeds.
 
 Status: COMPLETE
 
@@ -11,11 +12,12 @@ PLANS.md was not found in the repository root on 2026-01-12.
 ## Purpose / Big Picture
 
 This change removes manual serialization, deserialization, and redaction
-boilerplate in `src/worker.rs` by relying on existing serde ecosystem support. A
-successful change keeps the worker payload schema stable, keeps secrets redacted
-in `Debug`, and preserves UTF-8 validation for paths while reducing custom code.
-Success is observable by running the full test suite and by round-tripping a
-`WorkerPayload` through JSON without lossy path or secret handling changes.
+boilerplate in `src/worker.rs` by relying on existing serde ecosystem support.
+A successful change keeps the worker payload schema stable, keeps secrets
+redacted in `Debug`, and preserves UTF-8 validation for paths while reducing
+custom code. Success is observable by running the full test suite and by
+round-tripping a `WorkerPayload` through JSON without lossy path or secret
+handling changes.
 
 ## Constraints
 
@@ -94,8 +96,8 @@ Success is observable by running the full test suite and by round-tripping a
   compatibility. Date/Author: 2026-01-12, Codex.
 - Decision: Implement `Serialize` manually for `PlainSecret` while deriving
   `Deserialize` and `Debug`. Rationale: `SecretString` does not implement
-  `Serialize`, so deriving it for `PlainSecret` is not possible without a custom
-  Serde implementation. Date/Author: 2026-01-12, Codex.
+  `Serialize`, so deriving it for `PlainSecret` is not possible without a
+  custom Serde implementation. Date/Author: 2026-01-12, Codex.
 
 ## Outcomes & Retrospective
 
@@ -122,8 +124,8 @@ payload is exercised in `tests/support/pg_worker.rs`, which currently imports
 
 Stage A: understand and propose (no code changes). Read `src/worker.rs` and
 `tests/support/pg_worker.rs` to confirm how `PlainSecret` and the snapshot
-conversions are used. Confirm whether any external modules rely on `PlainSecret`
-as a concrete type or only via `From` conversions.
+conversions are used. Confirm whether any external modules rely on
+`PlainSecret` as a concrete type or only via `From` conversions.
 
 Stage B: decide and scaffold. Choose the minimal-change approach:
 
@@ -155,7 +157,7 @@ current stage passes its checks.
 All commands run from the repository root. Use `tee` to capture logs for any
 long-running command.
 
-1) Inspect code and tests:
+1. Inspect code and tests:
 
    ```sh
    rg -n "SettingsSnapshot|WorkerPayload|PlainSecret" src/worker.rs \
@@ -164,10 +166,10 @@ long-running command.
    sed -n '1,240p' tests/support/pg_worker.rs
    ```
 
-2) Implement changes (details depend on Stage B decision). Keep edits focused in
+2. Implement changes (details depend on Stage B decision). Keep edits focused in
    `src/worker.rs` and update `tests/support/pg_worker.rs` as needed.
 
-3) Run format, lint, and tests:
+3. Run format, lint, and tests:
 
    ```sh
    make check-fmt | tee /tmp/issue-20-check-fmt.log
@@ -177,7 +179,7 @@ long-running command.
 
    If `make check-fmt` fails, run `make fmt` and then re-run `make check-fmt`.
 
-4) Commit with a descriptive message once all gates pass, then perform the
+4. Commit with a descriptive message once all gates pass, then perform the
    post-commit refactor review per `AGENTS.md`.
 
 ## Validation and Acceptance
@@ -199,9 +201,9 @@ Quality criteria (done means all pass):
 
 ## Idempotence and Recovery
 
-All steps are safe to re-run. If a change introduces a regression, use `git
-checkout -- <file>` to revert only the specific file, then retry the step. Avoid
-destructive git operations.
+All steps are safe to re-run. If a change introduces a regression, use
+`git checkout -- <file>` to revert only the specific file, then retry the step.
+Avoid destructive git operations.
 
 ## Artefacts and Notes
 
