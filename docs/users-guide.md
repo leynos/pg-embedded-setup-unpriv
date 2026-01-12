@@ -107,8 +107,7 @@ fn exercise_cluster() -> BootstrapResult<()> {
 
 The guard keeps `PGPASSFILE`, `TZ`, `TZDIR`, and the XDG directories populated
 for the duration of its lifetime, making synchronous tests usable without extra
-setup. Unit and behavioural tests assert that `postmaster.pid` disappears after
-drop, demonstrating that no orphaned processes remain.
+setup.
 
 ## Observability
 
@@ -228,8 +227,7 @@ you can call `metadata()` to obtain an owned `ConnectionMetadata`.
 
 Enable the `diesel-support` feature to call `diesel_connection()` and obtain a
 ready-to-use `diesel::PgConnection`. The default feature set keeps Diesel
-optional for consumers, while `make test` already enables `--all-features` so
-the helper is exercised by the smoke tests.
+optional for consumers.
 
 ```rust,no_run
 use diesel::prelude::*;
@@ -516,8 +514,6 @@ let temp_db = cluster.temporary_database_from_template("test_db", "migrated_temp
   because it holds the PostgreSQL socket, `postmaster.pid`, and `.pgpass`, so
   leaking read or execute access would expose credentials or let other users
   interfere with the helper’s cluster lifecycle.
-- Behavioural tests driven by `rstest-bdd` exercise both branches to guard
-  against regressions in privilege detection or ownership management.
 
 ## Integrating with root-only test agents
 
@@ -563,5 +559,3 @@ still running as `root`, follow these steps:
 ## Further reading
 
 - `README.md` – overview, configuration reference, and troubleshooting tips.
-- `tests/e2e_postgresql_embedded_diesel.rs` – example of combining the helper
-  with Diesel-based integration tests while running under `root`.
