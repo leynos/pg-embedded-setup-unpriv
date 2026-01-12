@@ -2,8 +2,8 @@
 
 This Execution Plan (ExecPlan) is a living document. The sections
 `Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
-`Decision Log`, and
-`Outcomes & Retrospective` must be kept up to date as work proceeds.
+`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
+proceeds.
 
 Status: COMPLETE
 
@@ -175,7 +175,7 @@ long-running command.
 
 If `make check-fmt` fails, run `make fmt` and then re-run `make check-fmt`.
 
-4) Commit with a descriptive message once all gates pass, then perform the
+1) Commit with a descriptive message once all gates pass, then perform the
    post-commit refactor review per `AGENTS.md`.
 
 ## Validation and Acceptance
