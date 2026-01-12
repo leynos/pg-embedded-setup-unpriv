@@ -104,10 +104,27 @@ Implementation is complete.
 
 ## Testing
 
-- Unit tests in `src/env/tests.rs` cover poisoned lock recovery, nested
-  scopes, corrupt state recovery, and cross-thread serialization.
-- The concurrency test ensures a second thread blocks until the outer guard
-  releases the mutex, then observes a consistent environment.
+Unit tests in `src/env/tests/mod.rs` cover the mutex behaviour and recovery
+paths. Acceptance checks are:
+
+- Poisoned lock recovery:
+  - The test must recover from a poisoned lock, allow subsequent lock
+    acquisition, and complete new `ScopedEnv` operations without panics.
+- Nested scopes:
+  - Inner and outer guards must enforce ordering and resource visibility so the
+    inner value is visible within the inner scope, the outer value is restored
+    after the inner guard drops, and the value is removed after the outer guard
+    drops.
+- Corrupt state recovery:
+  - `ThreadState` must restore depth to `0`, empty the stack, release the lock,
+    and restore the environment value to the pre-test original after recovery.
+- Cross-thread serialization:
+  - The serialized value sent across the channel must match the expected value
+    deterministically, and the receiver must successfully deserialize it into
+    the expected environment string.
+- Concurrency:
+  - The second thread must block until the outer guard is dropped, then observe
+    the expected consistent environment value and the released mutex.
 
 ## Known risks and limitations
 

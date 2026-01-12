@@ -22,7 +22,7 @@ use corruption::{
     setup_single_guard,
 };
 
-/// Helper to send a signal when dropped, used for test coordination.
+/// Sends a unit on drop via `mpsc::Sender` and ignores send errors.
 struct ReleaseOnDrop {
     sender: Option<mpsc::Sender<()>>,
 }
@@ -40,7 +40,8 @@ impl Drop for ReleaseOnDrop {
     }
 }
 
-/// Helper to restore environment variable state after a test.
+/// Restores or removes a named env var using `set_env_var_locked` or
+/// `remove_env_var_locked`.
 struct RestoreEnv {
     key: String,
     original: Option<OsString>,
