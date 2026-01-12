@@ -166,10 +166,10 @@ sed -n '1,220p' src/worker.rs
 sed -n '1,240p' tests/support/pg_worker.rs
 ```
 
-1) Implement changes (details depend on Stage B decision). Keep edits focused
+2) Implement changes (details depend on Stage B decision). Keep edits focused
    in `src/worker.rs` and update `tests/support/pg_worker.rs` as needed.
 
-1) Run format, lint, and tests:
+3) Run format, lint, and tests:
 
 ```sh
 make check-fmt | tee /tmp/issue-20-check-fmt.log
@@ -179,7 +179,7 @@ make test | tee /tmp/issue-20-test.log
 
 If `make check-fmt` fails, run `make fmt` and then re-run `make check-fmt`.
 
-1) Commit with a descriptive message once all gates pass, then perform the
+4) Commit with a descriptive message once all gates pass, then perform the
    post-commit refactor review per `AGENTS.md`.
 
 ## Validation and Acceptance
@@ -242,3 +242,5 @@ Key dependencies and traits:
   sequencing after PR review feedback.
 - 2026-01-12: Rewrapped risk bullets and switched command examples to fenced
   code blocks for markdownlint compliance; plan intent unchanged.
+- 2026-01-12: Renumbered Concrete Steps sequentially to satisfy markdownlint
+  list requirements.
