@@ -94,9 +94,6 @@ fn serialises_env_across_threads() {
         key: String::from(key),
         original: env::var_os(key),
     };
-    if restore_env.original.is_none() {
-        remove_env_var_locked(OsStr::new(key));
-    }
     set_env_var_locked(OsStr::new(key), OsStr::new("pre-existing"));
 
     let (ready_tx, ready_rx) = mpsc::channel();
@@ -245,13 +242,6 @@ fn set_env_var_locked(key: &OsStr, value: &OsStr) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     set_env_var_unlocked(key, value);
-}
-
-fn remove_env_var_locked(key: &OsStr) {
-    let _guard = ENV_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    remove_env_var_unlocked(key);
 }
 
 fn set_env_var_unlocked(key: &OsStr, value: &OsStr) {

@@ -28,8 +28,7 @@ impl Drop for ReleaseOnDrop {
 }
 
 /// Restores or removes a named env var while holding `ENV_LOCK`, delegating to
-/// the unlocked helpers used by `set_env_var_locked` and
-/// `remove_env_var_locked`.
+/// the unlocked helpers that perform the underlying mutations.
 ///
 /// # Panic safety
 ///
@@ -59,14 +58,18 @@ impl Drop for RestoreEnv {
 /// Channels used by thread B to coordinate acquisition, report state, and
 /// signal completion.
 pub(super) struct ThreadBChannels {
+    /// Signals when thread A has instructed thread B to begin.
     pub(super) start_rx: mpsc::Receiver<()>,
+    /// Notifies the main thread that thread B is attempting to acquire the lock.
     pub(super) attempt_tx: mpsc::Sender<()>,
+    /// Reports the environment value observed after acquiring the guard.
     pub(super) acquired_tx: mpsc::Sender<Option<String>>,
+    /// Signals that thread B has completed its work.
     pub(super) done_tx: mpsc::Sender<()>,
 }
 
-/// Spawn the outer-guard thread that holds the `ScopedEnv` until released and
-/// signals completion on `done_tx`.
+/// Spawn the outer-guard thread that acquires the mutex, signals readiness, and
+/// waits for release before dropping the guard and signalling completion.
 pub(super) fn spawn_outer_guard_thread(
     key: String,
     ready_tx: mpsc::Sender<()>,
