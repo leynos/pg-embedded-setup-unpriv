@@ -111,10 +111,10 @@ paths. Acceptance checks are:
   - The test must recover from a poisoned lock, allow subsequent lock
     acquisition, and complete new `ScopedEnv` operations without panics.
 - Nested scopes:
-  - Inner and outer guards must enforce ordering and resource visibility so the
-    inner value is visible within the inner scope, the outer value is restored
-    after the inner guard drops, and the value is removed after the outer guard
-    drops.
+  - The inner value is visible within the inner scope while the outer guard is
+    held.
+  - The outer value is restored after the inner guard drops.
+  - The value is removed after the outer guard drops.
 - Corrupt state recovery:
   - `ThreadState` must restore depth to `0`, empty the stack, release the lock,
     and restore the environment value to the pre-test original after recovery.

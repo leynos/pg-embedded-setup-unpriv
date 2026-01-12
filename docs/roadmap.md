@@ -55,7 +55,7 @@
 ### 3.3 Validate cross-platform behaviour
 
 - [ ] 3.3.1. Confirm Linux root and unprivileged paths through Continuous
-  Integration (CI) matrix jobs and document expected outcomes for macOS and
+  Integration (CI) matrix jobs, and document expected outcomes for macOS and
   Windows in the roadmap appendix.
 - [ ] 3.3.2. Establish guardrails that fail fast on unsupported root scenarios
   on non-Linux systems, including unit coverage for the error messaging.

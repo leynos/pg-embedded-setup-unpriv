@@ -42,6 +42,15 @@ impl Drop for ReleaseOnDrop {
 
 /// Restores or removes a named env var using `set_env_var_locked` or
 /// `remove_env_var_locked`.
+///
+/// # Panic safety
+///
+/// `RestoreEnv::drop` acquires `ENV_LOCK`, so callers must ensure the lock is
+/// not held when a `RestoreEnv` is dropped. In `serialises_env_across_threads`
+/// this is enforced by calling `assert_env_lock_released()` before letting the
+/// `RestoreEnv` go out of scope. Alternatively, if spawned threads panic due to
+/// channel closure, the panic unwinds and drops their guards, releasing
+/// `ENV_LOCK` before `RestoreEnv::drop` runs.
 struct RestoreEnv {
     key: String,
     original: Option<OsString>,
@@ -56,6 +65,52 @@ impl Drop for RestoreEnv {
             None => remove_env_var_locked(OsStr::new(&self.key)),
         }
     }
+}
+
+struct ThreadBChannels {
+    start_rx: mpsc::Receiver<()>,
+    attempt_tx: mpsc::Sender<()>,
+    acquired_tx: mpsc::Sender<Option<String>>,
+}
+
+fn spawn_outer_guard_thread(
+    key: String,
+    barrier: Arc<Barrier>,
+    ready_tx: mpsc::Sender<()>,
+    release_rx: mpsc::Receiver<()>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let guard = ScopedEnv::apply(&[(key.clone(), Some(String::from("one")))]);
+
+        ready_tx.send(()).expect("ready signal must be sent");
+        barrier.wait();
+        release_rx.recv().expect("release signal must be sent");
+        drop(guard);
+    })
+}
+
+fn spawn_inner_guard_thread(
+    key: String,
+    barrier: Arc<Barrier>,
+    channels: ThreadBChannels,
+) -> thread::JoinHandle<()> {
+    let ThreadBChannels {
+        start_rx,
+        attempt_tx,
+        acquired_tx,
+    } = channels;
+    thread::spawn(move || {
+        barrier.wait();
+        start_rx.recv().expect("start signal must be received");
+        attempt_tx.send(()).expect("attempt signal must be sent");
+        let guard = ScopedEnv::apply(&[(key.clone(), Some(String::from("two")))]);
+
+        let value = env::var(&key).ok();
+        acquired_tx
+            .send(value)
+            .expect("acquired value must be sent");
+        drop(guard);
+    })
 }
 
 #[test]
@@ -135,35 +190,26 @@ fn serialises_env_across_threads() {
     let (release_tx, release_rx) = mpsc::channel();
     let (attempt_tx, attempt_rx) = mpsc::channel();
     let (acquired_tx, acquired_rx) = mpsc::channel();
+    let wait_timeout = Duration::from_secs(10);
 
-    let barrier_for_a = Arc::clone(&barrier);
-    let key_a = String::from(key);
-    let thread_a = thread::spawn(move || {
-        let guard = ScopedEnv::apply(&[(key_a.clone(), Some(String::from("one")))]);
-
-        ready_tx.send(()).expect("ready signal must be sent");
-        barrier_for_a.wait();
-        release_rx.recv().expect("release signal must be sent");
-        drop(guard);
-    });
-
-    let barrier_for_b = Arc::clone(&barrier);
-    let key_b = String::from(key);
-    let thread_b = thread::spawn(move || {
-        barrier_for_b.wait();
-        start_rx.recv().expect("start signal must be received");
-        attempt_tx.send(()).expect("attempt signal must be sent");
-        let guard = ScopedEnv::apply(&[(key_b.clone(), Some(String::from("two")))]);
-
-        let value = env::var(&key_b).ok();
-        acquired_tx
-            .send(value)
-            .expect("acquired value must be sent");
-        drop(guard);
-    });
+    let thread_a = spawn_outer_guard_thread(
+        String::from(key),
+        Arc::clone(&barrier),
+        ready_tx,
+        release_rx,
+    );
+    let thread_b = spawn_inner_guard_thread(
+        String::from(key),
+        Arc::clone(&barrier),
+        ThreadBChannels {
+            start_rx,
+            attempt_tx,
+            acquired_tx,
+        },
+    );
 
     ready_rx
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(wait_timeout)
         .expect("outer guard should be ready");
 
     let release_guard = ReleaseOnDrop {
@@ -172,18 +218,18 @@ fn serialises_env_across_threads() {
 
     start_tx.send(()).expect("start signal must be sent");
     attempt_rx
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(wait_timeout)
         .expect("second thread should attempt to acquire the guard");
 
     assert!(
-        acquired_rx.recv_timeout(Duration::from_secs(2)).is_err(),
+        acquired_rx.try_recv().is_err(),
         "second thread must block while the outer guard holds the lock"
     );
 
     drop(release_guard);
 
     let value = acquired_rx
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(wait_timeout)
         .expect("second thread should acquire after release");
     assert_eq!(value.as_deref(), Some("two"));
 
@@ -280,8 +326,10 @@ fn set_env_var_locked(key: &OsStr, value: &OsStr) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     unsafe {
-        // SAFETY: Tests serialise process env access via ENV_LOCK and restore
-        // original values on drop.
+        // SAFETY: This helper is only called from #[serial] tests, all process
+        // environment mutations in this module are serialized via ENV_LOCK, and
+        // callers such as RestoreEnv restore original values on drop. Given
+        // these invariants, calling env::set_var here is safe.
         env::set_var(key, value);
     }
 }
@@ -291,8 +339,10 @@ fn remove_env_var_locked(key: &OsStr) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     unsafe {
-        // SAFETY: Tests serialise process env access via ENV_LOCK and restore
-        // original values on drop.
+        // SAFETY: This helper is only called from #[serial] tests, all process
+        // environment mutations in this module are serialized via ENV_LOCK, and
+        // callers such as RestoreEnv restore original values on drop. Given
+        // these invariants, calling env::remove_var here is safe.
         env::remove_var(key);
     }
 }

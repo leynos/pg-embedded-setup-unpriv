@@ -1,4 +1,9 @@
 //! Corruption recovery test helpers.
+//!
+//! Provides fixtures and utilities for exercising `ScopedEnv` recovery when
+//! thread-local state is corrupted (invalid scope exits and out-of-order guard
+//! drops). These helpers are used by the parameterised `rstest` cases in
+//! `mod.rs`.
 
 use super::ScopedEnv;
 use super::THREAD_STATE;
