@@ -10,7 +10,8 @@ use super::THREAD_STATE;
 use std::ffi::OsString;
 use std::panic;
 
-pub(super) fn assert_scoped_env_recovers_from_corrupt_exit<F>(test_name: &str, setup_and_corrupt: F)
+/// Runs a corruption scenario with a unique env key and delegated assertions.
+pub(super) fn run_scoped_env_corruption_test<F>(test_name: &str, setup_and_corrupt: F)
 where
     F: FnOnce(&OsString),
 {
@@ -67,6 +68,7 @@ pub(super) fn setup_nested_guards(key: &OsString) -> GuardSet {
     GuardSet::Nested { outer, inner }
 }
 
+/// Returns true to signal callers should assert state restoration.
 pub(super) fn apply_invalid_scope_exit() -> bool {
     let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
         THREAD_STATE.with(|cell| {
@@ -78,6 +80,7 @@ pub(super) fn apply_invalid_scope_exit() -> bool {
     true
 }
 
+/// Returns false so callers skip restoration assertions.
 pub(super) fn no_corruption() -> bool {
     false
 }

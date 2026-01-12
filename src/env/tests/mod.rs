@@ -18,9 +18,8 @@ mod corruption;
 mod thread_helpers;
 
 use corruption::{
-    CorruptionCase, apply_invalid_scope_exit, assert_scoped_env_recovers_from_corrupt_exit,
-    drop_guards_in_order, drop_guards_out_of_order, no_corruption, setup_nested_guards,
-    setup_single_guard,
+    CorruptionCase, apply_invalid_scope_exit, drop_guards_in_order, drop_guards_out_of_order,
+    no_corruption, run_scoped_env_corruption_test, setup_nested_guards, setup_single_guard,
 };
 use thread_helpers::{
     ReleaseOnDrop, RestoreEnv, ThreadBChannels, spawn_inner_guard_thread, spawn_outer_guard_thread,
@@ -214,7 +213,7 @@ fn thread_state_recovers_from_invalid_index() {
 })]
 #[serial]
 fn scoped_env_recovers_from_corrupt_exit(#[case] case: CorruptionCase) {
-    assert_scoped_env_recovers_from_corrupt_exit(case.test_name, |key| {
+    run_scoped_env_corruption_test(case.test_name, |key| {
         let original = env::var_os(key);
         let guards = (case.setup_guards)(key);
         let restored = (case.corrupt_state)();
