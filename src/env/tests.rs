@@ -14,6 +14,41 @@ use std::sync::{Arc, Barrier, TryLockError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// Helper to send a signal when dropped, used for test coordination.
+struct ReleaseOnDrop {
+    sender: Option<mpsc::Sender<()>>,
+}
+
+impl Drop for ReleaseOnDrop {
+    fn drop(&mut self) {
+        if let Some(sender) = self.sender.take() {
+            // Ignore send errors - receiver may have dropped after a test failure.
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Receiver may have dropped after a test failure."
+            )]
+            let _ = sender.send(());
+        }
+    }
+}
+
+/// Helper to restore environment variable state after a test.
+struct RestoreEnv {
+    key: String,
+    original: Option<OsString>,
+}
+
+impl Drop for RestoreEnv {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(value) => {
+                set_env_var_locked(OsStr::new(&self.key), value.as_os_str());
+            }
+            None => remove_env_var_locked(OsStr::new(&self.key)),
+        }
+    }
+}
+
 #[test]
 #[serial]
 fn recovers_from_poisoned_lock() {
@@ -78,39 +113,6 @@ fn keeps_lock_until_last_scope_drops() {
 #[test]
 #[serial]
 fn serialises_env_across_threads() {
-    struct ReleaseOnDrop {
-        sender: Option<mpsc::Sender<()>>,
-    }
-
-    impl Drop for ReleaseOnDrop {
-        fn drop(&mut self) {
-            if let Some(sender) = self.sender.take() {
-                // Ignore send errors - receiver may have dropped after a test failure.
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "Receiver may have dropped after a test failure."
-                )]
-                let _ = sender.send(());
-            }
-        }
-    }
-
-    struct RestoreEnv {
-        key: String,
-        original: Option<OsString>,
-    }
-
-    impl Drop for RestoreEnv {
-        fn drop(&mut self) {
-            match &self.original {
-                Some(value) => {
-                    set_env_var_locked(OsStr::new(&self.key), value.as_os_str());
-                }
-                None => remove_env_var_locked(OsStr::new(&self.key)),
-            }
-        }
-    }
-
     let key = "THREAD_SCOPE_TEST";
     let restore_env = RestoreEnv {
         key: String::from(key),
