@@ -8,11 +8,23 @@ use crate::test_support::capture_info_logs;
 use rstest::rstest;
 use serial_test::serial;
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::panic;
-use std::sync::TryLockError;
+use std::sync::{Arc, Barrier, TryLockError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
+
+mod corruption;
+mod thread_helpers;
+
+use corruption::{
+    CorruptionCase, apply_invalid_scope_exit, drop_guards_in_order, drop_guards_out_of_order,
+    no_corruption, run_scoped_env_corruption_test, setup_nested_guards, setup_single_guard,
+};
+use thread_helpers::{
+    ReleaseOnDrop, RestoreEnv, ThreadAChannels, ThreadBChannels, spawn_inner_guard_thread,
+    spawn_outer_guard_thread,
+};
 
 #[test]
 #[serial]
@@ -77,6 +89,87 @@ fn keeps_lock_until_last_scope_drops() {
 
 #[test]
 #[serial]
+fn serialises_env_across_threads() {
+    let key = "THREAD_SCOPE_TEST";
+    let restore_env = RestoreEnv {
+        key: String::from(key),
+        original: env::var_os(key),
+    };
+    set_env_var_locked(OsStr::new(key), OsStr::new("pre-existing"));
+
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (start_tx, start_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (attempt_tx, attempt_rx) = mpsc::channel();
+    let (acquired_tx, acquired_rx) = mpsc::channel();
+    let (done_a_tx, done_a_rx) = mpsc::channel();
+    let (done_b_tx, done_b_rx) = mpsc::channel();
+    let barrier = Arc::new(Barrier::new(2));
+    // Generous timeout to avoid hanging tests, not to enforce ordering.
+    let deadlock_timeout = Duration::from_secs(30);
+
+    let thread_a = spawn_outer_guard_thread(
+        String::from(key),
+        ThreadAChannels {
+            barrier: Arc::clone(&barrier),
+            ready_tx,
+            release_rx,
+            done_tx: done_a_tx,
+        },
+    );
+    let thread_b = spawn_inner_guard_thread(
+        String::from(key),
+        ThreadBChannels {
+            start_rx,
+            attempt_tx,
+            acquired_tx,
+            done_tx: done_b_tx,
+        },
+    );
+
+    ready_rx
+        .recv_timeout(deadlock_timeout)
+        .expect("outer guard should be ready");
+    barrier.wait();
+
+    let release_guard = ReleaseOnDrop {
+        sender: Some(release_tx),
+    };
+
+    start_tx.send(()).expect("start signal must be sent");
+    attempt_rx
+        .recv_timeout(deadlock_timeout)
+        .expect("second thread should attempt to acquire the guard");
+
+    assert!(
+        acquired_rx.try_recv().is_err(),
+        "second thread must block while the outer guard holds the lock"
+    );
+
+    drop(release_guard);
+
+    let value = acquired_rx
+        .recv_timeout(deadlock_timeout)
+        .expect("second thread should acquire after release");
+    assert_eq!(value.as_deref(), Some("two"));
+
+    done_a_rx
+        .recv_timeout(deadlock_timeout)
+        .expect("outer guard thread should finish");
+    done_b_rx
+        .recv_timeout(deadlock_timeout)
+        .expect("inner guard thread should finish");
+
+    thread_a.join().expect("thread A should exit cleanly");
+    thread_b.join().expect("thread B should exit cleanly");
+
+    assert_eq!(env::var(key).as_deref(), Ok("pre-existing"));
+    assert_env_lock_released();
+    drop(restore_env);
+}
+
+#[test]
+#[serial]
 fn apply_os_rejects_invalid_keys() {
     let result = panic::catch_unwind(|| {
         let invalid = vec![(OsString::from("INVALID=KEY"), Some(OsString::from("value")))];
@@ -135,7 +228,7 @@ fn thread_state_recovers_from_invalid_index() {
 })]
 #[serial]
 fn scoped_env_recovers_from_corrupt_exit(#[case] case: CorruptionCase) {
-    assert_scoped_env_recovers_from_corrupt_exit(case.test_name, |key| {
+    run_scoped_env_corruption_test(case.test_name, |key| {
         let original = env::var_os(key);
         let guards = (case.setup_guards)(key);
         let restored = (case.corrupt_state)();
@@ -155,84 +248,33 @@ fn scoped_env_recovers_from_corrupt_exit(#[case] case: CorruptionCase) {
     });
 }
 
-fn assert_scoped_env_recovers_from_corrupt_exit<F>(test_name: &str, setup_and_corrupt: F)
-where
-    F: FnOnce(&OsString),
-{
-    let key = OsString::from(format!("SCOPED_ENV_{test_name}"));
-    setup_and_corrupt(&key);
+fn set_env_var_locked(key: &OsStr, value: &OsStr) {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    set_env_var_unlocked(key, value);
 }
 
-enum GuardSet {
-    Single(ScopedEnv),
-    Nested { outer: ScopedEnv, inner: ScopedEnv },
-}
-
-#[derive(Clone, Copy)]
-struct CorruptionCase {
-    test_name: &'static str,
-    setup_guards: fn(&OsString) -> GuardSet,
-    corrupt_state: fn() -> bool,
-    drop_guards: fn(GuardSet),
-    drop_message: &'static str,
-}
-
-impl GuardSet {
-    fn drop_in_order(self) {
-        match self {
-            Self::Single(guard) => drop(guard),
-            Self::Nested { outer, inner } => {
-                drop(inner);
-                drop(outer);
-            }
-        }
-    }
-
-    fn drop_out_of_order(self) {
-        match self {
-            Self::Single(guard) => drop(guard),
-            Self::Nested { outer, inner } => {
-                drop(outer);
-                drop(inner);
-            }
-        }
+fn set_env_var_unlocked(key: &OsStr, value: &OsStr) {
+    unsafe {
+        // SAFETY: These helpers are only called from #[serial] tests, all
+        // process environment mutations in this module are serialized via
+        // ENV_LOCK, and callers such as RestoreEnv restore original values on
+        // drop. Given these invariants and the caller-held lock, calling
+        // env::set_var here is safe.
+        env::set_var(key, value);
     }
 }
 
-fn setup_single_guard(key: &OsString) -> GuardSet {
-    GuardSet::Single(ScopedEnv::apply_os(vec![(
-        key.clone(),
-        Some(OsString::from("value")),
-    )]))
-}
-
-fn setup_nested_guards(key: &OsString) -> GuardSet {
-    let outer = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("outer")))]);
-    let inner = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("inner")))]);
-    GuardSet::Nested { outer, inner }
-}
-
-fn apply_invalid_scope_exit() -> bool {
-    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-        THREAD_STATE.with(|cell| {
-            let mut state = cell.borrow_mut();
-            state.exit_scope(usize::MAX);
-        });
-    }));
-    assert!(result.is_ok(), "invalid scope exit should not panic");
-    true
-}
-
-fn no_corruption() -> bool {
-    false
-}
-
-fn drop_guards_in_order(guards: GuardSet) {
-    guards.drop_in_order();
-}
-
-fn drop_guards_out_of_order(guards: GuardSet) {
-    guards.drop_out_of_order();
+fn remove_env_var_unlocked(key: &OsStr) {
+    unsafe {
+        // SAFETY: These helpers are only called from #[serial] tests, all
+        // process environment mutations in this module are serialized via
+        // ENV_LOCK, and callers such as RestoreEnv restore original values on
+        // drop. Given these invariants and the caller-held lock, calling
+        // env::remove_var here is safe.
+        env::remove_var(key);
+    }
 }
 
 fn assert_thread_state_reset() {
