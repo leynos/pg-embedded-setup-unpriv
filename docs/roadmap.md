@@ -47,6 +47,11 @@
 - [x] **Task:** Surface the chosen settings (ports, directories, version) via
   debug logging with sanitized output, ensuring sensitive values are redacted.
 
+### Step: Strengthen concurrency guarantees
+
+- [ ] **Task:** Add Loom-based concurrency tests for the `ScopedEnv` mutex,
+  gated behind a feature flag, and document how to run them.
+
 ### Step: Validate cross-platform behaviour
 
 - [ ] **Task:** Confirm Linux root and unprivileged paths through CI matrix
