@@ -10,7 +10,7 @@ use serial_test::serial;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::panic;
-use std::sync::{TryLockError, mpsc};
+use std::sync::{Arc, Barrier, TryLockError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -22,7 +22,8 @@ use corruption::{
     no_corruption, run_scoped_env_corruption_test, setup_nested_guards, setup_single_guard,
 };
 use thread_helpers::{
-    ReleaseOnDrop, RestoreEnv, ThreadBChannels, spawn_inner_guard_thread, spawn_outer_guard_thread,
+    ReleaseOnDrop, RestoreEnv, ThreadAChannels, ThreadBChannels, spawn_inner_guard_thread,
+    spawn_outer_guard_thread,
 };
 
 #[test]
@@ -103,10 +104,19 @@ fn serialises_env_across_threads() {
     let (acquired_tx, acquired_rx) = mpsc::channel();
     let (done_a_tx, done_a_rx) = mpsc::channel();
     let (done_b_tx, done_b_rx) = mpsc::channel();
+    let barrier = Arc::new(Barrier::new(2));
     // Generous timeout to avoid hanging tests, not to enforce ordering.
     let deadlock_timeout = Duration::from_secs(30);
 
-    let thread_a = spawn_outer_guard_thread(String::from(key), ready_tx, release_rx, done_a_tx);
+    let thread_a = spawn_outer_guard_thread(
+        String::from(key),
+        ThreadAChannels {
+            barrier: Arc::clone(&barrier),
+            ready_tx,
+            release_rx,
+            done_tx: done_a_tx,
+        },
+    );
     let thread_b = spawn_inner_guard_thread(
         String::from(key),
         ThreadBChannels {
@@ -120,6 +130,7 @@ fn serialises_env_across_threads() {
     ready_rx
         .recv_timeout(deadlock_timeout)
         .expect("outer guard should be ready");
+    barrier.wait();
 
     let release_guard = ReleaseOnDrop {
         sender: Some(release_tx),

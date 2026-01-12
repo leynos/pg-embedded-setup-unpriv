@@ -6,7 +6,7 @@
 use super::{ENV_LOCK, ScopedEnv, remove_env_var_unlocked, set_env_var_unlocked};
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::sync::mpsc;
+use std::sync::{Arc, Barrier, mpsc};
 use std::thread;
 
 /// Sends a unit on drop via `mpsc::Sender` and ignores send errors.
@@ -55,6 +55,18 @@ impl Drop for RestoreEnv {
     }
 }
 
+/// Channels and synchronisation primitives for the outer guard thread.
+pub(super) struct ThreadAChannels {
+    /// Barrier used to co-ordinate with other threads.
+    pub(super) barrier: Arc<Barrier>,
+    /// Sender used to signal readiness after applying the scoped env.
+    pub(super) ready_tx: mpsc::Sender<()>,
+    /// Receiver used to wait for release before dropping the guard.
+    pub(super) release_rx: mpsc::Receiver<()>,
+    /// Sender used to signal completion after the guard drops.
+    pub(super) done_tx: mpsc::Sender<()>,
+}
+
 /// Channels used by thread B to coordinate acquisition, report state, and
 /// signal completion.
 pub(super) struct ThreadBChannels {
@@ -66,24 +78,6 @@ pub(super) struct ThreadBChannels {
     pub(super) acquired_tx: mpsc::Sender<Option<String>>,
     /// Signals that thread B has completed its work.
     pub(super) done_tx: mpsc::Sender<()>,
-}
-
-/// Spawn the outer-guard thread that acquires the mutex, signals readiness, and
-/// waits for release before dropping the guard and signalling completion.
-pub(super) fn spawn_outer_guard_thread(
-    key: String,
-    ready_tx: mpsc::Sender<()>,
-    release_rx: mpsc::Receiver<()>,
-    done_tx: mpsc::Sender<()>,
-) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        let guard = ScopedEnv::apply(&[(key, Some(String::from("one")))]);
-
-        ready_tx.send(()).expect("ready signal must be sent");
-        release_rx.recv().expect("release signal must be sent");
-        drop(guard);
-        done_tx.send(()).expect("completion signal must be sent");
-    })
 }
 
 /// Spawn the inner-guard thread that blocks on the mutex, reports the value,
@@ -107,6 +101,77 @@ pub(super) fn spawn_inner_guard_thread(
         acquired_tx
             .send(value)
             .expect("acquired value must be sent");
+        drop(guard);
+        done_tx.send(()).expect("completion signal must be sent");
+    })
+}
+
+/// Spawn a thread that applies a scoped environment variable and waits on
+/// synchronisation primitives.
+///
+/// # Parameters
+///
+/// - `key`: Environment key string to set while the scoped guard is held.
+/// - `channels`: `ThreadAChannels` containing the coordination primitives:
+///   - `barrier`: `Arc<Barrier>` used to co-ordinate with other threads.
+///   - `ready_tx`: `mpsc::Sender<()>` used to signal readiness after applying.
+///   - `release_rx`: `mpsc::Receiver<()>` used to wait for release before
+///     dropping the guard.
+///   - `done_tx`: `mpsc::Sender<()>` used to signal completion after the guard
+///     is dropped.
+///
+/// # Behaviour
+///
+/// Calls `ScopedEnv::apply` to set the env var to "one", sends the ready
+/// signal, waits on the barrier, blocks on `release_rx`, then drops the guard
+/// to restore the environment and signals completion.
+///
+/// # Panics
+///
+/// Panics if the ready signal cannot be sent, if the release signal is not
+/// received, or if the completion signal cannot be sent.
+///
+/// # Returns
+///
+/// Returns a `thread::JoinHandle<()>` for the spawned thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// let barrier = Arc::new(Barrier::new(2));
+/// let (ready_tx, _ready_rx) = mpsc::channel();
+/// let (_release_tx, release_rx) = mpsc::channel();
+/// let (done_tx, _done_rx) = mpsc::channel();
+///
+/// let handle = spawn_outer_guard_thread(
+///     String::from("THREAD_SCOPE_TEST"),
+///     ThreadAChannels {
+///         barrier: Arc::clone(&barrier),
+///         ready_tx,
+///         release_rx,
+///         done_tx,
+///     },
+/// );
+///
+/// barrier.wait();
+/// handle.join().expect("thread should exit cleanly");
+/// ```
+pub(super) fn spawn_outer_guard_thread(
+    key: String,
+    channels: ThreadAChannels,
+) -> thread::JoinHandle<()> {
+    let ThreadAChannels {
+        barrier,
+        ready_tx,
+        release_rx,
+        done_tx,
+    } = channels;
+    thread::spawn(move || {
+        let guard = ScopedEnv::apply(&[(key, Some(String::from("one")))]);
+
+        ready_tx.send(()).expect("ready signal must be sent");
+        barrier.wait();
+        release_rx.recv().expect("release signal must be sent");
         drop(guard);
         done_tx.send(()).expect("completion signal must be sent");
     })
