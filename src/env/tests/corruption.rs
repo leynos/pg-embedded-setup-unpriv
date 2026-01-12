@@ -19,11 +19,13 @@ where
     setup_and_corrupt(&key);
 }
 
+/// Guards created for a corruption scenario.
 pub(super) enum GuardSet {
     Single(ScopedEnv),
     Nested { outer: ScopedEnv, inner: ScopedEnv },
 }
 
+/// Configuration for a corruption recovery test case.
 #[derive(Clone, Copy)]
 pub(super) struct CorruptionCase {
     pub(super) test_name: &'static str,

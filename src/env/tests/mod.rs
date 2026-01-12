@@ -10,7 +10,7 @@ use serial_test::serial;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::panic;
-use std::sync::{Arc, Barrier, TryLockError, mpsc};
+use std::sync::{TryLockError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -94,30 +94,29 @@ fn serialises_env_across_threads() {
         key: String::from(key),
         original: env::var_os(key),
     };
+    if restore_env.original.is_none() {
+        remove_env_var_locked(OsStr::new(key));
+    }
     set_env_var_locked(OsStr::new(key), OsStr::new("pre-existing"));
 
-    let barrier = Arc::new(Barrier::new(2));
     let (ready_tx, ready_rx) = mpsc::channel();
     let (start_tx, start_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let (attempt_tx, attempt_rx) = mpsc::channel();
     let (acquired_tx, acquired_rx) = mpsc::channel();
+    let (done_a_tx, done_a_rx) = mpsc::channel();
+    let (done_b_tx, done_b_rx) = mpsc::channel();
     // Generous timeout to avoid hanging tests, not to enforce ordering.
     let deadlock_timeout = Duration::from_secs(30);
 
-    let thread_a = spawn_outer_guard_thread(
-        String::from(key),
-        Arc::clone(&barrier),
-        ready_tx,
-        release_rx,
-    );
+    let thread_a = spawn_outer_guard_thread(String::from(key), ready_tx, release_rx, done_a_tx);
     let thread_b = spawn_inner_guard_thread(
         String::from(key),
-        Arc::clone(&barrier),
         ThreadBChannels {
             start_rx,
             attempt_tx,
             acquired_tx,
+            done_tx: done_b_tx,
         },
     );
 
@@ -145,6 +144,13 @@ fn serialises_env_across_threads() {
         .recv_timeout(deadlock_timeout)
         .expect("second thread should acquire after release");
     assert_eq!(value.as_deref(), Some("two"));
+
+    done_a_rx
+        .recv_timeout(deadlock_timeout)
+        .expect("outer guard thread should finish");
+    done_b_rx
+        .recv_timeout(deadlock_timeout)
+        .expect("inner guard thread should finish");
 
     thread_a.join().expect("thread A should exit cleanly");
     thread_b.join().expect("thread B should exit cleanly");
@@ -238,24 +244,34 @@ fn set_env_var_locked(key: &OsStr, value: &OsStr) {
     let _guard = ENV_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    unsafe {
-        // SAFETY: This helper is only called from #[serial] tests, all process
-        // environment mutations in this module are serialized via ENV_LOCK, and
-        // callers such as RestoreEnv restore original values on drop. Given
-        // these invariants, calling env::set_var here is safe.
-        env::set_var(key, value);
-    }
+    set_env_var_unlocked(key, value);
 }
 
 fn remove_env_var_locked(key: &OsStr) {
     let _guard = ENV_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    remove_env_var_unlocked(key);
+}
+
+fn set_env_var_unlocked(key: &OsStr, value: &OsStr) {
     unsafe {
-        // SAFETY: This helper is only called from #[serial] tests, all process
-        // environment mutations in this module are serialized via ENV_LOCK, and
-        // callers such as RestoreEnv restore original values on drop. Given
-        // these invariants, calling env::remove_var here is safe.
+        // SAFETY: These helpers are only called from #[serial] tests, all
+        // process environment mutations in this module are serialized via
+        // ENV_LOCK, and callers such as RestoreEnv restore original values on
+        // drop. Given these invariants and the caller-held lock, calling
+        // env::set_var here is safe.
+        env::set_var(key, value);
+    }
+}
+
+fn remove_env_var_unlocked(key: &OsStr) {
+    unsafe {
+        // SAFETY: These helpers are only called from #[serial] tests, all
+        // process environment mutations in this module are serialized via
+        // ENV_LOCK, and callers such as RestoreEnv restore original values on
+        // drop. Given these invariants and the caller-held lock, calling
+        // env::remove_var here is safe.
         env::remove_var(key);
     }
 }

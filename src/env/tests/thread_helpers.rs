@@ -3,10 +3,10 @@
 //! Provides the drop guards and spawn routines used by
 //! `serialises_env_across_threads` to exercise cross-thread ordering.
 
-use super::{ScopedEnv, remove_env_var_locked, set_env_var_locked};
+use super::{ENV_LOCK, ScopedEnv, remove_env_var_unlocked, set_env_var_unlocked};
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::sync::{Arc, Barrier, mpsc};
+use std::sync::mpsc;
 use std::thread;
 
 /// Sends a unit on drop via `mpsc::Sender` and ignores send errors.
@@ -27,7 +27,8 @@ impl Drop for ReleaseOnDrop {
     }
 }
 
-/// Restores or removes a named env var using `set_env_var_locked` or
+/// Restores or removes a named env var while holding `ENV_LOCK`, delegating to
+/// the unlocked helpers used by `set_env_var_locked` and
 /// `remove_env_var_locked`.
 ///
 /// # Panic safety
@@ -45,49 +46,56 @@ pub(super) struct RestoreEnv {
 
 impl Drop for RestoreEnv {
     fn drop(&mut self) {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match &self.original {
-            Some(value) => {
-                set_env_var_locked(OsStr::new(&self.key), value.as_os_str());
-            }
-            None => remove_env_var_locked(OsStr::new(&self.key)),
+            Some(value) => set_env_var_unlocked(OsStr::new(&self.key), value.as_os_str()),
+            None => remove_env_var_unlocked(OsStr::new(&self.key)),
         }
     }
 }
 
+/// Channels used by thread B to coordinate acquisition, report state, and
+/// signal completion.
 pub(super) struct ThreadBChannels {
     pub(super) start_rx: mpsc::Receiver<()>,
     pub(super) attempt_tx: mpsc::Sender<()>,
     pub(super) acquired_tx: mpsc::Sender<Option<String>>,
+    pub(super) done_tx: mpsc::Sender<()>,
 }
 
+/// Spawn the outer-guard thread that holds the `ScopedEnv` until released and
+/// signals completion on `done_tx`.
 pub(super) fn spawn_outer_guard_thread(
     key: String,
-    barrier: Arc<Barrier>,
     ready_tx: mpsc::Sender<()>,
     release_rx: mpsc::Receiver<()>,
+    done_tx: mpsc::Sender<()>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let guard = ScopedEnv::apply(&[(key, Some(String::from("one")))]);
 
         ready_tx.send(()).expect("ready signal must be sent");
-        barrier.wait();
         release_rx.recv().expect("release signal must be sent");
         drop(guard);
+        done_tx.send(()).expect("completion signal must be sent");
     })
 }
 
+/// Spawn the inner-guard thread that blocks on the mutex, reports the value,
+/// and signals completion.
 pub(super) fn spawn_inner_guard_thread(
     key: String,
-    barrier: Arc<Barrier>,
     channels: ThreadBChannels,
 ) -> thread::JoinHandle<()> {
     let ThreadBChannels {
         start_rx,
         attempt_tx,
         acquired_tx,
+        done_tx,
     } = channels;
     thread::spawn(move || {
-        barrier.wait();
         start_rx.recv().expect("start signal must be received");
         attempt_tx.send(()).expect("attempt signal must be sent");
         let guard = ScopedEnv::apply(&[(key.clone(), Some(String::from("two")))]);
@@ -97,5 +105,6 @@ pub(super) fn spawn_inner_guard_thread(
             .send(value)
             .expect("acquired value must be sent");
         drop(guard);
+        done_tx.send(()).expect("completion signal must be sent");
     })
 }
