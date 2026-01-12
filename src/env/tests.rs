@@ -1,14 +1,21 @@
 //! Tests for environment scoping and logging.
 
 use super::ScopedEnv;
-use super::state::ENV_LOCK;
+use super::THREAD_STATE;
+use super::state::{ENV_LOCK, ThreadState};
 #[cfg(feature = "cluster-unit-tests")]
 use crate::test_support::capture_info_logs;
+use rstest::rstest;
+use serial_test::serial;
 use std::env;
 use std::ffi::OsString;
 use std::panic;
+use std::sync::TryLockError;
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[test]
+#[serial]
 fn recovers_from_poisoned_lock() {
     assert!(
         panic::catch_unwind(|| {
@@ -26,6 +33,7 @@ fn recovers_from_poisoned_lock() {
 }
 
 #[test]
+#[serial]
 fn allows_reentrant_scopes() {
     let outer = ScopedEnv::apply(&[(String::from("NESTED_TEST"), Some(String::from("outer")))]);
     assert_eq!(env::var("NESTED_TEST").as_deref(), Ok("outer"));
@@ -42,6 +50,7 @@ fn allows_reentrant_scopes() {
 }
 
 #[test]
+#[serial]
 fn keeps_lock_until_last_scope_drops() {
     let outer = ScopedEnv::apply(&[(String::from("SCOPE_TEST"), Some(String::from("outer")))]);
     let inner = ScopedEnv::apply(&[(String::from("SCOPE_TEST"), Some(String::from("inner")))]);
@@ -67,6 +76,7 @@ fn keeps_lock_until_last_scope_drops() {
 }
 
 #[test]
+#[serial]
 fn apply_os_rejects_invalid_keys() {
     let result = panic::catch_unwind(|| {
         let invalid = vec![(OsString::from("INVALID=KEY"), Some(OsString::from("value")))];
@@ -79,8 +89,184 @@ fn apply_os_rejects_invalid_keys() {
     );
 }
 
+#[test]
+#[serial]
+fn thread_state_recovers_from_invalid_index() {
+    let key = OsString::from("THREAD_STATE_INVALID_INDEX");
+    let original = env::var_os(&key);
+    let mut state = ThreadState::new();
+    let index = state.enter_scope(vec![(key.clone(), Some(OsString::from("value")))]);
+
+    assert_eq!(env::var_os(&key), Some(OsString::from("value")));
+
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        state.exit_scope(index + 1);
+    }));
+    assert!(result.is_ok(), "invalid scope exit should not panic");
+
+    assert_eq!(env::var_os(&key), original);
+    assert_eq!(state.depth(), 0);
+    assert!(state.is_stack_empty());
+    assert!(!state.has_lock());
+    assert_env_lock_released();
+}
+
+#[rstest]
+#[case::corrupt_exit(CorruptionCase {
+    test_name: "CORRUPT_EXIT",
+    setup_guards: setup_single_guard,
+    corrupt_state: apply_invalid_scope_exit,
+    drop_guards: drop_guards_in_order,
+    drop_message: "dropping guard after corruption should not panic",
+})]
+#[case::invalid_index_nested(CorruptionCase {
+    test_name: "INVALID_INDEX_NESTED",
+    setup_guards: setup_nested_guards,
+    corrupt_state: apply_invalid_scope_exit,
+    drop_guards: drop_guards_in_order,
+    drop_message: "dropping guards after invalid scope exit should not panic",
+})]
+#[case::out_of_order_drop(CorruptionCase {
+    test_name: "OUT_OF_ORDER_DROP",
+    setup_guards: setup_nested_guards,
+    corrupt_state: no_corruption,
+    drop_guards: drop_guards_out_of_order,
+    drop_message: "dropping outer guard out of order should not panic",
+})]
+#[serial]
+fn scoped_env_recovers_from_corrupt_exit(#[case] case: CorruptionCase) {
+    assert_scoped_env_recovers_from_corrupt_exit(case.test_name, |key| {
+        let original = env::var_os(key);
+        let guards = (case.setup_guards)(key);
+        let restored = (case.corrupt_state)();
+
+        if restored {
+            assert_eq!(env::var_os(key), original);
+            assert_thread_state_reset();
+        }
+
+        let drop_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            (case.drop_guards)(guards);
+        }));
+        assert!(drop_result.is_ok(), "{}", case.drop_message);
+        assert_eq!(env::var_os(key), original);
+        assert_thread_state_reset();
+        assert_env_lock_released();
+    });
+}
+
+fn assert_scoped_env_recovers_from_corrupt_exit<F>(test_name: &str, setup_and_corrupt: F)
+where
+    F: FnOnce(&OsString),
+{
+    let key = OsString::from(format!("SCOPED_ENV_{test_name}"));
+    setup_and_corrupt(&key);
+}
+
+enum GuardSet {
+    Single(ScopedEnv),
+    Nested { outer: ScopedEnv, inner: ScopedEnv },
+}
+
+#[derive(Clone, Copy)]
+struct CorruptionCase {
+    test_name: &'static str,
+    setup_guards: fn(&OsString) -> GuardSet,
+    corrupt_state: fn() -> bool,
+    drop_guards: fn(GuardSet),
+    drop_message: &'static str,
+}
+
+impl GuardSet {
+    fn drop_in_order(self) {
+        match self {
+            Self::Single(guard) => drop(guard),
+            Self::Nested { outer, inner } => {
+                drop(inner);
+                drop(outer);
+            }
+        }
+    }
+
+    fn drop_out_of_order(self) {
+        match self {
+            Self::Single(guard) => drop(guard),
+            Self::Nested { outer, inner } => {
+                drop(outer);
+                drop(inner);
+            }
+        }
+    }
+}
+
+fn setup_single_guard(key: &OsString) -> GuardSet {
+    GuardSet::Single(ScopedEnv::apply_os(vec![(
+        key.clone(),
+        Some(OsString::from("value")),
+    )]))
+}
+
+fn setup_nested_guards(key: &OsString) -> GuardSet {
+    let outer = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("outer")))]);
+    let inner = ScopedEnv::apply_os(vec![(key.clone(), Some(OsString::from("inner")))]);
+    GuardSet::Nested { outer, inner }
+}
+
+fn apply_invalid_scope_exit() -> bool {
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        THREAD_STATE.with(|cell| {
+            let mut state = cell.borrow_mut();
+            state.exit_scope(usize::MAX);
+        });
+    }));
+    assert!(result.is_ok(), "invalid scope exit should not panic");
+    true
+}
+
+fn no_corruption() -> bool {
+    false
+}
+
+fn drop_guards_in_order(guards: GuardSet) {
+    guards.drop_in_order();
+}
+
+fn drop_guards_out_of_order(guards: GuardSet) {
+    guards.drop_out_of_order();
+}
+
+fn assert_thread_state_reset() {
+    THREAD_STATE.with(|cell| {
+        let state = cell.borrow();
+        assert_eq!(state.depth(), 0);
+        assert!(state.is_stack_empty());
+        assert!(!state.has_lock());
+    });
+}
+
+fn assert_env_lock_released() {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match ENV_LOCK.try_lock() {
+            Ok(guard) => {
+                drop(guard);
+                return;
+            }
+            Err(TryLockError::Poisoned(guard)) => {
+                drop(guard);
+                ENV_LOCK.clear_poison();
+                return;
+            }
+            Err(TryLockError::WouldBlock) => {}
+        }
+        assert!(Instant::now() < deadline, "ENV_LOCK should be released");
+        thread::yield_now();
+    }
+}
+
 #[cfg(feature = "cluster-unit-tests")]
 #[test]
+#[serial]
 fn logs_application_and_restoration() {
     let (logs, ()) = capture_info_logs(|| {
         let guard = ScopedEnv::apply(&[

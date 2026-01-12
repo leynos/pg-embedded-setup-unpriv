@@ -1,3 +1,4 @@
+#![doc = "Integration tests covering the `worker_process` module."]
 #![cfg(all(
     test,
     unix,
@@ -8,13 +9,14 @@
         target_os = "openbsd",
         target_os = "dragonfly",
     ),
+    feature = "privileged-tests",
 ))]
-#![doc = "Integration tests covering the `worker_process` module."]
 
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::{Context, eyre};
 use pg_embedded_setup_unpriv::worker_process_test_api::{
-    WorkerOperation, WorkerRequest, disable_privilege_drop_for_tests, render_failure_for_tests, run,
+    WorkerOperation, WorkerRequest, WorkerRequestArgs, disable_privilege_drop_for_tests,
+    render_failure_for_tests, run,
 };
 use pg_embedded_setup_unpriv::{BootstrapError, BootstrapResult};
 use postgresql_embedded::Settings;
@@ -70,7 +72,14 @@ const fn request<'a>(
     env: &'a [(String, Option<String>)],
     timeout: Duration,
 ) -> WorkerRequest<'a> {
-    WorkerRequest::new(worker, settings, env, WorkerOperation::Setup, timeout)
+    let args = WorkerRequestArgs {
+        worker,
+        settings,
+        env_vars: env,
+        operation: WorkerOperation::Setup,
+        timeout,
+    };
+    WorkerRequest::new(args)
 }
 
 fn require_contains(message: &str, needle: &str, description: &str) -> BootstrapResult<()> {

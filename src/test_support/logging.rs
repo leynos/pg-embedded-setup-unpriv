@@ -6,6 +6,7 @@
 use std::io::{Result as IoResult, Write};
 use std::sync::{Arc, Mutex};
 
+use crate::observability::LOG_TARGET;
 use tracing::Level;
 use tracing::subscriber::with_default;
 use tracing_subscriber::fmt;
@@ -133,15 +134,32 @@ where
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    let content =
-        String::from_utf8(bytes).unwrap_or_else(|err| panic!("logs should be valid UTF-8: {err}"));
-    let logs = content.lines().map(str::to_owned).collect();
+    let logs = decode_logs(bytes);
     (logs, result)
+}
+
+/// Decodes captured log output, warning and falling back to lossy UTF-8 when
+/// invalid byte sequences are encountered.
+fn decode_logs(bytes: Vec<u8>) -> Vec<String> {
+    let content = match String::from_utf8(bytes) {
+        Ok(content) => content,
+        Err(err) => {
+            let utf8_error = err.utf8_error();
+            let err_bytes = err.into_bytes();
+            tracing::warn!(
+                target: LOG_TARGET,
+                error = %utf8_error,
+                "captured logs contained invalid UTF-8; decoding lossily"
+            );
+            String::from_utf8_lossy(&err_bytes).into_owned()
+        }
+    };
+    content.lines().map(str::to_owned).collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_debug_logs, capture_info_logs_with_spans};
+    use super::{capture_debug_logs, capture_info_logs_with_spans, capture_warn_logs, decode_logs};
     use tracing::info_span;
 
     #[test]
@@ -173,6 +191,23 @@ mod tests {
             logs.iter()
                 .any(|line| line.contains("debug message for capture")),
             "expected debug log to be captured, got {logs:?}"
+        );
+    }
+
+    #[test]
+    fn decode_logs_uses_lossy_utf8_for_invalid_bytes() {
+        let bytes = vec![b'a', b'b', b'\n', 0xF0, 0x28, 0x8C, 0x28];
+        let (warn_logs, logs) = capture_warn_logs(|| decode_logs(bytes));
+
+        assert_eq!(
+            logs,
+            vec![String::from("ab"), String::from("\u{FFFD}(\u{FFFD}(")]
+        );
+        assert!(
+            warn_logs.iter().any(
+                |line| line.contains("captured logs contained invalid UTF-8; decoding lossily")
+            ),
+            "expected invalid UTF-8 warning, got {warn_logs:?}"
         );
     }
 }

@@ -29,7 +29,6 @@ pub use self::lifecycle::DatabaseName;
 pub use self::temporary_database::TemporaryDatabase;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use self::worker_invoker::WorkerInvoker;
-#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[doc(hidden)]
 pub use self::worker_operation::WorkerOperation;
 

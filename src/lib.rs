@@ -28,16 +28,13 @@ pub mod test_support;
 pub mod worker;
 pub(crate) mod worker_process;
 
-/// Integration test shims for worker process orchestration.
 #[doc(hidden)]
 pub mod worker_process_test_api {
-    use std::time::Duration;
-
-    use camino::Utf8Path;
-    use postgresql_embedded::Settings;
+    //! Integration test shims for worker process orchestration.
 
     pub use crate::cluster::WorkerOperation;
     use crate::worker_process;
+    pub use crate::worker_process::WorkerRequestArgs;
 
     #[cfg(all(
         unix,
@@ -48,6 +45,7 @@ pub mod worker_process_test_api {
             target_os = "openbsd",
             target_os = "dragonfly",
         ),
+        any(test, doc, feature = "privileged-tests"),
     ))]
     use crate::worker_process::PrivilegeDropGuard as InnerPrivilegeDropGuard;
 
@@ -58,11 +56,6 @@ pub mod worker_process_test_api {
     pub struct WorkerRequest<'a>(worker_process::WorkerRequest<'a>);
 
     impl<'a> WorkerRequest<'a> {
-        #[must_use]
-        #[expect(
-            clippy::too_many_arguments,
-            reason = "test helper mirrors worker request constructor"
-        )]
         /// Constructs a worker request for invoking an operation in tests.
         ///
         /// # Examples
@@ -71,29 +64,26 @@ pub mod worker_process_test_api {
         /// # use std::time::Duration;
         /// # use camino::Utf8Path;
         /// # use postgresql_embedded::Settings;
-        /// # use pg_embedded_setup_unpriv::{WorkerOperation, worker_process_test_api::WorkerRequest};
+        /// # use pg_embedded_setup_unpriv::{
+        /// #     WorkerOperation,
+        /// #     worker_process_test_api::{WorkerRequest, WorkerRequestArgs},
+        /// # };
         /// # let worker = Utf8Path::new("/tmp/worker");
         /// # let settings = Settings::default();
         /// # let env_vars: Vec<(String, Option<String>)> = Vec::new();
-        /// let request = WorkerRequest::new(
+        /// let args = WorkerRequestArgs {
         ///     worker,
-        ///     &settings,
-        ///     &env_vars,
-        ///     WorkerOperation::Setup,
-        ///     Duration::from_secs(1),
-        /// );
+        ///     settings: &settings,
+        ///     env_vars: &env_vars,
+        ///     operation: WorkerOperation::Setup,
+        ///     timeout: Duration::from_secs(1),
+        /// };
+        /// let request = WorkerRequest::new(args);
         /// # let _ = request;
         /// ```
-        pub const fn new(
-            worker: &'a Utf8Path,
-            settings: &'a Settings,
-            env_vars: &'a [(String, Option<String>)],
-            operation: WorkerOperation,
-            timeout: Duration,
-        ) -> Self {
-            Self(worker_process::WorkerRequest::new(
-                worker, settings, env_vars, operation, timeout,
-            ))
+        #[must_use]
+        pub const fn new(args: WorkerRequestArgs<'a>) -> Self {
+            Self(worker_process::WorkerRequest::new(args))
         }
 
         /// Returns a reference to the wrapped worker request.
@@ -107,6 +97,7 @@ pub mod worker_process_test_api {
         worker_process::run(request.inner())
     }
 
+    /// Guard that restores the privilege-drop toggle when tests finish.
     #[cfg(all(
         unix,
         any(
@@ -116,12 +107,14 @@ pub mod worker_process_test_api {
             target_os = "openbsd",
             target_os = "dragonfly",
         ),
+        any(test, doc, feature = "privileged-tests"),
     ))]
-    /// Guard that restores the privilege-drop toggle when tests finish.
     pub struct PrivilegeDropGuard {
         _inner: InnerPrivilegeDropGuard,
     }
 
+    /// Temporarily disables privilege dropping so tests can run deterministic
+    /// worker binaries without adjusting file ownership.
     #[cfg(all(
         unix,
         any(
@@ -131,18 +124,17 @@ pub mod worker_process_test_api {
             target_os = "openbsd",
             target_os = "dragonfly",
         ),
+        any(test, doc, feature = "privileged-tests"),
     ))]
     #[must_use]
-    /// Temporarily disables privilege dropping so tests can run deterministic
-    /// worker binaries without adjusting file ownership.
     pub fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
         PrivilegeDropGuard {
             _inner: worker_process::disable_privilege_drop_for_tests(),
         }
     }
 
-    #[must_use]
     /// Renders a worker failure for assertion-friendly error strings.
+    #[must_use]
     pub fn render_failure_for_tests(
         context: &str,
         output: &std::process::Output,
