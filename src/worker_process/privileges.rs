@@ -192,15 +192,18 @@ cfg_privilege_drop! {
     /// Obtain the guard through [`disable_privilege_drop_for_tests`] when
     /// temporarily bypassing demotion during integration tests; dropping the guard
     /// re-enables the standard privilege enforcement automatically.
+    #[cfg(any(test, doc, feature = "privileged-tests"))]
     #[derive(Debug)]
     pub(crate) struct PrivilegeDropGuard;
 
+    #[cfg(any(test, doc, feature = "privileged-tests"))]
     impl Drop for PrivilegeDropGuard {
         fn drop(&mut self) {
             decrement_skip_privilege_drop();
         }
     }
 
+    #[cfg(any(test, doc, feature = "privileged-tests"))]
     #[must_use]
     pub(crate) fn disable_privilege_drop_for_tests() -> PrivilegeDropGuard {
         SKIP_PRIVILEGE_DROP.fetch_add(1, Ordering::SeqCst);
@@ -211,6 +214,7 @@ cfg_privilege_drop! {
         SKIP_PRIVILEGE_DROP.load(Ordering::SeqCst) > 0
     }
 
+    #[cfg(any(test, doc, feature = "privileged-tests"))]
     fn decrement_skip_privilege_drop() {
         let _update_result = SKIP_PRIVILEGE_DROP.fetch_update(
             Ordering::SeqCst,

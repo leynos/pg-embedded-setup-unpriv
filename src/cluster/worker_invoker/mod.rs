@@ -6,7 +6,7 @@ use tokio::runtime::Runtime;
 
 use crate::error::{BootstrapError, BootstrapResult};
 use crate::observability::LOG_TARGET;
-use crate::worker_process::{self, WorkerRequest};
+use crate::worker_process::{self, WorkerRequest, WorkerRequestArgs};
 use crate::{ExecutionMode, ExecutionPrivileges, TestBootstrapSettings};
 
 use super::WorkerOperation;
@@ -224,13 +224,14 @@ impl<'a> WorkerInvoker<'a> {
             ))
         })?;
 
-        let request = WorkerRequest::new(
+        let args = WorkerRequestArgs {
             worker,
-            &self.bootstrap.settings,
-            self.env_vars,
+            settings: &self.bootstrap.settings,
+            env_vars: self.env_vars,
             operation,
-            operation.timeout(self.bootstrap),
-        );
+            timeout: operation.timeout(self.bootstrap),
+        };
+        let request = WorkerRequest::new(args);
 
         worker_process::run(&request)
     }

@@ -16,6 +16,8 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs;
+#[path = "support/cluster_skip.rs"]
+mod cluster_skip;
 #[path = "support/env.rs"]
 mod env;
 #[path = "support/env_isolation.rs"]
@@ -26,7 +28,10 @@ mod sandbox;
 mod scenario;
 #[path = "support/serial.rs"]
 mod serial;
+#[path = "support/skip.rs"]
+mod skip;
 
+use cluster_skip::cluster_skip_message;
 use env_isolation::override_env_path;
 use sandbox::TestSandbox;
 use scenario::expect_fixture;
@@ -63,19 +68,20 @@ impl ObservabilityWorld {
             }
             Err(err) => {
                 let report = err.into_report();
+                let message = report.to_string();
+                let debug = format!("{report:?}");
                 if permission_denied_in_chain(&report) {
                     self.skip_reason = Some("privilege drop unavailable on host".to_owned());
-                } else if coverage_mode()
-                    && report
-                        .to_string()
-                        .contains("postgresql_embedded::setup() failed")
+                } else if coverage_mode() && message.contains("postgresql_embedded::setup() failed")
                 {
                     self.skip_reason = Some(
                         "skipping observability success scenario under coverage: embedded postgres setup failed"
                             .to_owned(),
                     );
+                } else if let Some(reason) = cluster_skip_message(&message, Some(&debug)) {
+                    self.skip_reason = Some(reason);
                 }
-                self.error = Some(report.to_string());
+                self.error = Some(message);
             }
         }
     }

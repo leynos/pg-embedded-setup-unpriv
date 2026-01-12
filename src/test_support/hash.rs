@@ -1,9 +1,9 @@
 //! Directory hashing utilities for template naming.
 
+use cap_std::{ambient_authority, fs::Dir};
 use sha2::{Digest, Sha256};
-use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::BootstrapResult;
 
@@ -30,21 +30,31 @@ use crate::error::BootstrapResult;
 /// ```
 pub fn hash_directory(dir_path: impl AsRef<Path>) -> BootstrapResult<String> {
     let base = dir_path.as_ref();
+    let dir = Dir::open_ambient_dir(base, ambient_authority()).map_err(|e| {
+        color_eyre::eyre::eyre!("failed to open directory '{}': {e}", base.display())
+    })?;
     let mut hasher = Sha256::new();
 
-    hash_directory_recursive(base, base, &mut hasher)?;
+    hash_directory_recursive(&dir, base, Path::new(""), &mut hasher)?;
 
     let result = hasher.finalize();
     Ok(format!("{result:x}"))
 }
 
 fn hash_directory_recursive(
-    base: &Path,
-    current: &Path,
+    base_dir: &Dir,
+    base_path: &Path,
+    relative: &Path,
     hasher: &mut Sha256,
 ) -> BootstrapResult<()> {
-    let read_dir = fs::read_dir(current).map_err(|e| {
-        color_eyre::eyre::eyre!("failed to read directory '{}': {e}", current.display())
+    let current_path = join_path(base_path, relative);
+    let read_dir_path = if relative.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        relative
+    };
+    let read_dir = base_dir.read_dir(read_dir_path).map_err(|e| {
+        color_eyre::eyre::eyre!("failed to read directory '{}': {e}", current_path.display())
     })?;
 
     let mut entries: Vec<_> = read_dir
@@ -52,26 +62,35 @@ fn hash_directory_recursive(
             entry.map_err(|e| {
                 color_eyre::eyre::eyre!(
                     "failed to read directory entry in '{}': {e}",
-                    current.display()
+                    current_path.display()
                 )
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
 
     // Sort entries for deterministic ordering
-    entries.sort_by_key(std::fs::DirEntry::file_name);
+    entries.sort_by_key(|entry| entry.file_name().to_string_lossy().into_owned());
 
     for entry in entries {
-        let path = entry.path();
-        let relative = path.strip_prefix(base).unwrap_or(&path).to_string_lossy();
+        let entry_name = entry.file_name();
+        let entry_relative = relative.join(&entry_name);
+        let entry_path = join_path(base_path, &entry_relative);
+        let relative_str = entry_relative.to_string_lossy();
 
         // Hash the relative path
-        hasher.update(relative.as_bytes());
+        hasher.update(relative_str.as_bytes());
 
-        if path.is_dir() {
-            hash_directory_recursive(base, &path, hasher)?;
-        } else if path.is_file() {
-            hash_file_contents(&path, hasher)?;
+        let file_type = entry.file_type().map_err(|e| {
+            color_eyre::eyre::eyre!(
+                "failed to read directory entry type in '{}': {e}",
+                entry_path.display()
+            )
+        })?;
+
+        if file_type.is_dir() {
+            hash_directory_recursive(base_dir, base_path, &entry_relative, hasher)?;
+        } else if file_type.is_file() {
+            hash_file_contents(base_dir, &entry_relative, &entry_path, hasher)?;
         }
     }
 
@@ -83,13 +102,21 @@ fn hash_directory_recursive(
     clippy::indexing_slicing,
     reason = "bytes_read is always <= buffer.len()"
 )]
-fn hash_file_contents(path: &Path, hasher: &mut Sha256) -> BootstrapResult<()> {
-    let mut file = fs::File::open(path)
-        .map_err(|e| color_eyre::eyre::eyre!("failed to open file '{}': {e}", path.display()))?;
+fn hash_file_contents(
+    base_dir: &Dir,
+    relative: &Path,
+    display_path: &Path,
+    hasher: &mut Sha256,
+) -> BootstrapResult<()> {
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true);
+    let mut file = base_dir.open_with(relative, &options).map_err(|e| {
+        color_eyre::eyre::eyre!("failed to open file '{}': {e}", display_path.display())
+    })?;
     let mut buffer = [0u8; 8192];
     loop {
         let bytes_read = file.read(&mut buffer).map_err(|e| {
-            color_eyre::eyre::eyre!("failed to read file '{}': {e}", path.display())
+            color_eyre::eyre::eyre!("failed to read file '{}': {e}", display_path.display())
         })?;
         if bytes_read == 0 {
             break;
@@ -97,6 +124,14 @@ fn hash_file_contents(path: &Path, hasher: &mut Sha256) -> BootstrapResult<()> {
         hasher.update(&buffer[..bytes_read]);
     }
     Ok(())
+}
+
+fn join_path(base: &Path, relative: &Path) -> PathBuf {
+    if relative.as_os_str().is_empty() {
+        base.to_path_buf()
+    } else {
+        base.join(relative)
+    }
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+//! Privilege management helpers for dropping root access safely.
 #![cfg(all(
     unix,
     any(
@@ -8,7 +9,6 @@
         target_os = "dragonfly",
     )
 ))]
-//! Privilege management helpers for dropping root access safely.
 use crate::error::{PrivilegeError, PrivilegeResult};
 use crate::fs::{ensure_dir_exists, set_permissions};
 use crate::observability::LOG_TARGET;
