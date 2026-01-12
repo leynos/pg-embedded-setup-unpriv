@@ -85,9 +85,12 @@ fn serialises_env_across_threads() {
     impl Drop for ReleaseOnDrop {
         fn drop(&mut self) {
             if let Some(sender) = self.sender.take() {
-                if sender.send(()).is_err() {
-                    // Receiver may have dropped after a test failure.
-                }
+                // Ignore send errors - receiver may have dropped after a test failure.
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "Receiver may have dropped after a test failure."
+                )]
+                let _ = sender.send(());
             }
         }
     }
