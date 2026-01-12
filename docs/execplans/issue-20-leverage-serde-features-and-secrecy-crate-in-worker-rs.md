@@ -47,17 +47,17 @@ handling changes.
 
 - Risk: serde for `secrecy::SecretString` might encode differently than the
   current `PlainSecret` serde implementation, changing payload JSON. Severity:
-  medium Likelihood: medium Mitigation: compare JSON output in tests and/or add
-  a regression test.
+  medium Likelihood: medium Mitigation: compare JSON output in tests or add a
+  regression test.
 
 - Risk: replacing manual UTF-8 checks might move the failure point to
   serialization or deserialization time. Severity: medium Likelihood: medium
   Mitigation: keep explicit UTF-8 validation or document and test the new
   failure point.
 
-- Risk: removing `PlainSecret` could break tests or external users if the type
-  is referenced directly. Severity: medium Likelihood: low Mitigation: prefer a
-  type alias or re-export to preserve the name.
+- Risk: removing `PlainSecret` could break tests or external users.
+  Severity: medium Likelihood: low Mitigation: prefer a type alias or re-export
+  to preserve the name.
 
 ## Progress
 
@@ -159,19 +159,23 @@ long-running command.
 
 1) Inspect code and tests:
 
-    rg -n "SettingsSnapshot|WorkerPayload|PlainSecret" src/worker.rs \
-      tests/support/pg_worker.rs
-    sed -n '1,220p' src/worker.rs
-    sed -n '1,240p' tests/support/pg_worker.rs
+```sh
+rg -n "SettingsSnapshot|WorkerPayload|PlainSecret" src/worker.rs \
+  tests/support/pg_worker.rs
+sed -n '1,220p' src/worker.rs
+sed -n '1,240p' tests/support/pg_worker.rs
+```
 
-2) Implement changes (details depend on Stage B decision). Keep edits focused
+1) Implement changes (details depend on Stage B decision). Keep edits focused
    in `src/worker.rs` and update `tests/support/pg_worker.rs` as needed.
 
-3) Run format, lint, and tests:
+1) Run format, lint, and tests:
 
-    make check-fmt | tee /tmp/issue-20-check-fmt.log
-    make lint | tee /tmp/issue-20-lint.log
-    make test | tee /tmp/issue-20-test.log
+```sh
+make check-fmt | tee /tmp/issue-20-check-fmt.log
+make lint | tee /tmp/issue-20-lint.log
+make test | tee /tmp/issue-20-test.log
+```
 
 If `make check-fmt` fails, run `make fmt` and then re-run `make check-fmt`.
 
@@ -205,9 +209,11 @@ Avoid destructive git operations.
 
 Expected log artefacts after validation:
 
-    /tmp/issue-20-check-fmt.log
-    /tmp/issue-20-lint.log
-    /tmp/issue-20-test.log
+```text
+/tmp/issue-20-check-fmt.log
+/tmp/issue-20-lint.log
+/tmp/issue-20-test.log
+```
 
 ## Interfaces and Dependencies
 
@@ -234,3 +240,5 @@ Key dependencies and traits:
   validations on 2026-01-12.
 - 2026-01-12: Standardized spellings, expanded acronyms, and corrected list
   sequencing after PR review feedback.
+- 2026-01-12: Rewrapped risk bullets and switched command examples to fenced
+  code blocks for markdownlint compliance; plan intent unchanged.
