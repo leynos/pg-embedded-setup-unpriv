@@ -1,9 +1,8 @@
 # Refactor worker payload serde via secrecy
 
-This Execution Plan (ExecPlan) is a living document. The sections
-`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
-`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
-proceeds.
+This Execution Plan (ExecPlan) is a living document. The sections `Constraints`,
+`Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`,
+and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 Status: COMPLETE
 
@@ -12,12 +11,11 @@ PLANS.md was not found in the repository root on 2026-01-12.
 ## Purpose / Big Picture
 
 This change removes manual serialization, deserialization, and redaction
-boilerplate in `src/worker.rs` by relying on existing serde ecosystem support.
-A successful change keeps the worker payload schema stable, keeps secrets
-redacted in `Debug`, and preserves UTF-8 validation for paths while reducing
-custom code. Success is observable by running the full test suite and by
-round-tripping a `WorkerPayload` through JSON without lossy path or secret
-handling changes.
+boilerplate in `src/worker.rs` by relying on existing serde ecosystem support. A
+successful change keeps the worker payload schema stable, keeps secrets redacted
+in `Debug`, and preserves UTF-8 validation for paths while reducing custom code.
+Success is observable by running the full test suite and by round-tripping a
+`WorkerPayload` through JSON without lossy path or secret handling changes.
 
 ## Constraints
 
@@ -40,8 +38,8 @@ handling changes.
 - Dependencies: if new crates or Cargo features are needed, stop and escalate.
 - Iterations: if `make check-fmt`, `make lint`, or `make test` still fail after
   two fix attempts each, stop and escalate with logs.
-- Ambiguity: if multiple valid serde strategies would change payload shape,
-  stop and ask which compatibility target is intended.
+- Ambiguity: if multiple valid serde strategies would change payload shape, stop
+  and ask which compatibility target is intended.
 
 ## Risks
 
@@ -55,9 +53,9 @@ handling changes.
   Mitigation: keep explicit UTF-8 validation or document and test the new
   failure point.
 
-- Risk: removing `PlainSecret` could break tests or external users.
-  Severity: medium Likelihood: low Mitigation: prefer a type alias or re-export
-  to preserve the name.
+- Risk: removing `PlainSecret` could break tests or external users. Severity:
+  medium Likelihood: low Mitigation: prefer a type alias or re-export to
+  preserve the name.
 
 ## Progress
 
@@ -78,11 +76,11 @@ handling changes.
   applying environment overrides. Evidence: `apply_worker_environment` takes
   `Vec<(String, Option<PlainSecret>)>`. Impact: retain the `PlainSecret` type
   and `expose` method to avoid API churn.
-- Observation: `secrecy::SecretString` is not `Serialize` even with the
-  `serde` feature enabled because it requires `SerializableSecret` for `str`.
-  Evidence: `make lint` failed with `E0277` when deriving `Serialize` for
-  `PlainSecret`. Impact: keep a manual `Serialize` impl for `PlainSecret` while
-  deriving `Debug` and `Deserialize`.
+- Observation: `secrecy::SecretString` is not `Serialize` even with the `serde`
+  feature enabled because it requires `SerializableSecret` for `str`. Evidence:
+  `make lint` failed with `E0277` when deriving `Serialize` for `PlainSecret`.
+  Impact: keep a manual `Serialize` impl for `PlainSecret` while deriving
+  `Debug` and `Deserialize`.
 
 ## Decision Log
 
@@ -96,13 +94,13 @@ handling changes.
   compatibility. Date/Author: 2026-01-12, Codex.
 - Decision: Implement `Serialize` manually for `PlainSecret` while deriving
   `Deserialize` and `Debug`. Rationale: `SecretString` does not implement
-  `Serialize`, so deriving it for `PlainSecret` is not possible without a
-  custom Serde implementation. Date/Author: 2026-01-12, Codex.
+  `Serialize`, so deriving it for `PlainSecret` is not possible without a custom
+  Serde implementation. Date/Author: 2026-01-12, Codex.
 
 ## Outcomes & Retrospective
 
-- `PlainSecret` now derives `Deserialize` and `Debug` with a manual
-  `Serialize`, keeping secrets redacted and payloads stable.
+- `PlainSecret` now derives `Deserialize` and `Debug` with a manual `Serialize`,
+  keeping secrets redacted and payloads stable.
 - Added unit coverage for secret serialization and redaction.
 - Make targets `fmt`, `markdownlint`, `nixie`, `check-fmt`, `lint`, and `test`
   completed successfully.
@@ -124,8 +122,8 @@ payload is exercised in `tests/support/pg_worker.rs`, which currently imports
 
 Stage A: understand and propose (no code changes). Read `src/worker.rs` and
 `tests/support/pg_worker.rs` to confirm how `PlainSecret` and the snapshot
-conversions are used. Confirm whether any external modules rely on
-`PlainSecret` as a concrete type or only via `From` conversions.
+conversions are used. Confirm whether any external modules rely on `PlainSecret`
+as a concrete type or only via `From` conversions.
 
 Stage B: decide and scaffold. Choose the minimal-change approach:
 
@@ -166,8 +164,8 @@ long-running command.
    sed -n '1,240p' tests/support/pg_worker.rs
    ```
 
-2) Implement changes (details depend on Stage B decision). Keep edits focused
-   in `src/worker.rs` and update `tests/support/pg_worker.rs` as needed.
+2) Implement changes (details depend on Stage B decision). Keep edits focused in
+   `src/worker.rs` and update `tests/support/pg_worker.rs` as needed.
 
 3) Run format, lint, and tests:
 
@@ -177,7 +175,7 @@ long-running command.
    make test | tee /tmp/issue-20-test.log
    ```
 
-   If `make check-fmt` fails, run `make fmt` and then re-run `make check-fmt`.
+If `make check-fmt` fails, run `make fmt` and then re-run `make check-fmt`.
 
 4) Commit with a descriptive message once all gates pass, then perform the
    post-commit refactor review per `AGENTS.md`.
@@ -201,9 +199,9 @@ Quality criteria (done means all pass):
 
 ## Idempotence and Recovery
 
-All steps are safe to re-run. If a change introduces a regression, use
-`git checkout -- <file>` to revert only the specific file, then retry the step.
-Avoid destructive git operations.
+All steps are safe to re-run. If a change introduces a regression, use `git
+checkout -- <file>` to revert only the specific file, then retry the step. Avoid
+destructive git operations.
 
 ## Artefacts and Notes
 
@@ -226,8 +224,7 @@ Target interfaces to preserve or document:
 
 Key dependencies and traits:
 
-- `secrecy::SecretString` with `serde` feature for redaction and
-  serialization.
+- `secrecy::SecretString` with `serde` feature for redaction and serialization.
 - `camino::Utf8PathBuf` with `serde1` feature for UTF-8 paths.
 - `serde_with::DurationSeconds` and `serde_with::DisplayFromStr` already used
   for duration and version request handling.
@@ -238,11 +235,13 @@ Key dependencies and traits:
   state.
 - Updated status, progress, and outcomes after completing the refactor and
   validations on 2026-01-12.
-- 2026-01-12: Indented Concrete Steps code blocks to keep list numbering
-  intact, and added commas for clarity.
+- 2026-01-12: Indented Concrete Steps code blocks to keep list numbering intact,
+  and added commas for clarity.
 - 2026-01-12: Standardized spellings, expanded acronyms, and corrected list
   sequencing after PR review feedback.
 - 2026-01-12: Rewrapped risk bullets and switched command examples to fenced
   code blocks for markdownlint compliance; plan intent unchanged.
 - 2026-01-12: Renumbered Concrete Steps sequentially to satisfy markdownlint
   list requirements.
+- 2026-01-12: Rewrapped paragraphs and list items to 80 columns for
+  markdownlint compliance.
