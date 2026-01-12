@@ -51,7 +51,7 @@ handling changes.
   regression test.
 
 - Risk: replacing manual UTF-8 checks might move the failure point to
-  serialisation or deserialisation time. Severity: medium. Likelihood: medium.
+  serialization or deserialization time. Severity: medium. Likelihood: medium.
   Mitigation: keep explicit UTF-8 validation or document and test the new
   failure point.
 
