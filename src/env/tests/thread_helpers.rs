@@ -67,7 +67,7 @@ pub(super) fn spawn_outer_guard_thread(
     release_rx: mpsc::Receiver<()>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let guard = ScopedEnv::apply(&[(key.clone(), Some(String::from("one")))]);
+        let guard = ScopedEnv::apply(&[(key, Some(String::from("one")))]);
 
         ready_tx.send(()).expect("ready signal must be sent");
         barrier.wait();

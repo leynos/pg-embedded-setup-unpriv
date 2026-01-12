@@ -102,7 +102,8 @@ fn serialises_env_across_threads() {
     let (release_tx, release_rx) = mpsc::channel();
     let (attempt_tx, attempt_rx) = mpsc::channel();
     let (acquired_tx, acquired_rx) = mpsc::channel();
-    let wait_timeout = Duration::from_secs(10);
+    // Generous timeout to avoid hanging tests, not to enforce ordering.
+    let deadlock_timeout = Duration::from_secs(30);
 
     let thread_a = spawn_outer_guard_thread(
         String::from(key),
@@ -121,7 +122,7 @@ fn serialises_env_across_threads() {
     );
 
     ready_rx
-        .recv_timeout(wait_timeout)
+        .recv_timeout(deadlock_timeout)
         .expect("outer guard should be ready");
 
     let release_guard = ReleaseOnDrop {
@@ -130,7 +131,7 @@ fn serialises_env_across_threads() {
 
     start_tx.send(()).expect("start signal must be sent");
     attempt_rx
-        .recv_timeout(wait_timeout)
+        .recv_timeout(deadlock_timeout)
         .expect("second thread should attempt to acquire the guard");
 
     assert!(
@@ -141,7 +142,7 @@ fn serialises_env_across_threads() {
     drop(release_guard);
 
     let value = acquired_rx
-        .recv_timeout(wait_timeout)
+        .recv_timeout(deadlock_timeout)
         .expect("second thread should acquire after release");
     assert_eq!(value.as_deref(), Some("two"));
 
