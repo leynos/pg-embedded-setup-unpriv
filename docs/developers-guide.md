@@ -18,6 +18,17 @@ consumer-facing guidance.
 The default feature set keeps Diesel optional for consumers, while `make test`
 enables `--all-features` so the Diesel helpers are exercised by smoke tests.
 
+## Loom concurrency tests
+
+Loom-based checks for `ScopedEnv` are opt-in and only compile when the
+`loom-tests` feature is enabled. The Loom tests are marked `#[ignore]` so
+`make test --all-features` stays deterministic unless you opt in explicitly.
+Run the Loom suite with:
+
+```sh
+cargo test --features "loom-tests,dev-worker" --lib -- --ignored
+```
+
 ## Further reading
 
 - `tests/e2e_postgresql_embedded_diesel.rs` – example of combining the helper

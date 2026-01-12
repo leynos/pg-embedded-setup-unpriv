@@ -393,6 +393,20 @@ classDiagram
 
 *Figure: Worker payload serialization and redaction flow.*
 
+### Implementation update (2026-01-12)
+
+- Introduced the optional `loom` dependency and `loom-tests` feature; runtime
+  code keeps `ENV_LOCK` as a `std::sync::Mutex`, while Loom tests use a
+  Loom-specific lock and thread state via `ScopedEnvCore`.
+- Added Loom-backed concurrency tests for `ScopedEnv` under `loom-tests`; the
+  Loom tests are marked `#[ignore]` so `make test --all-features` does not run
+  the model-checking suite.
+- Documented the Loom test command in the developer guide; there are no
+  user-facing behaviour changes.
+- Behavioural tests (rstest-bdd) are not applicable because this change only
+  affects internal test instrumentation rather than observable runtime
+  behaviour.
+
 ### Ephemeral ports and isolation
 
 To allow the same tests to run concurrently (especially under `nextest`, which

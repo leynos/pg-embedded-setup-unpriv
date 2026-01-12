@@ -58,6 +58,7 @@ serde_json = "1"
 secrecy = { version = "0.10", features = ["serde"] }
 tempfile = "3"
 libc = "0.2"
+loom = { version = "0.7.2", optional = true }
 wait-timeout = "0.2"
 tracing = { version = "0.1", features = ["std"] }
 tracing-subscriber = { version = "0.3", features = ["fmt"], optional = true }
@@ -75,6 +76,7 @@ privileged-tests = []
 cluster-unit-tests = ["dep:tracing-subscriber"]
 dev-worker = ["dep:tracing-subscriber"]
 diesel-support = ["dep:diesel", "dep:pq-sys"]
+loom-tests = ["dep:loom"]
 
 [lints.rust]
 unknown_lints             = "deny"

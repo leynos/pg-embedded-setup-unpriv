@@ -7,6 +7,35 @@ use std::sync::{Mutex, MutexGuard};
 
 pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+pub(crate) trait EnvLockOps {
+    type Guard: 'static;
+
+    fn lock_env_mutex() -> Self::Guard;
+    fn ensure_lock_is_clean();
+}
+
+pub(crate) struct StdEnvLock;
+
+impl EnvLockOps for StdEnvLock {
+    type Guard = MutexGuard<'static, ()>;
+
+    fn lock_env_mutex() -> Self::Guard {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn ensure_lock_is_clean() {
+        if ENV_LOCK.is_poisoned() {
+            tracing::warn!(
+                target: LOG_TARGET,
+                "ENV_LOCK was poisoned; clearing poison and proceeding"
+            );
+            ENV_LOCK.clear_poison();
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct GuardState {
     pub(crate) saved: Vec<(OsString, Option<OsString>)>,
@@ -14,13 +43,15 @@ pub(crate) struct GuardState {
 }
 
 #[derive(Debug)]
-pub(crate) struct ThreadState {
+pub(crate) struct ThreadStateInner<L: EnvLockOps> {
     pub(crate) depth: usize,
-    pub(crate) lock: Option<MutexGuard<'static, ()>>,
+    pub(crate) lock: Option<L::Guard>,
     pub(crate) stack: Vec<GuardState>,
 }
 
-impl ThreadState {
+pub(crate) type ThreadState = ThreadStateInner<StdEnvLock>;
+
+impl<L: EnvLockOps> ThreadStateInner<L> {
     pub const fn new() -> Self {
         Self {
             depth: 0,
@@ -72,25 +103,9 @@ impl ThreadState {
             self.lock.is_none(),
             "ScopedEnv depth desynchronised: mutex still held",
         );
-        Self::ensure_lock_is_clean();
-        let guard = Self::lock_env_mutex();
+        L::ensure_lock_is_clean();
+        let guard = L::lock_env_mutex();
         self.lock = Some(guard);
-    }
-
-    fn ensure_lock_is_clean() {
-        if ENV_LOCK.is_poisoned() {
-            tracing::warn!(
-                target: LOG_TARGET,
-                "ENV_LOCK was poisoned; clearing poison and proceeding"
-            );
-            ENV_LOCK.clear_poison();
-        }
-    }
-
-    fn lock_env_mutex() -> MutexGuard<'static, ()> {
-        ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn apply_env_vars<I>(&self, vars: I) -> Vec<(OsString, Option<OsString>)>
@@ -236,8 +251,8 @@ impl ThreadState {
 
     fn ensure_lock_for_restore(&mut self) {
         if self.lock.is_none() {
-            Self::ensure_lock_is_clean();
-            self.lock = Some(Self::lock_env_mutex());
+            L::ensure_lock_is_clean();
+            self.lock = Some(L::lock_env_mutex());
         }
     }
 

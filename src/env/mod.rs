@@ -27,32 +27,64 @@ use std::cell::RefCell;
 use std::ffi::OsString;
 use std::marker::PhantomData;
 use std::rc::Rc;
+use std::thread_local;
 use tracing::{info, info_span};
 
+#[cfg(all(test, feature = "loom-tests"))]
+mod loom_tests;
 mod state;
 mod summary;
 #[cfg(test)]
 mod tests;
 
-use state::ThreadState;
+use state::{EnvLockOps, StdEnvLock, ThreadState, ThreadStateInner};
 use summary::{MAX_ENV_CHANGES_SUMMARY_LEN, truncate_env_changes_summary};
 
-/// Restores the process environment when dropped, reverting to prior values.
-#[derive(Debug)]
-#[must_use = "Hold the guard until the end of the environment scope"]
-pub struct ScopedEnv {
-    index: usize,
-    span: tracing::Span,
-    change_count: usize,
-    // !Send + !Sync so drops always occur on the creating thread.
-    _not_send_or_sync: PhantomData<Rc<()>>,
+pub(crate) trait ThreadStateAccess {
+    type Lock: EnvLockOps;
+
+    fn with_state<F, R>(f: F) -> R
+    where
+        F: FnOnce(&mut ThreadStateInner<Self::Lock>) -> R;
 }
+
+#[derive(Debug)]
+struct StdThreadStateAccess;
 
 thread_local! {
     static THREAD_STATE: RefCell<ThreadState> = const { RefCell::new(ThreadState::new()) };
 }
 
-impl ScopedEnv {
+impl ThreadStateAccess for StdThreadStateAccess {
+    type Lock = StdEnvLock;
+
+    fn with_state<F, R>(f: F) -> R
+    where
+        F: FnOnce(&mut ThreadStateInner<Self::Lock>) -> R,
+    {
+        THREAD_STATE.with(|cell| {
+            let mut state = cell.borrow_mut();
+            f(&mut state)
+        })
+    }
+}
+
+/// Restores the process environment when dropped, reverting to prior values.
+#[derive(Debug)]
+#[must_use = "Hold the guard until the end of the environment scope"]
+pub struct ScopedEnv(ScopedEnvCore<StdThreadStateAccess>);
+
+#[derive(Debug)]
+pub(crate) struct ScopedEnvCore<A: ThreadStateAccess> {
+    index: usize,
+    span: tracing::Span,
+    change_count: usize,
+    // !Send + !Sync so drops always occur on the creating thread.
+    _not_send_or_sync: PhantomData<Rc<()>>,
+    _thread_state_access: PhantomData<A>,
+}
+
+impl<A: ThreadStateAccess> ScopedEnvCore<A> {
     /// Applies the supplied environment variables and returns a guard that
     /// restores the previous values when dropped.
     pub(crate) fn apply(vars: &[(String, Option<String>)]) -> Self {
@@ -106,10 +138,7 @@ impl ScopedEnv {
         );
         let index = {
             let _entered = span.enter();
-            let index = THREAD_STATE.with(|cell| {
-                let mut state = cell.borrow_mut();
-                state.enter_scope(vars)
-            });
+            let index = A::with_state(|state| state.enter_scope(vars));
             info!(
                 target: LOG_TARGET,
                 change_count,
@@ -123,11 +152,12 @@ impl ScopedEnv {
             span,
             change_count,
             _not_send_or_sync: PhantomData,
+            _thread_state_access: PhantomData,
         }
     }
 }
 
-impl Drop for ScopedEnv {
+impl<A: ThreadStateAccess> Drop for ScopedEnvCore<A> {
     fn drop(&mut self) {
         let _entered = self.span.enter();
         info!(
@@ -135,9 +165,31 @@ impl Drop for ScopedEnv {
             change_count = self.change_count,
             "restoring scoped environment variables"
         );
-        THREAD_STATE.with(|cell| {
-            let mut state = cell.borrow_mut();
+        A::with_state(|state| {
             state.exit_scope(self.index);
         });
+    }
+}
+
+impl ScopedEnv {
+    /// Applies the supplied environment variables and returns a guard that
+    /// restores the previous values when dropped.
+    pub(crate) fn apply(vars: &[(String, Option<String>)]) -> Self {
+        Self(ScopedEnvCore::<StdThreadStateAccess>::apply(vars))
+    }
+
+    /// Applies environment variables provided as `OsString` pairs by any owned iterator.
+    pub(crate) fn apply_os<I>(vars: I) -> Self
+    where
+        I: IntoIterator<Item = (OsString, Option<OsString>)>,
+    {
+        Self(ScopedEnvCore::<StdThreadStateAccess>::apply_os(vars))
+    }
+}
+
+impl Drop for ScopedEnv {
+    fn drop(&mut self) {
+        // Ensure the inner guard is marked as used; ScopedEnvCore handles drop logic.
+        let _ = &self.0;
     }
 }

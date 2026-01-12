@@ -4,7 +4,7 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
 `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-Status: DRAFT
+Status: COMPLETE
 
 PLANS.md was not found in the repository, so no additional plan governance
 applies.
@@ -63,36 +63,77 @@ command, observe deterministic pass/fail results, and still have the normal
       becomes slow or flaky.
       Severity: medium
       Likelihood: medium
-      Mitigation: consider an extra `cfg(loom)` gate or a focused Loom test
-      list with bounded pre-emptions; document the explicit run command.
+      Mitigation: mark Loom tests `#[ignore]` and require an explicit
+      `-- --ignored` run command so standard runs remain fast.
 
 ## Progress
 
     - [x] (2026-01-12 00:00Z) Drafted ExecPlan for roadmap item 3.2.1.
-    - [ ] Review `ScopedEnv` implementation and existing env tests for
-      concurrency assumptions.
-    - [ ] Choose and document the Loom gating approach.
-    - [ ] Implement Loom tests and any required abstractions.
-    - [ ] Add behavioural tests (rstest-bdd) where applicable.
-    - [ ] Update documentation and roadmap entry.
-    - [ ] Run required checks and capture evidence.
+    - [x] (2026-01-12 18:05Z) Reviewed `ScopedEnv` implementation and env tests
+      for concurrency assumptions.
+    - [x] (2026-01-12 18:05Z) Chose to gate Loom tests behind the
+      `loom-tests` feature and mark them `#[ignore]` by default.
+    - [x] (2026-01-12 20:10Z) Implemented `ScopedEnvCore` and thread-state
+      access so Loom tests can use a Loom-specific lock without touching
+      `ENV_LOCK`.
+    - [x] (2026-01-12 20:15Z) Added Loom-backed concurrency tests under the
+      feature flag and marked them `#[ignore]`.
+    - [x] (2026-01-12 20:20Z) Updated design notes, developer guidance, and the
+      roadmap entry; recorded that behavioural tests are not applicable.
+    - [x] (2026-01-12 22:15Z) Ran `make check-fmt`, `make lint`, `make test`,
+      and Loom tests with `cargo test --features "loom-tests,dev-worker" --lib
+      -- --ignored`.
 
 ## Surprises & Discoveries
 
-    - Observation: None yet.
-      Evidence: N/A
-      Impact: N/A
+    - Observation: `RUSTFLAGS="--cfg loom"` disables `tokio::net` behind
+      `cfg(not(loom))`, causing `hyper-util` builds to fail.
+      Evidence: /tmp/loom.log shows `tokio::net` missing when compiling
+      `hyper-util` under `cfg(loom)`.
+      Impact: switch to feature-only Loom gating and mark Loom tests
+      `#[ignore]` to avoid global `cfg(loom)`.
+
+    - Observation: Loom sync primitives panic when used outside the
+      `loom::model` scheduler.
+      Evidence: running `cargo test --features loom-tests` without `loom::model`
+      triggered panics in `loom::sync` types.
+      Impact: keep standard primitives in production and provide Loom-specific
+      state only inside the Loom test module.
+
+    - Observation: `cargo test --features loom-tests -- --ignored` still
+      compiles integration tests, which require `dev-worker` or
+      `cluster-unit-tests` features.
+      Evidence: build errors in `tests/` when `loom-tests` is the only feature
+      enabled.
+      Impact: document `cargo test --features "loom-tests,dev-worker" --lib --
+      --ignored` to target library tests only and pull in
+      `tracing-subscriber`.
 
 ## Decision Log
 
-    - Decision: Plan to add an optional `loom` dependency and a
-      `loom-tests` feature flag, then gate Loom tests behind that flag.
-      Rationale: keeps Loom tooling opt-in and avoids affecting normal builds.
+    - Decision: Gate Loom tests behind the `loom-tests` feature and mark
+      them `#[ignore]` so `make test --all-features` does not automatically run
+      the model-checking suite.
+      Rationale: avoids `cfg(loom)` disabling Tokio networking while keeping
+      Loom checks opt-in for focused runs.
+      Date/Author: 2026-01-12 / Codex
+
+    - Decision: Keep `ENV_LOCK` on `std::sync::Mutex` and introduce
+      `ScopedEnvCore` with a thread-state access abstraction so Loom tests can
+      use their own lock and thread-local state.
+      Rationale: Loom primitives must only run under `loom::model` and should
+      not leak into production or standard test builds.
       Date/Author: 2026-01-12 / Codex
 
 ## Outcomes & Retrospective
 
-Pending implementation.
+- Delivered Loom-backed `ScopedEnv` concurrency tests gated behind the
+  `loom-tests` feature, with a dedicated Loom lock and thread-local state.
+- Verified the standard gates (`make check-fmt`, `make lint`, `make test`) and
+  the Loom suite
+  (`cargo test --features "loom-tests,dev-worker" --lib -- --ignored`).
+- Noted that the `database_lifecycle` integration tests are long-running under
+  `make test`, so plan for extended runtimes during validation.
 
 ## Context and Orientation
 
@@ -114,8 +155,8 @@ captured in `docs/users-guide.md`.
 
 Stage A: Review and plan the Loom integration. Identify where `ENV_LOCK` and
 `ThreadState` are used, confirm how existing tests protect the process
-environment, and decide on the Loom gating strategy (feature only vs
-feature+cfg). Record the decision in the design document.
+environment, and decide on the Loom gating strategy (feature only vs feature
+plus `#[ignore]`). Record the decision in the design document.
 
 Stage B: Add the Loom feature flag and any required sync abstraction. Introduce
 an optional `loom` dependency and a `loom-tests` feature. If needed, add a
@@ -165,8 +206,9 @@ fails.
    under the feature.
 
 5. Add Loom tests under `src/env/tests/loom.rs` (or equivalent) gated by the
-   feature. Use `loom::model` with a bounded schedule, and ensure tests operate
-   on empty env change sets so global env state is unchanged across runs.
+   feature and marked `#[ignore]`. Use `loom::model` with a bounded schedule,
+   and ensure tests operate on empty env change sets so global env state is
+   unchanged across runs.
 
 6. Add or update behavioural tests using rstest-bdd (v0.3.2). If adding new
    `.feature` files, place them under `tests/features/` and wire up scenario
@@ -187,10 +229,10 @@ fails.
 
    For Loom tests, run the documented command (for example):
 
-    cargo test --features loom-tests scoped_env_loom | tee /tmp/loom.log
+    cargo test --features "loom-tests,dev-worker" --lib -- --ignored | tee /tmp/loom.log
 
-   Adjust the command to include any required env vars or `RUSTFLAGS` if the
-   gating approach needs them.
+   Adjust the command to include any required env vars if the gating approach
+   needs them.
 
 ## Validation and Acceptance
 
@@ -237,3 +279,6 @@ summarise the pass/fail state in the final report.
 ## Revision note
 
 Initial draft created to cover roadmap item 3.2.1.
+
+2026-01-12: Marked plan in progress, recorded the review, and set the Loom
+feature gating approach.
