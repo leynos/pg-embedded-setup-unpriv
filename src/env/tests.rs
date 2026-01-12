@@ -8,7 +8,7 @@ use crate::test_support::capture_info_logs;
 use rstest::rstest;
 use serial_test::serial;
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::panic;
 use std::sync::{Arc, Barrier, TryLockError, mpsc};
 use std::thread;
@@ -78,8 +78,46 @@ fn keeps_lock_until_last_scope_drops() {
 #[test]
 #[serial]
 fn serialises_env_across_threads() {
+    struct ReleaseOnDrop {
+        sender: Option<mpsc::Sender<()>>,
+    }
+
+    impl Drop for ReleaseOnDrop {
+        fn drop(&mut self) {
+            if let Some(sender) = self.sender.take() {
+                if sender.send(()).is_err() {
+                    // Receiver may have dropped after a test failure.
+                }
+            }
+        }
+    }
+
+    struct RestoreEnv {
+        key: String,
+        original: Option<OsString>,
+    }
+
+    impl Drop for RestoreEnv {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => {
+                    set_env_var_locked(OsStr::new(&self.key), value.as_os_str());
+                }
+                None => remove_env_var_locked(OsStr::new(&self.key)),
+            }
+        }
+    }
+
     let key = "THREAD_SCOPE_TEST";
+    let restore_env = RestoreEnv {
+        key: String::from(key),
+        original: env::var_os(key),
+    };
+    set_env_var_locked(OsStr::new(key), OsStr::new("pre-existing"));
+
     let barrier = Arc::new(Barrier::new(2));
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (start_tx, start_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let (attempt_tx, attempt_rx) = mpsc::channel();
     let (acquired_tx, acquired_rx) = mpsc::channel();
@@ -89,6 +127,7 @@ fn serialises_env_across_threads() {
     let thread_a = thread::spawn(move || {
         let guard = ScopedEnv::apply(&[(key_a.clone(), Some(String::from("one")))]);
 
+        ready_tx.send(()).expect("ready signal must be sent");
         barrier_for_a.wait();
         release_rx.recv().expect("release signal must be sent");
         drop(guard);
@@ -98,6 +137,7 @@ fn serialises_env_across_threads() {
     let key_b = String::from(key);
     let thread_b = thread::spawn(move || {
         barrier_for_b.wait();
+        start_rx.recv().expect("start signal must be received");
         attempt_tx.send(()).expect("attempt signal must be sent");
         let guard = ScopedEnv::apply(&[(key_b.clone(), Some(String::from("two")))]);
 
@@ -108,29 +148,37 @@ fn serialises_env_across_threads() {
         drop(guard);
     });
 
-    attempt_rx
+    ready_rx
         .recv_timeout(Duration::from_secs(1))
+        .expect("outer guard should be ready");
+
+    let release_guard = ReleaseOnDrop {
+        sender: Some(release_tx),
+    };
+
+    start_tx.send(()).expect("start signal must be sent");
+    attempt_rx
+        .recv_timeout(Duration::from_secs(2))
         .expect("second thread should attempt to acquire the guard");
 
     assert!(
-        acquired_rx
-            .recv_timeout(Duration::from_millis(150))
-            .is_err(),
+        acquired_rx.recv_timeout(Duration::from_secs(2)).is_err(),
         "second thread must block while the outer guard holds the lock"
     );
 
-    release_tx.send(()).expect("release signal must be sent");
+    drop(release_guard);
 
     let value = acquired_rx
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(Duration::from_secs(2))
         .expect("second thread should acquire after release");
     assert_eq!(value.as_deref(), Some("two"));
 
     thread_a.join().expect("thread A should exit cleanly");
     thread_b.join().expect("thread B should exit cleanly");
 
-    assert!(env::var(key).is_err());
+    assert_eq!(env::var(key).as_deref(), Ok("pre-existing"));
     assert_env_lock_released();
+    drop(restore_env);
 }
 
 #[test]
@@ -291,6 +339,28 @@ fn drop_guards_in_order(guards: GuardSet) {
 
 fn drop_guards_out_of_order(guards: GuardSet) {
     guards.drop_out_of_order();
+}
+
+fn set_env_var_locked(key: &OsStr, value: &OsStr) {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    unsafe {
+        // SAFETY: Tests serialise process env access via ENV_LOCK and restore
+        // original values on drop.
+        env::set_var(key, value);
+    }
+}
+
+fn remove_env_var_locked(key: &OsStr) {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    unsafe {
+        // SAFETY: Tests serialise process env access via ENV_LOCK and restore
+        // original values on drop.
+        env::remove_var(key);
+    }
 }
 
 fn assert_thread_state_reset() {
