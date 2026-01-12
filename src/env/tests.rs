@@ -10,7 +10,7 @@ use serial_test::serial;
 use std::env;
 use std::ffi::OsString;
 use std::panic;
-use std::sync::TryLockError;
+use std::sync::{Arc, Barrier, TryLockError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -73,6 +73,64 @@ fn keeps_lock_until_last_scope_drops() {
         .expect("mutex should release after final scope drops");
     drop(free);
     assert!(env::var("SCOPE_TEST").is_err());
+}
+
+#[test]
+#[serial]
+fn serialises_env_across_threads() {
+    let key = "THREAD_SCOPE_TEST";
+    let barrier = Arc::new(Barrier::new(2));
+    let (release_tx, release_rx) = mpsc::channel();
+    let (attempt_tx, attempt_rx) = mpsc::channel();
+    let (acquired_tx, acquired_rx) = mpsc::channel();
+
+    let barrier_for_a = Arc::clone(&barrier);
+    let key_a = String::from(key);
+    let thread_a = thread::spawn(move || {
+        let guard = ScopedEnv::apply(&[(key_a.clone(), Some(String::from("one")))]);
+
+        barrier_for_a.wait();
+        release_rx.recv().expect("release signal must be sent");
+        drop(guard);
+    });
+
+    let barrier_for_b = Arc::clone(&barrier);
+    let key_b = String::from(key);
+    let thread_b = thread::spawn(move || {
+        barrier_for_b.wait();
+        attempt_tx.send(()).expect("attempt signal must be sent");
+        let guard = ScopedEnv::apply(&[(key_b.clone(), Some(String::from("two")))]);
+
+        let value = env::var(&key_b).ok();
+        acquired_tx
+            .send(value)
+            .expect("acquired value must be sent");
+        drop(guard);
+    });
+
+    attempt_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("second thread should attempt to acquire the guard");
+
+    assert!(
+        acquired_rx
+            .recv_timeout(Duration::from_millis(150))
+            .is_err(),
+        "second thread must block while the outer guard holds the lock"
+    );
+
+    release_tx.send(()).expect("release signal must be sent");
+
+    let value = acquired_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("second thread should acquire after release");
+    assert_eq!(value.as_deref(), Some("two"));
+
+    thread_a.join().expect("thread A should exit cleanly");
+    thread_b.join().expect("thread B should exit cleanly");
+
+    assert!(env::var(key).is_err());
+    assert_env_lock_released();
 }
 
 #[test]
