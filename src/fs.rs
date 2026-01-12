@@ -153,7 +153,7 @@ fn handle_existing_metadata(path: &Utf8Path, metadata: &Metadata) -> Result<()> 
         Ok(())
     } else {
         let err = std::io::Error::new(
-            ErrorKind::AlreadyExists,
+            ErrorKind::NotADirectory,
             format!("{path} exists but is not a directory"),
         );
         Err(log_dir_metadata_error(path, err)).with_context(|| format!("create {}", path.as_str()))
@@ -176,21 +176,22 @@ mod tests {
     use camino::{Utf8Path, Utf8PathBuf};
     use rstest::rstest;
     use std::fs::File;
+    use std::io::ErrorKind;
     use tempfile::tempdir;
 
     struct ExistingPathCase {
         create_file: bool,
-        error_contains: Option<&'static str>,
+        error_kind: Option<ErrorKind>,
     }
 
     #[rstest]
     #[case::directory(ExistingPathCase {
         create_file: false,
-        error_contains: None,
+        error_kind: None,
     })]
     #[case::file(ExistingPathCase {
         create_file: true,
-        error_contains: Some("exists but is not a directory"),
+        error_kind: Some(ErrorKind::NotADirectory),
     })]
     fn ensure_existing_path_is_dir_handles_existing_paths(#[case] case: ExistingPathCase) {
         let temp = tempdir().expect("tempdir");
@@ -204,15 +205,17 @@ mod tests {
 
         let result = ensure_existing_path_is_dir(&path);
 
-        match case.error_contains {
-            Some(message) => {
+        match case.error_kind {
+            Some(expected_kind) => {
                 let err = result.expect_err("existing file should be rejected as a directory path");
-                let chain = err
+                let has_kind = err
                     .chain()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(": ");
-                assert!(chain.contains(message), "unexpected error chain: {chain}");
+                    .filter_map(|source| source.downcast_ref::<std::io::Error>())
+                    .any(|source| source.kind() == expected_kind);
+                assert!(
+                    has_kind,
+                    "expected error kind {expected_kind:?} in chain, got {err:?}"
+                );
             }
             None => {
                 result.expect("existing directory should be accepted");
