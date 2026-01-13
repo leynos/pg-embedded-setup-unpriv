@@ -48,7 +48,6 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, DurationSeconds, serde_as};
 use std::collections::HashMap;
-use std::fmt;
 use std::time::Duration;
 
 /// Serialised representation of [`Settings`] for subprocess helpers.
@@ -150,7 +149,8 @@ impl From<SettingsSnapshot> for Settings {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(transparent)]
 pub struct PlainSecret(SecretString);
 
 impl PlainSecret {
@@ -178,12 +178,6 @@ impl From<PlainSecret> for SecretString {
     }
 }
 
-impl fmt::Debug for PlainSecret {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PlainSecret([REDACTED])")
-    }
-}
-
 impl Serialize for PlainSecret {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -193,11 +187,28 @@ impl Serialize for PlainSecret {
     }
 }
 
-impl<'de> Deserialize<'de> for PlainSecret {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        String::deserialize(deserializer).map(Self::from)
+#[cfg(test)]
+mod tests {
+    use super::PlainSecret;
+
+    #[test]
+    fn plain_secret_serializes_as_string() {
+        let secret = PlainSecret::from("super-secret-value");
+        let encoded = serde_json::to_string(&secret).expect("serialize PlainSecret");
+        assert_eq!(encoded, "\"super-secret-value\"");
+    }
+
+    #[test]
+    fn plain_secret_debug_redacts() {
+        let secret = PlainSecret::from("super-secret-value");
+        let rendered = format!("{secret:?}");
+        assert!(
+            rendered.contains("REDACTED"),
+            "expected redaction in {rendered}"
+        );
+        assert!(
+            !rendered.contains("super-secret-value"),
+            "expected no secret material in {rendered}"
+        );
     }
 }
