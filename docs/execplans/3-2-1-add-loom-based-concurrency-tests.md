@@ -53,11 +53,11 @@ command, observe deterministic pass/fail results, and still have the normal
       a test-only environment store so no real env state leaks across runs.
 
     - Risk: `loom::sync::Mutex` does not provide a `const fn new`, forcing a
-      change in how `ENV_LOCK` is initialised.
+      change in how `ENV_LOCK` is initialized.
       Severity: medium
       Likelihood: low
       Mitigation: be prepared to introduce a small sync abstraction module or
-      `OnceLock` initialiser that works for both std and Loom builds.
+      `OnceLock` initializer that works for both std and Loom builds.
 
     - Risk: `make test` with `--all-features` unexpectedly runs Loom tests and
       becomes slow or flaky.
@@ -73,16 +73,14 @@ command, observe deterministic pass/fail results, and still have the normal
       for concurrency assumptions.
     - [x] (2026-01-12 18:05Z) Chose to gate Loom tests behind the
       `loom-tests` feature and mark them `#[ignore]` by default.
-    - [x] (2026-01-12 20:10Z) Implemented `ScopedEnvCore` and thread-state
-      access so Loom tests can use a Loom-specific lock without touching
-      `ENV_LOCK`.
+    - [x] (2026-01-12 20:10Z) Implemented a `ScopedEnv` state accessor hook so
+      Loom tests can use a Loom-specific lock without touching `ENV_LOCK`.
     - [x] (2026-01-12 20:15Z) Added Loom-backed concurrency tests under the
       feature flag and marked them `#[ignore]`.
     - [x] (2026-01-12 20:20Z) Updated design notes, developer guidance, and the
       roadmap entry; recorded that behavioural tests are not applicable.
     - [x] (2026-01-12 22:15Z) Ran `make check-fmt`, `make lint`, `make test`,
-      and Loom tests with `cargo test --features "loom-tests,dev-worker" --lib
-      -- --ignored`.
+      and Loom tests with `cargo test --features "loom-tests" --lib -- --ignored`.
 
 ## Surprises & Discoveries
 
@@ -101,26 +99,24 @@ command, observe deterministic pass/fail results, and still have the normal
       state only inside the Loom test module.
 
     - Observation: `cargo test --features loom-tests -- --ignored` still
-      compiles integration tests, which require `dev-worker` or
-      `cluster-unit-tests` features.
+      compiles integration tests.
       Evidence: build errors in `tests/` when `loom-tests` is the only feature
       enabled.
-      Impact: document `cargo test --features "loom-tests,dev-worker" --lib --
-      --ignored` to target library tests only and pull in
-      `tracing-subscriber`.
+      Impact: document `cargo test --features "loom-tests" --lib -- --ignored`
+      to target library tests only.
 
 ## Decision Log
 
     - Decision: Gate Loom tests behind the `loom-tests` feature and mark
-      them `#[ignore]` so `make test --all-features` does not automatically run
-      the model-checking suite.
+      them `#[ignore]` so `make test` does not automatically run the
+      model-checking suite.
       Rationale: avoids `cfg(loom)` disabling Tokio networking while keeping
       Loom checks opt-in for focused runs.
       Date/Author: 2026-01-12 / Codex
 
-    - Decision: Keep `ENV_LOCK` on `std::sync::Mutex` and introduce
-      `ScopedEnvCore` with a thread-state access abstraction so Loom tests can
-      use their own lock and thread-local state.
+    - Decision: Keep `ENV_LOCK` on `std::sync::Mutex` and keep `ScopedEnv`
+      concrete, exposing a private state accessor hook so Loom tests can use
+      their own lock and thread-local state.
       Rationale: Loom primitives must only run under `loom::model` and should
       not leak into production or standard test builds.
       Date/Author: 2026-01-12 / Codex
@@ -130,8 +126,7 @@ command, observe deterministic pass/fail results, and still have the normal
 - Delivered Loom-backed `ScopedEnv` concurrency tests gated behind the
   `loom-tests` feature, with a dedicated Loom lock and thread-local state.
 - Verified the standard gates (`make check-fmt`, `make lint`, `make test`) and
-  the Loom suite
-  (`cargo test --features "loom-tests,dev-worker" --lib -- --ignored`).
+  the Loom suite (`cargo test --features "loom-tests" --lib -- --ignored`).
 - Noted that the `database_lifecycle` integration tests are long-running under
   `make test`, so plan for extended runtimes during validation.
 
@@ -139,7 +134,7 @@ command, observe deterministic pass/fail results, and still have the normal
 
 The `ScopedEnv` guard lives in `src/env/mod.rs` and uses a global mutex
 `ENV_LOCK` defined in `src/env/state.rs`. The guard is re-entrant on a single
-thread via a thread-local `ThreadState`, but serialises across threads via the
+thread via a thread-local `ThreadState`, but serializes across threads via the
 mutex. Current tests live in `src/env/tests/` and use `serial_test` to avoid
 cross-test environment corruption. There are no Loom tests yet and no feature
 flag for them. Behavioural tests (rstest-bdd) live in `tests/` with feature
@@ -161,7 +156,7 @@ plus `#[ignore]`). Record the decision in the design document.
 Stage B: Add the Loom feature flag and any required sync abstraction. Introduce
 an optional `loom` dependency and a `loom-tests` feature. If needed, add a
 small `src/env/sync.rs` module to alias `Mutex`, `MutexGuard`, and
-`PoisonError` to std or Loom types. Ensure `ENV_LOCK` initialisation works for
+`PoisonError` to std or Loom types. Ensure `ENV_LOCK` initialization works for
 both backends. Add module-level docs for any new module.
 
 Stage C: Implement Loom-based concurrency tests. Add a new test module under
@@ -169,13 +164,13 @@ Stage C: Implement Loom-based concurrency tests. Add a new test module under
 `loom::model` with a bounded scheduler configuration to keep runs small.
 Construct tests that use empty env changes so no global environment state is
 mutated, while still exercising mutex acquisition and release across threads.
-Cover at least one happy path (serialised access) and one unhappy/edge path
+Cover at least one happy path (serialized access) and one unhappy/edge path
 (e.g. nested scopes across threads or drop ordering). Keep tests deterministic
 and scoped.
 
 Stage D: Add behavioural tests with rstest-bdd where applicable. If the new
 behaviour can be expressed as observable outcomes, add a `.feature` file and
-step definitions under `tests/` that verify scoped environment serialisation
+step definitions under `tests/` that verify scoped environment serialization
 and restoration. If no meaningful user-visible behaviour exists, explicitly
 record that rationale in the design document instead of adding forced BDD
 coverage.
@@ -229,7 +224,7 @@ fails.
 
    For Loom tests, run the documented command (for example):
 
-    cargo test --features "loom-tests,dev-worker" --lib -- --ignored | tee /tmp/loom.log
+    cargo test --features "loom-tests" --lib -- --ignored | tee /tmp/loom.log
 
    Adjust the command to include any required env vars if the gating approach
    needs them.
@@ -240,7 +235,7 @@ Behavioural acceptance:
 
 - Running the Loom test command described in `docs/developers-guide.md` passes
   and exercises at least one multi-threaded `ScopedEnv` scenario.
-- The new Loom tests fail if the mutex is removed or if serialisation is
+- The new Loom tests fail if the mutex is removed or if serialization is
   broken (prove this by observing a failing test before the fix when possible).
 - Any new rstest-bdd scenarios pass and cover at least one happy and one
   unhappy/edge path.
@@ -263,7 +258,7 @@ re-apply the change in smaller increments.
 ## Artifacts and Notes
 
 Capture any relevant test logs in `/tmp/*.log` files created via `tee` and
-summarise the pass/fail state in the final report.
+summarize the pass/fail state in the final report.
 
 ## Interfaces and Dependencies
 

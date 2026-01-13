@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use pg_embedded_setup_unpriv::{TemporaryDatabase, TestCluster};
@@ -239,10 +240,6 @@ pub fn verify_error(
 /// Returns an error if environment setup or cluster creation fails.
 pub fn setup_sandboxed_cluster(world: &DatabaseWorldFixture) -> Result<()> {
     let world_cell = borrow_world(world)?;
-    {
-        let world_ref = world_cell.borrow();
-        world_ref.sandbox.reset()?;
-    }
 
     let vars = {
         let world_ref = world_cell.borrow();
@@ -258,19 +255,33 @@ pub fn setup_sandboxed_cluster(world: &DatabaseWorldFixture) -> Result<()> {
         vars
     };
 
-    let result = {
-        let world_ref = world_cell.borrow();
-        world_ref.sandbox.with_env(vars, TestCluster::new)
-    };
-
-    match result {
-        Ok(cluster) => {
-            world_cell.borrow_mut().record_cluster(cluster);
-            Ok(())
+    let mut last_error = None;
+    for attempt in 0..3 {
+        {
+            let world_ref = world_cell.borrow();
+            world_ref.sandbox.reset()?;
         }
-        Err(err) => {
-            world_cell.borrow_mut().record_bootstrap_error(err);
-            Ok(())
+        let result = {
+            let world_ref = world_cell.borrow();
+            world_ref.sandbox.with_env(vars.clone(), TestCluster::new)
+        };
+
+        match result {
+            Ok(cluster) => {
+                world_cell.borrow_mut().record_cluster(cluster);
+                return Ok(());
+            }
+            Err(err) => {
+                last_error = Some(err);
+                if attempt < 2 {
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+            }
         }
     }
+
+    if let Some(err) = last_error {
+        world_cell.borrow_mut().record_bootstrap_error(err);
+    }
+    Ok(())
 }

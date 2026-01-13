@@ -93,22 +93,16 @@ pub(super) fn spawn_inner_guard_thread(
         done_tx,
     } = channels;
     thread::spawn(move || {
-        start_rx
-            .recv()
-            .unwrap_or_else(|_| panic!("start signal must be received"));
-        attempt_tx
-            .send(())
-            .unwrap_or_else(|_| panic!("attempt signal must be sent"));
+        start_rx.recv().expect("start signal must be received");
+        attempt_tx.send(()).expect("attempt signal must be sent");
         let guard = ScopedEnv::apply(&[(key.clone(), Some(String::from("two")))]);
 
         let value = env::var(&key).ok();
         acquired_tx
             .send(value)
-            .unwrap_or_else(|_| panic!("acquired value must be sent"));
+            .expect("acquired value must be sent");
         drop(guard);
-        done_tx
-            .send(())
-            .unwrap_or_else(|_| panic!("completion signal must be sent"));
+        done_tx.send(()).expect("completion signal must be sent");
     })
 }
 
@@ -175,16 +169,10 @@ pub(super) fn spawn_outer_guard_thread(
     thread::spawn(move || {
         let guard = ScopedEnv::apply(&[(key, Some(String::from("one")))]);
 
-        ready_tx
-            .send(())
-            .unwrap_or_else(|_| panic!("ready signal must be sent"));
+        ready_tx.send(()).expect("ready signal must be sent");
         barrier.wait();
-        release_rx
-            .recv()
-            .unwrap_or_else(|_| panic!("release signal must be sent"));
+        release_rx.recv().expect("release signal must be received");
         drop(guard);
-        done_tx
-            .send(())
-            .unwrap_or_else(|_| panic!("completion signal must be sent"));
+        done_tx.send(()).expect("completion signal must be sent");
     })
 }

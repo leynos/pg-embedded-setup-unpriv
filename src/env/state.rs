@@ -14,6 +14,7 @@ pub(crate) trait EnvLockOps {
     fn ensure_lock_is_clean();
 }
 
+#[derive(Debug)]
 pub(crate) struct StdEnvLock;
 
 impl EnvLockOps for StdEnvLock {
@@ -43,15 +44,40 @@ pub(crate) struct GuardState {
 }
 
 #[derive(Debug)]
-pub(crate) struct ThreadStateInner<L: EnvLockOps> {
-    pub(crate) depth: usize,
-    pub(crate) lock: Option<L::Guard>,
-    pub(crate) stack: Vec<GuardState>,
+pub(crate) struct ThreadStateCore<L: EnvLockOps> {
+    depth: usize,
+    lock: Option<L::Guard>,
+    stack: Vec<GuardState>,
 }
 
-pub(crate) type ThreadState = ThreadStateInner<StdEnvLock>;
+#[derive(Debug)]
+pub(crate) struct ThreadState {
+    inner: ThreadStateCore<StdEnvLock>,
+}
 
-impl<L: EnvLockOps> ThreadStateInner<L> {
+impl ThreadState {
+    pub const fn new() -> Self {
+        Self {
+            inner: ThreadStateCore::new(),
+        }
+    }
+
+    pub fn enter_scope<I>(&mut self, vars: I) -> usize
+    where
+        I: IntoIterator<Item = (OsString, Option<OsString>)>,
+    {
+        self.inner.enter_scope(vars)
+    }
+
+    pub fn exit_scope(&mut self, index: usize) {
+        self.inner.exit_scope(index);
+    }
+}
+
+#[cfg(all(test, feature = "loom-tests"))]
+pub(crate) type ThreadStateInner<L> = ThreadStateCore<L>;
+
+impl<L: EnvLockOps> ThreadStateCore<L> {
     pub const fn new() -> Self {
         Self {
             depth: 0,
@@ -277,15 +303,15 @@ impl<L: EnvLockOps> ThreadStateInner<L> {
 #[cfg(test)]
 impl ThreadState {
     pub const fn depth(&self) -> usize {
-        self.depth
+        self.inner.depth
     }
 
     pub fn is_stack_empty(&self) -> bool {
-        self.stack.is_empty()
+        self.inner.stack.is_empty()
     }
 
     pub const fn has_lock(&self) -> bool {
-        self.lock.is_some()
+        self.inner.lock.is_some()
     }
 }
 

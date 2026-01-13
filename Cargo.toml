@@ -163,3 +163,4 @@ rstest-bdd-macros = "0.3.2"
 once_cell = "1"
 unic-langid = "0.9"
 serial_test = "3.0.0"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }

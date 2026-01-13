@@ -397,10 +397,10 @@ classDiagram
 
 - Introduced the optional `loom` dependency and `loom-tests` feature; runtime
   code keeps `ENV_LOCK` as a `std::sync::Mutex`, while Loom tests use a
-  Loom-specific lock and thread state via `ScopedEnvCore`.
+  Loom-specific lock and thread state via a private state accessor hook.
 - Added Loom-backed concurrency tests for `ScopedEnv` under `loom-tests`; the
-  Loom tests are marked `#[ignore]` so `make test --all-features` does not run
-  the model-checking suite.
+  Loom tests are marked `#[ignore]` so `make test` does not run the
+  model-checking suite.
 - Documented the Loom test command in the developer guide; there are no
   user-facing behaviour changes.
 - Behavioural tests (rstest-bdd) are not applicable because this change only

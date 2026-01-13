@@ -21,12 +21,13 @@ enables `--all-features` so the Diesel helpers are exercised by smoke tests.
 ## Loom concurrency tests
 
 Loom-based checks for `ScopedEnv` are opt-in and only compile when the
-`loom-tests` feature is enabled. The Loom tests are marked `#[ignore]` so
-`make test --all-features` stays deterministic unless you opt in explicitly.
-Run the Loom suite with:
+`loom-tests` feature is enabled. The Loom tests are marked `#[ignore]`, and
+`make test` keeps them dormant: the nextest run uses `--all-features`, while
+the follow-up `cargo test` run disables default features (enabling `dev-worker`
+only). Run the Loom suite with:
 
 ```sh
-cargo test --features "loom-tests,dev-worker" --lib -- --ignored
+cargo test --features "loom-tests" --lib -- --ignored
 ```
 
 ## Further reading

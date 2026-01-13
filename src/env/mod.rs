@@ -20,7 +20,7 @@
 //!
 //! Nested guards on the same thread reuse the held mutex whilst tracking the
 //! depth so callers can compose helpers without deadlocking. Different threads
-//! are still serialised.
+//! are still serialized.
 
 use crate::observability::LOG_TARGET;
 use std::cell::RefCell;
@@ -37,54 +37,47 @@ mod summary;
 #[cfg(test)]
 mod tests;
 
-use state::{EnvLockOps, StdEnvLock, ThreadState, ThreadStateInner};
+use state::ThreadState;
 use summary::{MAX_ENV_CHANGES_SUMMARY_LEN, truncate_env_changes_summary};
-
-pub(crate) trait ThreadStateAccess {
-    type Lock: EnvLockOps;
-
-    fn with_state<F, R>(f: F) -> R
-    where
-        F: FnOnce(&mut ThreadStateInner<Self::Lock>) -> R;
-}
-
-#[derive(Debug)]
-struct StdThreadStateAccess;
 
 thread_local! {
     static THREAD_STATE: RefCell<ThreadState> = const { RefCell::new(ThreadState::new()) };
 }
 
-impl ThreadStateAccess for StdThreadStateAccess {
-    type Lock = StdEnvLock;
+type EnterScopeFn = fn(Vec<(OsString, Option<OsString>)>) -> usize;
+type ExitScopeFn = fn(usize);
 
-    fn with_state<F, R>(f: F) -> R
-    where
-        F: FnOnce(&mut ThreadStateInner<Self::Lock>) -> R,
-    {
-        THREAD_STATE.with(|cell| {
-            let mut state = cell.borrow_mut();
-            f(&mut state)
-        })
-    }
+fn with_state<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut ThreadState) -> R,
+{
+    THREAD_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        f(&mut state)
+    })
+}
+
+fn enter_scope_std(vars: Vec<(OsString, Option<OsString>)>) -> usize {
+    with_state(|state| state.enter_scope(vars))
+}
+
+fn exit_scope_std(index: usize) {
+    with_state(|state| state.exit_scope(index));
 }
 
 /// Restores the process environment when dropped, reverting to prior values.
 #[derive(Debug)]
 #[must_use = "Hold the guard until the end of the environment scope"]
-pub struct ScopedEnv(ScopedEnvCore<StdThreadStateAccess>);
-
-#[derive(Debug)]
-pub(crate) struct ScopedEnvCore<A: ThreadStateAccess> {
+pub struct ScopedEnv {
     index: usize,
     span: tracing::Span,
     change_count: usize,
+    exit_scope: ExitScopeFn,
     // !Send + !Sync so drops always occur on the creating thread.
     _not_send_or_sync: PhantomData<Rc<()>>,
-    _thread_state_access: PhantomData<A>,
 }
 
-impl<A: ThreadStateAccess> ScopedEnvCore<A> {
+impl ScopedEnv {
     /// Applies the supplied environment variables and returns a guard that
     /// restores the previous values when dropped.
     pub(crate) fn apply(vars: &[(String, Option<String>)]) -> Self {
@@ -99,7 +92,7 @@ impl<A: ThreadStateAccess> ScopedEnvCore<A> {
                 (OsString::from(key), owned_value)
             })
             .collect();
-        Self::apply_owned(owned)
+        Self::apply_owned_with_state(owned, enter_scope_std, exit_scope_std)
     }
 
     /// Applies environment variables provided as `OsString` pairs by any owned iterator.
@@ -108,14 +101,18 @@ impl<A: ThreadStateAccess> ScopedEnvCore<A> {
         I: IntoIterator<Item = (OsString, Option<OsString>)>,
     {
         let owned: Vec<(OsString, Option<OsString>)> = vars.into_iter().collect();
-        Self::apply_owned(owned)
+        Self::apply_owned_with_state(owned, enter_scope_std, exit_scope_std)
     }
 
     #[expect(
         clippy::cognitive_complexity,
         reason = "span entry plus bounded summary handling add structured branching"
     )]
-    fn apply_owned(vars: Vec<(OsString, Option<OsString>)>) -> Self {
+    fn apply_owned_with_state(
+        vars: Vec<(OsString, Option<OsString>)>,
+        enter_scope: EnterScopeFn,
+        exit_scope: ExitScopeFn,
+    ) -> Self {
         // Build a concise summary of applied changes whilst preserving count for full context.
         let summary: Vec<String> = vars
             .iter()
@@ -138,7 +135,7 @@ impl<A: ThreadStateAccess> ScopedEnvCore<A> {
         );
         let index = {
             let _entered = span.enter();
-            let index = A::with_state(|state| state.enter_scope(vars));
+            let index = enter_scope(vars);
             info!(
                 target: LOG_TARGET,
                 change_count,
@@ -151,13 +148,13 @@ impl<A: ThreadStateAccess> ScopedEnvCore<A> {
             index,
             span,
             change_count,
+            exit_scope,
             _not_send_or_sync: PhantomData,
-            _thread_state_access: PhantomData,
         }
     }
 }
 
-impl<A: ThreadStateAccess> Drop for ScopedEnvCore<A> {
+impl Drop for ScopedEnv {
     fn drop(&mut self) {
         let _entered = self.span.enter();
         info!(
@@ -165,31 +162,6 @@ impl<A: ThreadStateAccess> Drop for ScopedEnvCore<A> {
             change_count = self.change_count,
             "restoring scoped environment variables"
         );
-        A::with_state(|state| {
-            state.exit_scope(self.index);
-        });
-    }
-}
-
-impl ScopedEnv {
-    /// Applies the supplied environment variables and returns a guard that
-    /// restores the previous values when dropped.
-    pub(crate) fn apply(vars: &[(String, Option<String>)]) -> Self {
-        Self(ScopedEnvCore::<StdThreadStateAccess>::apply(vars))
-    }
-
-    /// Applies environment variables provided as `OsString` pairs by any owned iterator.
-    pub(crate) fn apply_os<I>(vars: I) -> Self
-    where
-        I: IntoIterator<Item = (OsString, Option<OsString>)>,
-    {
-        Self(ScopedEnvCore::<StdThreadStateAccess>::apply_os(vars))
-    }
-}
-
-impl Drop for ScopedEnv {
-    fn drop(&mut self) {
-        // Ensure the inner guard is marked as used; ScopedEnvCore handles drop logic.
-        let _ = &self.0;
+        (self.exit_scope)(self.index);
     }
 }

@@ -1,11 +1,12 @@
 //! Loom-backed concurrency checks for `ScopedEnv`.
 
+use super::ScopedEnv;
 use super::state::{EnvLockOps, ThreadStateInner};
-use super::{ScopedEnvCore, ThreadStateAccess};
 use loom::sync::Arc;
 use loom::sync::atomic::{AtomicUsize, Ordering};
 use loom::thread;
 use std::cell::RefCell;
+use std::ffi::OsString;
 
 loom::lazy_static! {
     static ref LOOM_ENV_LOCK: loom::sync::Mutex<()> = loom::sync::Mutex::new(());
@@ -30,23 +31,27 @@ loom::thread_local! {
         RefCell::new(ThreadStateInner::new());
 }
 
-struct LoomThreadStateAccess;
-
-impl ThreadStateAccess for LoomThreadStateAccess {
-    type Lock = LoomEnvLock;
-
-    fn with_state<F, R>(f: F) -> R
-    where
-        F: FnOnce(&mut ThreadStateInner<Self::Lock>) -> R,
-    {
-        LOOM_THREAD_STATE.with(|cell| {
-            let mut state = cell.borrow_mut();
-            f(&mut state)
-        })
-    }
+fn enter_scope_loom(vars: Vec<(OsString, Option<OsString>)>) -> usize {
+    LOOM_THREAD_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        state.enter_scope(vars)
+    })
 }
 
-type LoomScopedEnv = ScopedEnvCore<LoomThreadStateAccess>;
+fn exit_scope_loom(index: usize) {
+    LOOM_THREAD_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        state.exit_scope(index);
+    });
+}
+
+fn apply_loom(vars: &[(String, Option<String>)]) -> ScopedEnv {
+    let owned: Vec<(OsString, Option<OsString>)> = vars
+        .iter()
+        .map(|(key, value)| (OsString::from(key), value.as_ref().map(OsString::from)))
+        .collect();
+    ScopedEnv::apply_owned_with_state(owned, enter_scope_loom, exit_scope_loom)
+}
 
 fn run_loom_model<F>(f: F)
 where
@@ -70,7 +75,7 @@ fn scoped_env_serialises_concurrent_scopes() {
             let active_clone = Arc::clone(&active_counter);
             handles.push(thread::spawn(move || {
                 let empty: &[(String, Option<String>)] = &[];
-                let _guard = LoomScopedEnv::apply(empty);
+                let _guard = apply_loom(empty);
 
                 let previous = active_clone.fetch_add(1, Ordering::SeqCst);
                 assert_eq!(
@@ -99,8 +104,8 @@ fn scoped_env_allows_reentrant_scopes_on_one_thread() {
 
         let handle = thread::spawn(move || {
             let empty: &[(String, Option<String>)] = &[];
-            let outer = LoomScopedEnv::apply(empty);
-            let inner = LoomScopedEnv::apply(empty);
+            let outer = apply_loom(empty);
+            let inner = apply_loom(empty);
 
             let previous = active_thread.fetch_add(1, Ordering::SeqCst);
             assert_eq!(previous, 0, "outer scope should hold the lock");
