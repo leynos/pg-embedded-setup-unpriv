@@ -102,9 +102,16 @@ impl ClusterWorld {
 
     fn cluster(&self) -> Result<&TestCluster> {
         self.ensure_not_skipped()?;
-        self.cluster
-            .as_ref()
-            .ok_or_else(|| eyre!("TestCluster was not created"))
+        self.cluster.as_ref().map_or_else(
+            || {
+                let message = self.error.as_deref().map_or_else(
+                    || "TestCluster was not created".to_owned(),
+                    |err| format!("TestCluster was not created: {err}"),
+                );
+                Err(eyre!(message))
+            },
+            Ok,
+        )
     }
 
     fn env_before(&self) -> Result<&EnvSnapshot> {

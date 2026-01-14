@@ -54,8 +54,26 @@
 
 ### 3.3 Validate cross-platform behaviour
 
-- [ ] 3.3.1. Confirm Linux root and unprivileged paths through Continuous
+- [x] 3.3.1. Confirm Linux root and unprivileged paths through Continuous
   Integration (CI) matrix jobs, and document expected outcomes for macOS and
   Windows in the roadmap appendix.
 - [ ] 3.3.2. Establish guardrails that fail fast on unsupported root scenarios
   on non-Linux systems, including unit coverage for the error messaging.
+
+## Roadmap appendix: platform expectations
+
+### macOS
+
+- Unprivileged runs are expected to behave like the Linux unprivileged flow,
+  executing in-process with the caller's UID/GID.
+- Root executions are expected to fail fast because privilege dropping is not
+  supported on macOS targets; the worker-based path must not be relied on.
+- Behavioural tests that require root privileges should skip on macOS unless a
+  future milestone introduces supported privilege management for that platform.
+
+### Windows
+
+- The runtime always reports unprivileged execution, so tests and fixtures run
+  the in-process path without requiring `PG_EMBEDDED_WORKER`.
+- Root-only scenarios are expected to skip because privilege dropping is not
+  supported on Windows targets.

@@ -230,6 +230,17 @@ errno precisely.
   failure logs, and a focused unit test ensures span enter/close events are
   captured by the logging harness used in BDD suites.
 
+### Implementation update (2026-01-13)
+
+- CI now runs a Linux matrix that exercises both unprivileged and root
+  execution paths, using a privileged test run to validate the worker-based
+  bootstrap flow.
+- The root CI variant runs the same quality gates but executes tests via
+  `sudo` so the effective UID is `0`, ensuring the privilege-aware logic is
+  exercised in automated runs.
+- Behavioural suites now coordinate across binaries with a shared lock file so
+  concurrent PostgreSQL setup or download tasks do not race in CI.
+
 ### Implementation update (2024-06-10)
 
 - Implemented the `TestCluster` RAII guard. `TestCluster::new()` reuses

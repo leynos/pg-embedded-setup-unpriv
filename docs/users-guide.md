@@ -16,6 +16,15 @@ tool and integrate it into automated test flows.
 - Outbound network access to crates.io and the PostgreSQL binary archive.
 - System timezone database (package usually named `tzdata`).
 
+## Platform expectations
+
+- Linux supports both privilege branches. Root executions require
+  `PG_EMBEDDED_WORKER` so the helper can drop to `nobody` for filesystem work.
+- macOS runs the unprivileged path; root executions are expected to fail fast
+  because privilege dropping is not supported on that target.
+- Windows always behaves as unprivileged, so the helper runs in-process and
+  ignores root-only scenarios.
+
 ## Quick start
 
 1. Choose directories for the staged PostgreSQL distribution and the cluster’s

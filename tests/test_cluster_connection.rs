@@ -115,9 +115,16 @@ impl ConnectionWorld {
 
     fn cluster(&self) -> Result<&TestCluster> {
         self.ensure_not_skipped()?;
-        self.cluster
-            .as_ref()
-            .ok_or_else(|| eyre!("TestCluster was not created"))
+        self.cluster.as_ref().map_or_else(
+            || {
+                let message = self.bootstrap_error.as_deref().map_or_else(
+                    || "TestCluster was not created".to_owned(),
+                    |err| format!("TestCluster was not created: {err}"),
+                );
+                Err(eyre!(message))
+            },
+            Ok,
+        )
     }
 
     fn metadata(&self) -> Result<&ConnectionMetadata> {

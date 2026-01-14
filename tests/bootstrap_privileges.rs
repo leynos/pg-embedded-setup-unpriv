@@ -2,6 +2,7 @@
 #![cfg(unix)]
 
 use std::cell::RefCell;
+use std::ffi::OsString;
 use std::io::ErrorKind;
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -39,6 +40,7 @@ struct BootstrapSandbox {
     data_dir: Utf8PathBuf,
     detected: Option<ExecutionPrivileges>,
     expected_owner: Option<Uid>,
+    last_error: Option<String>,
     skip_reason: Option<String>,
 }
 
@@ -61,6 +63,7 @@ impl BootstrapSandbox {
             data_dir,
             detected: None,
             expected_owner: None,
+            last_error: None,
             skip_reason: None,
         })
     }
@@ -80,12 +83,35 @@ impl BootstrapSandbox {
         )
     }
 
+    fn with_env_without_worker<F, R>(&self, body: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let mut vars = [
+            ("PG_RUNTIME_DIR", self.install_dir.as_str()),
+            ("PG_DATA_DIR", self.data_dir.as_str()),
+            ("PG_SUPERUSER", "postgres"),
+            ("PG_PASSWORD", "postgres"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (OsString::from(key), Some(OsString::from(value))))
+        .collect::<Vec<_>>();
+        vars.push((OsString::from("PG_EMBEDDED_WORKER"), None));
+
+        with_scoped_env(vars, body)
+    }
+
     fn run_bootstrap(&self) -> pg_embedded_setup_unpriv::Result<()> {
         self.with_env(pg_embedded_setup_unpriv::run)
     }
 
+    fn run_bootstrap_without_worker(&self) -> pg_embedded_setup_unpriv::Result<()> {
+        self.with_env_without_worker(pg_embedded_setup_unpriv::run)
+    }
+
     fn reset(&mut self) -> Result<()> {
         self.skip_reason = None;
+        self.last_error = None;
         Self::remove_if_present(&self.install_dir)?;
         Self::remove_if_present(&self.data_dir)?;
         set_permissions(&self.base_path, 0o777)?;
@@ -102,6 +128,10 @@ impl BootstrapSandbox {
 
     const fn set_expected_owner(&mut self, uid: Uid) {
         self.expected_owner = Some(uid);
+    }
+
+    fn record_error(&mut self, error: impl Into<String>) {
+        self.last_error = Some(error.into());
     }
 
     fn mark_skipped(&mut self, skip_reason: impl Into<String>) {
@@ -294,6 +324,36 @@ fn when_bootstrap_runs_twice_as_root(sandbox: &BootstrapSandboxFixture) -> Resul
     state.handle_outcome(outcome)
 }
 
+#[when("the bootstrap runs as root without a worker")]
+fn when_bootstrap_runs_as_root_without_worker(sandbox: &BootstrapSandboxFixture) -> Result<()> {
+    let sandbox_cell = borrow_sandbox(sandbox)?;
+    if !geteuid().is_root() {
+        sandbox_cell
+            .borrow_mut()
+            .mark_skipped("SKIP-BOOTSTRAP: privileged scenario requires root access");
+        return Ok(());
+    }
+
+    sandbox_cell
+        .borrow_mut()
+        .record_privileges(detect_execution_privileges());
+
+    let outcome = {
+        let sandbox_ref = sandbox_cell.borrow();
+        sandbox_ref.run_bootstrap_without_worker()
+    };
+
+    match outcome {
+        Ok(()) => Err(eyre!(
+            "expected bootstrap to fail without PG_EMBEDDED_WORKER"
+        )),
+        Err(err) => {
+            sandbox_cell.borrow_mut().record_error(err.to_string());
+            Ok(())
+        }
+    }
+}
+
 #[then("the sandbox directories are owned by the target uid")]
 fn then_directories_owned(sandbox: &BootstrapSandboxFixture) -> Result<()> {
     borrow_sandbox(sandbox)?
@@ -316,6 +376,24 @@ fn then_detected_root(sandbox: &BootstrapSandboxFixture) -> Result<()> {
         .assert_detected(ExecutionPrivileges::Root)
 }
 
+#[then("the bootstrap reports the missing worker")]
+fn then_bootstrap_reports_missing_worker(sandbox: &BootstrapSandboxFixture) -> Result<()> {
+    let sandbox_cell = borrow_sandbox(sandbox)?;
+    let sandbox_ref = sandbox_cell.borrow();
+    if sandbox_ref.is_skipped() {
+        return Ok(());
+    }
+    let message = sandbox_ref
+        .last_error
+        .as_deref()
+        .ok_or_else(|| eyre!("missing bootstrap error message"))?;
+    ensure!(
+        message.contains("PG_EMBEDDED_WORKER must be set"),
+        "unexpected missing-worker error: {message}",
+    );
+    Ok(())
+}
+
 #[scenario(path = "tests/features/bootstrap_privileges.feature", index = 0)]
 fn bootstrap_as_unprivileged(serial_guard: ScenarioSerialGuard, sandbox: BootstrapSandboxFixture) {
     let _guard = serial_guard;
@@ -324,6 +402,15 @@ fn bootstrap_as_unprivileged(serial_guard: ScenarioSerialGuard, sandbox: Bootstr
 
 #[scenario(path = "tests/features/bootstrap_privileges.feature", index = 1)]
 fn bootstrap_as_root(serial_guard: ScenarioSerialGuard, sandbox: BootstrapSandboxFixture) {
+    let _guard = serial_guard;
+    let _ = expect_fixture(sandbox, "bootstrap privileges sandbox");
+}
+
+#[scenario(path = "tests/features/bootstrap_privileges.feature", index = 2)]
+fn bootstrap_as_root_without_worker(
+    serial_guard: ScenarioSerialGuard,
+    sandbox: BootstrapSandboxFixture,
+) {
     let _guard = serial_guard;
     let _ = expect_fixture(sandbox, "bootstrap privileges sandbox");
 }
