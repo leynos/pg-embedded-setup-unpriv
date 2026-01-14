@@ -11,6 +11,9 @@ use pg_embedded_setup_unpriv::{TemporaryDatabase, TestCluster};
 use super::cluster_skip::cluster_skip_message;
 use super::sandbox::TestSandbox;
 
+const BOOTSTRAP_RETRY_ATTEMPTS: usize = 3;
+const BOOTSTRAP_RETRY_DELAY: Duration = Duration::from_millis(250);
+
 /// Global counter for tracking setup function invocations across scenarios.
 ///
 /// # Safety
@@ -256,7 +259,7 @@ pub fn setup_sandboxed_cluster(world: &DatabaseWorldFixture) -> Result<()> {
     };
 
     let mut last_error = None;
-    for attempt in 0..3 {
+    for attempt in 0..BOOTSTRAP_RETRY_ATTEMPTS {
         {
             let world_ref = world_cell.borrow();
             world_ref.sandbox.reset()?;
@@ -273,8 +276,8 @@ pub fn setup_sandboxed_cluster(world: &DatabaseWorldFixture) -> Result<()> {
             }
             Err(err) => {
                 last_error = Some(err);
-                if attempt < 2 {
-                    std::thread::sleep(Duration::from_millis(250));
+                if attempt + 1 < BOOTSTRAP_RETRY_ATTEMPTS {
+                    std::thread::sleep(BOOTSTRAP_RETRY_DELAY);
                 }
             }
         }

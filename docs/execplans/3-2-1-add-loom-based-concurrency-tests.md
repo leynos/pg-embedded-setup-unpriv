@@ -234,7 +234,7 @@ fails.
 Behavioural acceptance:
 
 - Running the Loom test command described in `docs/developers-guide.md` passes
-  and exercises at least one multi-threaded `ScopedEnv` scenario.
+  and exercises at least one multithreaded `ScopedEnv` scenario.
 - The new Loom tests fail if the mutex is removed or if serialization is
   broken (prove this by observing a failing test before the fix when possible).
 - Any new rstest-bdd scenarios pass and cover at least one happy and one
