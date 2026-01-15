@@ -33,9 +33,9 @@ pub use self::worker_invoker::WorkerInvoker;
 pub use self::worker_operation::WorkerOperation;
 
 use self::runtime::build_runtime;
-use self::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 #[cfg(feature = "async-api")]
 use self::worker_invoker::AsyncInvoker;
+use self::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use crate::bootstrap_for_tests;
 use crate::env::ScopedEnv;
 use crate::error::BootstrapResult;
@@ -205,7 +205,8 @@ impl TestCluster {
             let env_vars = initial_bootstrap.environment.to_env();
             let env_guard = ScopedEnv::apply(&env_vars);
             // Box::pin to avoid large future on the stack.
-            let outcome = Box::pin(Self::start_postgres_async(initial_bootstrap, &env_vars)).await?;
+            let outcome =
+                Box::pin(Self::start_postgres_async(initial_bootstrap, &env_vars)).await?;
             (env_vars, env_guard, outcome)
         };
 
@@ -275,13 +276,17 @@ impl TestCluster {
         invoker: &AsyncInvoker<'_>,
         embedded: &mut PostgreSQL,
     ) -> BootstrapResult<()> {
-        Box::pin(invoker.invoke(worker_operation::WorkerOperation::Setup, async {
-            embedded.setup().await
-        }))
+        Box::pin(
+            invoker.invoke(worker_operation::WorkerOperation::Setup, async {
+                embedded.setup().await
+            }),
+        )
         .await?;
-        Box::pin(invoker.invoke(worker_operation::WorkerOperation::Start, async {
-            embedded.start().await
-        }))
+        Box::pin(
+            invoker.invoke(worker_operation::WorkerOperation::Start, async {
+                embedded.start().await
+            }),
+        )
         .await
     }
 

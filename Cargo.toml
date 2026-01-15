@@ -33,6 +33,11 @@ path = "tests/test_cluster.rs"
 required-features = ["cluster-unit-tests"]
 
 [[test]]
+name = "test_cluster_async"
+path = "tests/test_cluster_async.rs"
+required-features = ["async-api"]
+
+[[test]]
 name = "settings"
 path = "tests/settings.rs"
 
@@ -163,5 +168,5 @@ rstest-bdd = "0.3.2"
 rstest-bdd-macros = "0.3.2"
 once_cell = "1"
 unic-langid = "0.9"
-serial_test = "3.0.0"
+serial_test = { version = "3.0.0", features = ["file_locks"] }
 tracing-subscriber = { version = "0.3", features = ["fmt"] }

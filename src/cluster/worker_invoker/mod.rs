@@ -298,7 +298,9 @@ impl<'a> AsyncInvoker<'a> {
         let span = self.lifecycle_span(operation);
         let _entered = span.enter();
 
-        let result = self.dispatch_operation_async(operation, in_process_op).await;
+        let result = self
+            .dispatch_operation_async(operation, in_process_op)
+            .await;
         WorkerInvoker::log_outcome(operation, &result);
         result
     }
@@ -349,11 +351,9 @@ impl<'a> AsyncInvoker<'a> {
         // Worker subprocess spawning is inherently blocking; use spawn_blocking.
         let bootstrap = self.bootstrap.clone();
         let env_vars = self.env_vars.to_vec();
-        tokio::task::spawn_blocking(move || {
-            invoke_as_root_sync(&bootstrap, &env_vars, operation)
-        })
-        .await
-        .map_err(|err| BootstrapError::from(eyre!("worker task panicked: {err}")))?
+        tokio::task::spawn_blocking(move || invoke_as_root_sync(&bootstrap, &env_vars, operation))
+            .await
+            .map_err(|err| BootstrapError::from(eyre!("worker task panicked: {err}")))?
     }
 
     fn lifecycle_span(&self, operation: WorkerOperation) -> tracing::Span {
