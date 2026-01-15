@@ -412,6 +412,46 @@ classDiagram
   `loom::sync::Mutex`). This enables swapping synchronization implementations
   for model checking without altering runtime code paths.
 
+### Implementation update (2026-01-15): Async API
+
+- Added `TestCluster::start_async()` and `stop_async()` methods, feature-gated
+  behind the `async-api` Cargo feature. These methods allow `TestCluster` to be
+  used within async contexts like `#[tokio::test]` without the "Cannot start a
+  runtime from within a runtime" panic.
+
+- The `runtime` field in `TestCluster` is now `Option<Runtime>`. When `None`,
+  the cluster was created via `start_async()` and runs on the caller's runtime.
+  When `Some(_)`, the cluster owns its runtime (synchronous mode). An
+  `is_async_mode: bool` field tracks the mode explicitly.
+
+- Created `AsyncInvoker` as a separate struct from `WorkerInvoker`. The existing
+  `WorkerInvoker` holds `&'a Runtime` for `block_on()` calls, which is not
+  available in async mode. `AsyncInvoker` directly `.await`s futures for
+  unprivileged operations and uses `spawn_blocking` for root operations that
+  require subprocess spawning.
+
+- The `Drop` implementation handles async-created clusters via best-effort
+  cleanup. It uses `tokio::runtime::Handle::try_current()` to detect if an async
+  runtime is available, spawns a cleanup task if so, and logs a warning advising
+  users to call `stop_async()` explicitly. This avoids panicking in `Drop` while
+  still attempting resource cleanup.
+
+- Design decision: `Option<Runtime>` was chosen over a dedicated enum because
+  it's the simplest representation—`None` means async mode, `Some(_)` means
+  sync mode—and avoids complexity of enum matching throughout the codebase.
+
+- Design decision: `start_async()` was named to match the design document
+  proposal and be action-oriented, clearly indicating that the cluster starts
+  rather than just being constructed.
+
+- Design decision: The async API is feature-gated to allow sync-only consumers
+  to avoid pulling in async codepaths. The feature is opt-in since tokio is
+  already a dependency but the async methods add compilation overhead.
+
+- Added comprehensive async tests in `tests/test_cluster_async.rs` with
+  `#[file_serial(cluster)]` serialisation to prevent data directory conflicts
+  with other cluster tests.
+
 ### Ephemeral ports and isolation
 
 To allow the same tests to run concurrently (especially under `nextest`, which
@@ -450,40 +490,40 @@ Rust tests:
   return once the DB is running. Developers can then use Diesel or any blocking
   client directly.
 
-- **Asynchronous tests (tokio):** In async test contexts, we will use the async
-  API of the crate (see postgresql-embedded README). We might provide an
-  `async fn start_async() -> TestCluster` that awaits the `.setup().await` and
-  `.start().await` internally. This yields a running cluster that async tests
-  can interact with (e.g. using `sqlx` or other async DB clients).
+- **Asynchronous tests (tokio):** The `async-api` feature (added 2026-01-15)
+  provides `TestCluster::start_async()` and `stop_async()` for use in async
+  contexts like `#[tokio::test]`. These methods run PostgreSQL lifecycle
+  operations on the caller's runtime rather than creating a separate one,
+  avoiding the "Cannot start a runtime from within a runtime" panic. Users must
+  call `stop_async()` explicitly before the cluster goes out of scope since
+  `Drop` cannot be async. See the implementation update above for design details.
 
-- **Uniform API:** To keep things ergonomic, `TestCluster` could be made such
-  that calling it in a sync test will do the blocking startup, but the same
-  struct can be used in an async test by calling an async constructor.
-  Internally both share the same logic, just different execution (one uses an
-  internal Tokio runtime or the blocking feature). This way, the **same
-  `TestCluster` type works for both sync and async tests**, fulfilling the
-  “foundation for sync and async tests” requirement. For example:
+- **Uniform API:** The same `TestCluster` type works for both sync and async
+  tests. Calling `new()` in a sync test performs blocking startup using an
+  internal Tokio runtime, whilst calling `start_async()` in an async test awaits
+  the lifecycle operations on the caller's runtime. Both paths share the same
+  bootstrap logic and produce identical cluster configurations. For example:
 
 ```rust
 // Synchronous test
 #[test]
 fn test_something() {
-    let cluster = TestCluster::start().expect("PG start failed");
+    let cluster = TestCluster::new().expect("PG start failed");
     // ... use cluster (Diesel, etc.)
 }
 
-// Asynchronous test
+// Asynchronous test (requires `async-api` feature)
 #[tokio::test]
 async fn test_async_thing() {
     let cluster = TestCluster::start_async().await.expect("PG start failed");
     // ... use cluster with async client
+    cluster.stop_async().await.expect("PG stop failed");
 }
 ```
 
-Under the hood, both will configure and launch Postgres appropriately,
+Under the hood, both paths configure and launch Postgres appropriately,
 delegating to the worker helper when root privileges are detected so lifecycle
-commands run as `nobody`. The underlying crate supports both patterns, so we
-will leverage that (see postgresql-embedded README).
+commands run as `nobody`.
 
 - **rstest fixtures:** The crate now ships a built-in `rstest` fixture exposed
   as `pg_embedded_setup_unpriv::test_support::test_cluster`. When imported into
