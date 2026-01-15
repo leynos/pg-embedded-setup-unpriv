@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use color_eyre::eyre::{Context, Result, ensure, eyre};
-use pg_embedded_setup_unpriv::{TemporaryDatabase, TestCluster};
+use pg_embedded_setup_unpriv::{TemporaryDatabase, TestCluster, find_timezone_dir};
 
 use super::cluster_skip::cluster_skip_message;
 use super::env::ScopedEnvVars;
@@ -281,7 +281,9 @@ pub fn setup_sandboxed_cluster(world: &DatabaseWorldFixture) -> Result<()> {
 fn build_sandbox_env(world_cell: &RefCell<DatabaseWorld>) -> ScopedEnvVars {
     let world_ref = world_cell.borrow();
     let mut vars = world_ref.sandbox.env_without_timezone();
-    override_env_value(&mut vars, "TZDIR", "/usr/share/zoneinfo");
+    if let Some(tzdir) = find_timezone_dir() {
+        override_env_value(&mut vars, "TZDIR", tzdir.as_str());
+    }
     override_env_value(&mut vars, "TZ", "UTC");
     vars
 }

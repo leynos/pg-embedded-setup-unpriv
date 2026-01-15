@@ -16,7 +16,7 @@ use crate::{
     error::{BootstrapResult, Result as CrateResult},
 };
 
-pub use env::TestBootstrapEnvironment;
+pub use env::{TestBootstrapEnvironment, find_timezone_dir};
 pub use mode::{ExecutionMode, ExecutionPrivileges, detect_execution_privileges};
 
 use self::{
