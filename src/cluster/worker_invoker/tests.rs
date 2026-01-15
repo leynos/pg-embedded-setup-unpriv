@@ -1,3 +1,6 @@
+//! Unit tests for the [`WorkerInvoker`] component, verifying both in-process
+//! execution for unprivileged operations and hook delegation for root operations.
+
 use super::*;
 use crate::ExecutionPrivileges;
 use crate::test_support::{
