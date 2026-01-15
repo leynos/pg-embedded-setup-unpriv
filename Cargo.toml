@@ -40,7 +40,7 @@ path = "tests/settings.rs"
 postgresql_embedded = { version = "0.20.0", features = ["tokio"] }
 nix = { version = "0.28", default-features = false, features = ["user", "fs"] }
 color-eyre = "0.6"
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_with = "3"
 diesel = { version = "2", default-features = false, features = ["postgres"], optional = true }
@@ -72,6 +72,7 @@ sha2 = "0.10"
 toml = []
 json5 = []
 yaml = []
+async-api = []
 privileged-tests = []
 cluster-unit-tests = ["dep:tracing-subscriber"]
 dev-worker = ["dep:tracing-subscriber"]
