@@ -4,7 +4,7 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
 `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-Status: DRAFT
+Status: COMPLETE
 
 ## Purpose / Big Picture
 
@@ -78,19 +78,38 @@ The synchronous API remains unchanged for backward compatibility.
 
 ## Progress
 
-- [ ] Stage A: Preparation - read all affected files, confirm approach
-- [ ] Stage B: Modify runtime ownership in TestCluster to `Option<Runtime>`
-- [ ] Stage C: Add async worker invoker methods
-- [ ] Stage D: Add async constructors and lifecycle methods
-- [ ] Stage E: Update Drop implementation with async-awareness
-- [ ] Stage F: Add feature flag `async-api`
-- [ ] Stage G: Write async tests
-- [ ] Stage H: Update documentation
-- [ ] Final validation and cleanup
+- [x] (2026-01-15) Stage A: Preparation - read all affected files, confirm
+      approach
+- [x] (2026-01-15) Stage B: Modify runtime ownership in TestCluster to
+      `Option<Runtime>`
+- [x] (2026-01-15) Stage C: Add async worker invoker methods
+- [x] (2026-01-15) Stage D: Add async constructors and lifecycle methods
+- [x] (2026-01-15) Stage E: Update Drop implementation with async-awareness
+- [x] (2026-01-15) Stage F: Add feature flag `async-api`
+- [x] (2026-01-15) Stage G: Write async tests
+- [x] (2026-01-15) Stage H: Update documentation
+- [x] (2026-01-15) Final validation and cleanup
 
 ## Surprises & Discoveries
 
-(None yet)
+- Observation: Large futures (18KB+) caused clippy `large_futures` warnings
+  Evidence: Clippy output showing future sizes exceeding default thresholds
+  Impact: Required wrapping with `Box::pin()` to avoid stack overflow concerns
+
+- Observation: Cognitive complexity in refactored methods exceeded clippy limit
+  Evidence: Multiple clippy warnings about cognitive complexity (18/9, 14/9)
+  Impact: Required extracting helper functions like `log_lifecycle_start()`,
+  `warn_async_drop_without_stop()`, `stop_worker_managed_async()`
+
+- Observation: Async tests conflicted with other cluster tests using same data
+  directory Evidence: initdb errors about non-empty directory when running full
+  test suite Impact: Required `file_serial` attribute to serialize tests across
+  binaries; needed `file_locks` feature for serial_test crate
+
+- Observation: `AsyncInvoker` needed separate struct rather than async methods
+  on `WorkerInvoker` Evidence: `WorkerInvoker` holds `&'a Runtime` which isn't
+  available in async mode Impact: Created parallel `AsyncInvoker` struct
+  without runtime reference
 
 ## Decision Log
 
@@ -111,7 +130,41 @@ The synchronous API remains unchanged for backward compatibility.
 
 ## Outcomes & Retrospective
 
-(To be filled upon completion)
+### What Was Achieved
+
+Successfully implemented async API for `TestCluster`:
+
+- `start_async()` - async constructor that runs on caller's runtime
+- `stop_async()` - explicit async shutdown with proper cleanup
+- Feature-gated behind `async-api` feature flag
+- Full backward compatibility with existing sync API
+- 4 new async tests validating the implementation
+- Comprehensive documentation with examples
+
+### Metrics
+
+- Files modified: 4 (within 8-file tolerance)
+- New test file: 1 (`tests/test_cluster_async.rs`)
+- All 116 tests pass including 4 new async tests
+- No new external dependencies (only internal feature flag for serial_test)
+
+### Lessons Learned
+
+1. **Test isolation matters**: Async tests running in parallel with other
+   cluster tests caused data directory conflicts. File-based serialization
+   (`file_serial`) solved this, but could consider using sandboxed directories
+   for async tests in future.
+
+2. **Future sizes need attention**: Large async state machines can cause stack
+   issues. `Box::pin()` is the standard solution but adds allocation overhead.
+
+3. **Separate invoker for async**: Rather than trying to make `WorkerInvoker`
+   work for both sync and async, creating a parallel `AsyncInvoker` struct was
+   cleaner and avoided lifetime issues with the runtime reference.
+
+4. **Drop complexity**: Async-safe Drop implementation requires careful handling
+   - checking for active runtime, spawning cleanup tasks, and warning users
+   about resource leaks.
 
 ## Context and Orientation
 
