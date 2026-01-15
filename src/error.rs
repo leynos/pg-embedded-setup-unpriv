@@ -19,13 +19,13 @@ pub type ConfigResult<T> = std::result::Result<T, ConfigError>;
 #[derive(Debug, Error)]
 pub enum PgEmbeddedError {
     /// Indicates bootstrap initialisation failed.
-    #[error("bootstrap failed")]
+    #[error("bootstrap failed: {0}")]
     Bootstrap(#[from] BootstrapError),
     /// Indicates privilege management failed.
-    #[error("privilege management failed")]
+    #[error("privilege management failed: {0}")]
     Privilege(#[from] PrivilegeError),
     /// Indicates configuration parsing failed.
-    #[error("configuration parsing failed")]
+    #[error("configuration parsing failed: {0}")]
     Config(#[from] ConfigError),
 }
 
