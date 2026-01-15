@@ -3,7 +3,11 @@
 //! The cluster starts during [`TestCluster::new`] and shuts down automatically when the
 //! value drops out of scope.
 //!
-//! # Examples
+//! # Synchronous API
+//!
+//! Use [`TestCluster::new`] from synchronous contexts or when you want the cluster to
+//! own its own Tokio runtime:
+//!
 //! ```no_run
 //! use pg_embedded_setup_unpriv::TestCluster;
 //!
@@ -14,6 +18,32 @@
 //! drop(cluster); // `PostgreSQL` stops automatically.
 //! # Ok(())
 //! # }
+//! ```
+//!
+//! # Async API
+//!
+//! When running within an existing async runtime (e.g., `#[tokio::test]`), use
+//! [`TestCluster::start_async`] to avoid the "Cannot start a runtime from within a
+//! runtime" panic that occurs when nesting Tokio runtimes:
+//!
+//! ```ignore
+//! use pg_embedded_setup_unpriv::TestCluster;
+//!
+//! #[tokio::test]
+//! async fn test_with_embedded_postgres() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+//!     let cluster = TestCluster::start_async().await?;
+//!     let url = cluster.settings().url("my_database");
+//!     // ... async database operations ...
+//!     cluster.stop_async().await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! The async API requires the `async-api` feature flag:
+//!
+//! ```toml
+//! [dependencies]
+//! pg-embed-setup-unpriv = { version = "...", features = ["async-api"] }
 //! ```
 
 mod connection;
