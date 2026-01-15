@@ -43,8 +43,47 @@ pub(crate) fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)
 pub(crate) fn ensure_dir_exists(path: &Utf8Path) -> Result<()> {
     let span = info_span!(target: LOG_TARGET, "ensure_dir_exists", path = %path);
     let _entered = span.enter();
-    let (dir, relative) = ambient_dir_and_path(path)?;
+    let (dir, relative) = find_existing_ancestor(path)?;
     ensure_dir_exists_inner(path, &dir, &relative)
+}
+
+/// Walks up the path tree to find the nearest existing ancestor directory.
+///
+/// Returns a handle to the existing ancestor and the relative path from there to the target.
+fn find_existing_ancestor(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
+    if !path.has_root() {
+        return ambient_dir_and_path(path);
+    }
+
+    let mut current = path;
+    while let Some(parent) = current.parent() {
+        match Dir::open_ambient_dir(parent.as_std_path(), ambient_authority()) {
+            Ok(dir) => {
+                let relative = path
+                    .strip_prefix(parent)
+                    .with_context(|| {
+                        format!("strip ancestor {} from {}", parent.as_str(), path.as_str())
+                    })?
+                    .to_path_buf();
+                return Ok((dir, relative));
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                current = parent;
+            }
+            Err(err) => {
+                return Err(err).context("open ambient directory for absolute path");
+            }
+        }
+    }
+
+    // Reached the root - open it directly
+    let dir = Dir::open_ambient_dir(current.as_std_path(), ambient_authority())
+        .context("open ambient root directory")?;
+    let relative = path
+        .strip_prefix(current)
+        .map(Utf8Path::to_path_buf)
+        .unwrap_or_default();
+    Ok((dir, relative))
 }
 
 fn ensure_dir_exists_inner(path: &Utf8Path, dir: &Dir, relative: &Utf8PathBuf) -> Result<()> {
