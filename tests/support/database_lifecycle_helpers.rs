@@ -9,10 +9,32 @@ use color_eyre::eyre::{Context, Result, ensure, eyre};
 use pg_embedded_setup_unpriv::{TemporaryDatabase, TestCluster};
 
 use super::cluster_skip::cluster_skip_message;
+use super::env::ScopedEnvVars;
 use super::sandbox::TestSandbox;
 
 const BOOTSTRAP_RETRY_ATTEMPTS: usize = 3;
 const BOOTSTRAP_RETRY_DELAY: Duration = Duration::from_millis(250);
+
+struct BootstrapOutcome {
+    cluster: Option<TestCluster>,
+    error: Option<pg_embedded_setup_unpriv::BootstrapError>,
+}
+
+impl BootstrapOutcome {
+    const fn success(cluster: TestCluster) -> Self {
+        Self {
+            cluster: Some(cluster),
+            error: None,
+        }
+    }
+
+    const fn failure(error: Option<pg_embedded_setup_unpriv::BootstrapError>) -> Self {
+        Self {
+            cluster: None,
+            error,
+        }
+    }
+}
 
 /// Global counter for tracking setup function invocations across scenarios.
 ///
@@ -244,47 +266,89 @@ pub fn verify_error(
 pub fn setup_sandboxed_cluster(world: &DatabaseWorldFixture) -> Result<()> {
     let world_cell = borrow_world(world)?;
 
-    let vars = {
-        let world_ref = world_cell.borrow();
-        let mut vars = world_ref.sandbox.env_without_timezone();
-        for (key, value) in &mut vars {
-            if key.as_os_str() == OsStr::new("TZDIR") {
-                *value = Some(OsString::from("/usr/share/zoneinfo"));
-            }
-            if key.as_os_str() == OsStr::new("TZ") {
-                *value = Some(OsString::from("UTC"));
-            }
-        }
-        vars
-    };
+    let vars = build_sandbox_env(world_cell);
 
-    let mut last_error = None;
-    for attempt in 0..BOOTSTRAP_RETRY_ATTEMPTS {
-        {
-            let world_ref = world_cell.borrow();
-            world_ref.sandbox.reset()?;
-        }
-        let result = {
-            let world_ref = world_cell.borrow();
-            world_ref.sandbox.with_env(vars.clone(), TestCluster::new)
-        };
-
-        match result {
-            Ok(cluster) => {
-                world_cell.borrow_mut().record_cluster(cluster);
-                return Ok(());
-            }
-            Err(err) => {
-                last_error = Some(err);
-                if attempt + 1 < BOOTSTRAP_RETRY_ATTEMPTS {
-                    std::thread::sleep(BOOTSTRAP_RETRY_DELAY);
-                }
-            }
-        }
+    let outcome = bootstrap_cluster_with_retry(world_cell, &vars)?;
+    if let Some(cluster) = outcome.cluster {
+        world_cell.borrow_mut().record_cluster(cluster);
     }
-
-    if let Some(err) = last_error {
+    if let Some(err) = outcome.error {
         world_cell.borrow_mut().record_bootstrap_error(err);
     }
     Ok(())
+}
+
+fn build_sandbox_env(world_cell: &RefCell<DatabaseWorld>) -> ScopedEnvVars {
+    let world_ref = world_cell.borrow();
+    let mut vars = world_ref.sandbox.env_without_timezone();
+    override_env_value(&mut vars, "TZDIR", "/usr/share/zoneinfo");
+    override_env_value(&mut vars, "TZ", "UTC");
+    vars
+}
+
+fn bootstrap_cluster_with_retry(
+    world_cell: &RefCell<DatabaseWorld>,
+    vars: &ScopedEnvVars,
+) -> Result<BootstrapOutcome> {
+    let mut last_error = None;
+    for attempt in 0..BOOTSTRAP_RETRY_ATTEMPTS {
+        if let Some(cluster) = try_bootstrap_attempt(world_cell, vars, attempt, &mut last_error)? {
+            return Ok(BootstrapOutcome::success(cluster));
+        }
+    }
+
+    Ok(BootstrapOutcome::failure(last_error))
+}
+
+fn reset_sandbox(world_cell: &RefCell<DatabaseWorld>) -> Result<()> {
+    let world_ref = world_cell.borrow();
+    world_ref.sandbox.reset()
+}
+
+fn try_bootstrap_attempt(
+    world_cell: &RefCell<DatabaseWorld>,
+    vars: &ScopedEnvVars,
+    attempt: usize,
+    last_error: &mut Option<pg_embedded_setup_unpriv::BootstrapError>,
+) -> Result<Option<TestCluster>> {
+    reset_sandbox(world_cell)?;
+    let result = {
+        let world_ref = world_cell.borrow();
+        world_ref.sandbox.with_env(vars.clone(), TestCluster::new)
+    };
+
+    match result {
+        Ok(cluster) => Ok(Some(cluster)),
+        Err(err) => {
+            if attempt + 1 < BOOTSTRAP_RETRY_ATTEMPTS {
+                log_bootstrap_retry(attempt, &err);
+                std::thread::sleep(BOOTSTRAP_RETRY_DELAY);
+            }
+            *last_error = Some(err);
+            Ok(None)
+        }
+    }
+}
+
+fn log_bootstrap_retry(attempt: usize, err: &pg_embedded_setup_unpriv::BootstrapError) {
+    tracing::trace!(
+        attempt = attempt + 1,
+        total_attempts = BOOTSTRAP_RETRY_ATTEMPTS,
+        error = %err,
+        delay_ms = BOOTSTRAP_RETRY_DELAY.as_millis(),
+        "bootstrap failed; sleeping before retry"
+    );
+}
+
+fn override_env_value(vars: &mut ScopedEnvVars, key: &str, value: &str) {
+    let key_ref = OsStr::new(key);
+    let value_os = Some(OsString::from(value));
+    if let Some((_, existing_value)) = vars
+        .iter_mut()
+        .find(|(candidate, _)| candidate.as_os_str() == key_ref)
+    {
+        *existing_value = value_os;
+    } else {
+        vars.push((key_ref.to_os_string(), value_os));
+    }
 }

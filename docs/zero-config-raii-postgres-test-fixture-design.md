@@ -283,7 +283,7 @@ essentially one line in the test setup.
 - Adopted the general-availability `rstest-bdd` 0.3.2 release (and the matching
   macro crate) so behavioural coverage for privilege detection and Diesel flows
   uses the currently supported API line and aligns with `Cargo.toml`.
-- Confirmed that the Fluent-backed localisation layer and i18n dependencies
+- Confirmed that the Fluent-backed localization layer and i18n dependencies
   continue to load lazily through `rust-embed`, keeping the fixture's hot path
   unchanged while preserving multi-locale reporting across the BDD suite.
 - Recorded this dependency uplift to keep the design doc aligned with the tool
