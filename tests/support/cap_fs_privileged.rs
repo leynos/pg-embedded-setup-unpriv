@@ -23,8 +23,15 @@ pub fn open_dir(path: &Utf8Path) -> Result<Dir> {
 }
 
 /// Removes a directory tree when present, ignoring `NotFound` errors.
+///
+/// If the parent directory does not exist, the target cannot exist either,
+/// so this returns `Ok(())` in that case.
 pub fn remove_tree(path: &Utf8Path) -> Result<()> {
-    let (dir, relative) = ambient_dir_and_path(path)?;
+    let (dir, relative) = match ambient_dir_and_path(path) {
+        Ok(result) => result,
+        Err(err) if is_not_found(&err) => return Ok(()),
+        Err(err) => return Err(err),
+    };
     if relative.as_str().is_empty() {
         return Ok(());
     }
@@ -34,4 +41,11 @@ pub fn remove_tree(path: &Utf8Path) -> Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err).with_context(|| format!("remove {path}")),
     }
+}
+
+/// Checks whether an eyre error chain contains a `NotFound` IO error.
+fn is_not_found(err: &color_eyre::Report) -> bool {
+    err.chain()
+        .filter_map(|e| e.downcast_ref::<std::io::Error>())
+        .any(|io_err| io_err.kind() == std::io::ErrorKind::NotFound)
 }
