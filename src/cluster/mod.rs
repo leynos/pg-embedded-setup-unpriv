@@ -48,7 +48,10 @@ use tracing::{info, info_span};
 /// Embedded `PostgreSQL` instance whose lifecycle follows Rust's drop semantics.
 #[derive(Debug)]
 pub struct TestCluster {
-    runtime: Runtime,
+    /// Owned runtime for synchronous API; `None` when using async API.
+    runtime: Option<Runtime>,
+    /// `true` when created via `start_async()`, indicating async cleanup is expected.
+    is_async_mode: bool,
     postgres: Option<PostgreSQL>,
     bootstrap: TestBootstrapSettings,
     is_managed_via_worker: bool,
@@ -87,7 +90,8 @@ impl TestCluster {
         };
 
         Ok(Self {
-            runtime,
+            runtime: Some(runtime),
+            is_async_mode: false,
             postgres: outcome.postgres,
             bootstrap: outcome.bootstrap,
             is_managed_via_worker: outcome.is_managed_via_worker,
@@ -216,6 +220,41 @@ impl TestCluster {
         format!("version {version}, data_dir {data_dir}")
     }
 
+    /// Best-effort cleanup for async clusters dropped without `stop_async()`.
+    ///
+    /// Attempts to spawn cleanup on the current runtime handle if available.
+    fn drop_async_cluster(&mut self, context: &str) {
+        let Some(postgres) = self.postgres.take() else {
+            return; // Already cleaned up via stop_async() or nothing to clean.
+        };
+
+        Self::warn_async_drop_without_stop(context);
+
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => spawn_async_cleanup(&handle, postgres, self.bootstrap.shutdown_timeout),
+            Err(_) => Self::error_no_runtime_for_cleanup(context),
+        }
+    }
+
+    fn warn_async_drop_without_stop(context: &str) {
+        tracing::warn!(
+            target: LOG_TARGET,
+            context = %context,
+            concat!(
+                "async TestCluster dropped without calling stop_async(); ",
+                "attempting best-effort cleanup"
+            )
+        );
+    }
+
+    fn error_no_runtime_for_cleanup(context: &str) {
+        tracing::error!(
+            target: LOG_TARGET,
+            context = %context,
+            "no async runtime available for cleanup; resources may leak"
+        );
+    }
+
     fn warn_stop_failure(context: &str, err: &impl Display) {
         tracing::warn!(
             "SKIP-TEST-CLUSTER: failed to stop embedded postgres instance ({}): {}",
@@ -274,7 +313,8 @@ mod tests {
         let env_vars = bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
         TestCluster {
-            runtime,
+            runtime: Some(runtime),
+            is_async_mode: false,
             postgres: None,
             bootstrap,
             is_managed_via_worker: false,
@@ -286,10 +326,23 @@ mod tests {
     }
 }
 
+/// Spawns async cleanup of a `PostgreSQL` instance on the provided runtime handle.
+///
+/// The task is fire-and-forget; errors during shutdown are silently ignored.
+fn spawn_async_cleanup(
+    handle: &tokio::runtime::Handle,
+    postgres: PostgreSQL,
+    timeout: std::time::Duration,
+) {
+    drop(handle.spawn(async move {
+        drop(time::timeout(timeout, postgres.stop()).await);
+    }));
+}
+
 impl Drop for TestCluster {
     #[expect(
         clippy::cognitive_complexity,
-        reason = "drop path must branch between worker and in-process shutdown with logging"
+        reason = "drop path must branch between async/sync and worker/in-process shutdown"
     )]
     fn drop(&mut self) {
         let context = Self::stop_context(&self.bootstrap.settings);
@@ -297,20 +350,34 @@ impl Drop for TestCluster {
             target: LOG_TARGET,
             context = %context,
             worker_managed = self.is_managed_via_worker,
+            async_mode = self.is_async_mode,
             "stopping embedded postgres cluster"
         );
 
+        // Async clusters should use stop_async() explicitly; attempt best-effort cleanup.
+        if self.is_async_mode {
+            self.drop_async_cluster(&context);
+            return;
+        }
+
+        // Sync path: runtime is guaranteed to be Some.
+        let Some(ref runtime) = self.runtime else {
+            tracing::error!(
+                target: LOG_TARGET,
+                "sync TestCluster missing runtime in drop; cannot clean up"
+            );
+            return;
+        };
+
         if self.is_managed_via_worker {
-            let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
+            let invoker = ClusterWorkerInvoker::new(runtime, &self.bootstrap, &self.env_vars);
             if let Err(err) = invoker.invoke_as_root(worker_operation::WorkerOperation::Stop) {
                 Self::warn_stop_failure(&context, &err);
             }
         } else if let Some(postgres) = self.postgres.take() {
             let timeout = self.bootstrap.shutdown_timeout;
             let timeout_secs = timeout.as_secs();
-            let outcome = self
-                .runtime
-                .block_on(async { time::timeout(timeout, postgres.stop()).await });
+            let outcome = runtime.block_on(async { time::timeout(timeout, postgres.stop()).await });
 
             match outcome {
                 Ok(Ok(())) => {}
