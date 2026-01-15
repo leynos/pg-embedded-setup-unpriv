@@ -404,6 +404,13 @@ classDiagram
 - Behavioural tests (rstest-bdd) are not applicable because this change only
   affects internal test instrumentation rather than observable runtime
   behaviour.
+- Refactored `ScopedEnv` and `ThreadState` into generic cores parameterised by
+  pluggable lock and thread-state backends. The `EnvLockOps` trait abstracts
+  mutex operations, while `ThreadStateCore<L>` is a generic type parameterised
+  by the lock backend. Production builds use `StdEnvLock` (wrapping
+  `std::sync::Mutex`), while Loom tests supply `LoomEnvLock` (wrapping
+  `loom::sync::Mutex`). This enables swapping synchronisation implementations
+  for model checking without altering runtime code paths.
 
 ### Ephemeral ports and isolation
 
