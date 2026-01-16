@@ -130,7 +130,7 @@ observable in separate matrix jobs so failures can be diagnosed independently.
 Stage A: Review current CI workflow, test coverage, and privilege-detection
 behaviour. Identify where root and unprivileged flows are currently tested and
 what gaps exist for CI observability. If multiple CI approaches are viable
-(e.g., containerised root job vs `sudo`), evaluate trade-offs and record the
+(e.g., containerized root job vs `sudo`), evaluate trade-offs and record the
 choice in the Decision Log.
 
 Stage B: Add or adjust unit and behavioural tests to explicitly confirm the
