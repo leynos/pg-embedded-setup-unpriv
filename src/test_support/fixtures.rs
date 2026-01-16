@@ -99,16 +99,33 @@ pub fn test_cluster() -> TestCluster {
 }
 
 fn ensure_worker_env() -> Option<ScopedEnv> {
+    ensure_worker_env_impl(
+        detect_execution_privileges(),
+        std::env::var_os("PG_EMBEDDED_WORKER").is_some(),
+        worker_binary,
+    )
+}
+
+/// Core logic for determining whether to set up the worker environment.
+///
+/// Separated from `ensure_worker_env()` to enable testing with controlled inputs.
+/// The `worker_finder` closure is only called when actually needed (privileged
+/// execution without an existing worker env var).
+fn ensure_worker_env_impl(
+    privileges: ExecutionPrivileges,
+    worker_env_present: bool,
+    worker_finder: impl FnOnce() -> Option<OsString>,
+) -> Option<ScopedEnv> {
     // Unprivileged users can run tests in-process without the worker binary.
-    if detect_execution_privileges() == ExecutionPrivileges::Unprivileged {
+    if privileges == ExecutionPrivileges::Unprivileged {
         return None;
     }
 
-    if std::env::var_os("PG_EMBEDDED_WORKER").is_some() {
+    if worker_env_present {
         return None;
     }
 
-    let Some(worker) = worker_binary() else {
+    let Some(worker) = worker_finder() else {
         panic!(
             "SKIP-TEST-CLUSTER: PG_EMBEDDED_WORKER is not set and pg_worker binary was not found"
         );
@@ -255,5 +272,84 @@ pub fn shared_test_cluster() -> &'static TestCluster {
         Err(err) => panic!(
             "SKIP-TEST-CLUSTER: shared_test_cluster fixture failed to start PostgreSQL: {err:?}"
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    /// Unprivileged users should not require the worker binary, regardless of
+    /// whether it exists or whether `PG_EMBEDDED_WORKER` is set.
+    #[rstest]
+    #[case::worker_would_be_found(true)]
+    #[case::worker_would_not_be_found(false)]
+    fn unprivileged_user_does_not_require_worker(#[case] worker_exists: bool) {
+        let worker_finder = move || worker_exists.then(|| OsString::from("/fake/worker"));
+        let result = ensure_worker_env_impl(
+            ExecutionPrivileges::Unprivileged,
+            false, // PG_EMBEDDED_WORKER not set
+            worker_finder,
+        );
+        assert!(
+            result.is_none(),
+            "unprivileged execution should not set up worker env"
+        );
+    }
+
+    /// When `PG_EMBEDDED_WORKER` is already set, even privileged users should not
+    /// override it (returns `None` without calling the worker finder).
+    #[test]
+    fn privileged_user_with_existing_worker_env_does_not_override() {
+        let worker_finder = || panic!("worker_finder should not be called when env var is set");
+        let result = ensure_worker_env_impl(
+            ExecutionPrivileges::Root,
+            true, // PG_EMBEDDED_WORKER already set
+            worker_finder,
+        );
+        assert!(
+            result.is_none(),
+            "should not override existing PG_EMBEDDED_WORKER"
+        );
+    }
+
+    /// Privileged users without `PG_EMBEDDED_WORKER` set should receive a
+    /// `ScopedEnv` that configures the worker binary path.
+    #[test]
+    fn privileged_user_without_worker_env_sets_up_worker() {
+        let worker_path = OsString::from("/path/to/pg_worker");
+        let expected_path = worker_path.clone();
+        let worker_finder = move || Some(worker_path);
+        let result = ensure_worker_env_impl(
+            ExecutionPrivileges::Root,
+            false, // PG_EMBEDDED_WORKER not set
+            worker_finder,
+        );
+        assert!(
+            result.is_some(),
+            "should return ScopedEnv for privileged execution"
+        );
+        // Verify the env var was set by checking the current environment
+        // (ScopedEnv sets it on construction).
+        let env_value = std::env::var_os("PG_EMBEDDED_WORKER");
+        assert_eq!(
+            env_value,
+            Some(expected_path),
+            "PG_EMBEDDED_WORKER should be set"
+        );
+    }
+
+    /// Privileged users without `PG_EMBEDDED_WORKER` and without a locatable
+    /// worker binary should trigger the skip panic.
+    #[test]
+    #[should_panic(expected = "SKIP-TEST-CLUSTER")]
+    fn privileged_user_without_worker_binary_panics() {
+        let worker_finder = || None;
+        let _result = ensure_worker_env_impl(
+            ExecutionPrivileges::Root,
+            false, // PG_EMBEDDED_WORKER not set
+            worker_finder,
+        );
     }
 }
