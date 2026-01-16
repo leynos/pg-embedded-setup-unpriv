@@ -19,6 +19,49 @@ pub(super) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_SHUTDOWN_TIMEOUT_SECS: u64 = 600;
 const SHUTDOWN_TIMEOUT_ENV: &str = "PG_SHUTDOWN_TIMEOUT_SECS";
 
+/// Common Unix paths where time zone databases may be installed.
+///
+/// Used by `find_timezone_dir` to probe for the first existing candidate.
+#[cfg(unix)]
+pub const TZDIR_CANDIDATES: [&str; 4] = [
+    "/usr/share/zoneinfo",
+    "/usr/lib/zoneinfo",
+    "/etc/zoneinfo",
+    "/share/zoneinfo",
+];
+
+/// Probes common Unix paths for the time zone database directory.
+///
+/// Returns the first existing candidate from `TZDIR_CANDIDATES`, or `None` if
+/// none exist or on non-Unix platforms. This helper enables test harnesses to
+/// set `TZDIR` consistently with production bootstrap logic.
+///
+/// # Examples
+///
+/// ```
+/// use pg_embedded_setup_unpriv::find_timezone_dir;
+///
+/// if let Some(tzdir) = find_timezone_dir() {
+///     println!("Found timezone directory: {}", tzdir);
+/// }
+/// ```
+#[must_use]
+pub fn find_timezone_dir() -> Option<&'static Utf8Path> {
+    #[cfg(unix)]
+    {
+        TZDIR_CANDIDATES
+            .iter()
+            .copied()
+            .map(Utf8Path::new)
+            .find(|path| path.exists())
+    }
+
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
 pub(super) fn shutdown_timeout_from_env() -> BootstrapResult<Duration> {
     match env::var(SHUTDOWN_TIMEOUT_ENV) {
         Ok(raw) => {
@@ -271,23 +314,10 @@ pub(super) fn prepare_timezone_env() -> BootstrapResult<TimezoneEnv> {
 fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
     #[cfg(unix)]
     {
-        static CANDIDATES: [&str; 4] = [
-            "/usr/share/zoneinfo",
-            "/usr/lib/zoneinfo",
-            "/etc/zoneinfo",
-            "/share/zoneinfo",
-        ];
-
-        let candidate = CANDIDATES
-            .iter()
-            .map(Utf8Path::new)
-            .find(|path| path.exists())
-            .ok_or_else(|| -> crate::error::BootstrapError {
-                color_eyre::eyre::eyre!(
-                    "time zone database not found. Set TZDIR or install tzdata."
-                )
+        let candidate = find_timezone_dir().ok_or_else(|| -> crate::error::BootstrapError {
+            color_eyre::eyre::eyre!("time zone database not found. Set TZDIR or install tzdata.")
                 .into()
-            })?;
+        })?;
 
         Ok(Some(candidate.to_owned()))
     }

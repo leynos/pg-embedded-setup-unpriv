@@ -147,7 +147,7 @@ pub mod worker_process_test_api {
 pub use crate::env::ScopedEnv;
 pub use bootstrap::{
     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
-    bootstrap_for_tests, detect_execution_privileges, run,
+    bootstrap_for_tests, detect_execution_privileges, find_timezone_dir, run,
 };
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[doc(hidden)]
