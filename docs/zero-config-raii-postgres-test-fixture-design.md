@@ -288,7 +288,7 @@ essentially one line in the test setup.
   unchanged while preserving multi-locale reporting across the BDD suite.
 - Recorded this dependency uplift to keep the design doc aligned with the tool
   chain choices and to signpost downstream crates that they can rely on the
-  0.3.2 APIs when authoring their own scenarios.
+  0.3.2 APIs when authoring scenarios.
 - Added a Dutch `rstest-bdd` scenario (`tests/localized_diagnostics.rs`) that
   switches diagnostics to French via `select_localizations`. The test is part
   of `make test`, giving CI a deterministic signal that localization bundles
