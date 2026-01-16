@@ -7,12 +7,14 @@
 //! multiple suites mutate process-wide state.
 
 use rstest::fixture;
-use std::fs::OpenOptions;
-use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
 #[cfg(unix)]
+use std::fs::OpenOptions;
+#[cfg(unix)]
 use std::os::unix::io::AsRawFd;
+#[cfg(unix)]
+use std::path::PathBuf;
 
 static SCENARIO_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
