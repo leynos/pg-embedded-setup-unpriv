@@ -16,29 +16,13 @@ slow-timeout = { period = "30s", terminate-after = 1, grace-period = "5s" }
 serial = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = "binary(=bootstrap_privileges)"
-test-group = "serial"
-
-[[profile.default.overrides]]
-filter = "binary(=database_lifecycle)"
-test-group = "serial"
-
-[[profile.default.overrides]]
-filter = "binary(=observability)"
-test-group = "serial"
-
-[[profile.default.overrides]]
-filter = "binary(=settings_logging)"
-test-group = "serial"
-
-[[profile.default.overrides]]
-filter = "binary(=test_cluster_behaviour)"
-test-group = "serial"
-
-[[profile.default.overrides]]
-filter = "binary(=test_cluster_connection)"
-test-group = "serial"
-
-[[profile.default.overrides]]
-filter = "binary(=test_cluster_drop)"
+filter = """
+  binary(=bootstrap_privileges)
+  | binary(=database_lifecycle)
+  | binary(=observability)
+  | binary(=settings_logging)
+  | binary(=test_cluster_behaviour)
+  | binary(=test_cluster_connection)
+  | binary(=test_cluster_drop)
+"""
 test-group = "serial"

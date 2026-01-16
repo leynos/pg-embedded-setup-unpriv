@@ -87,6 +87,8 @@ pub(super) fn determine_execution_mode(
 
 #[cfg(test)]
 mod tests {
+    //! Unit tests for execution mode determination.
+
     use super::*;
 
     #[cfg(unix)]

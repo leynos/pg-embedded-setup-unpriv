@@ -50,41 +50,36 @@ code.
 
 ## Risks
 
-    - Risk: GitHub Actions runners may not permit the desired root/unprivileged
-      split without containerisation or `sudo`.
-      Severity: medium
-      Likelihood: medium
-      Mitigation: prototype the CI commands locally or in a minimal workflow
-      snippet, and document the chosen approach with reasoning.
-    - Risk: behavioural tests might rely on global environment mutation that
-      becomes flaky when run in parallel CI jobs.
-      Severity: medium
-      Likelihood: low
-      Mitigation: reuse existing scoped environment helpers and keep tests
-      serialised where required.
-    - Risk: macOS/Windows expectations might be unclear in existing docs.
-      Severity: low
-      Likelihood: medium
-      Mitigation: cross-reference the design document and update the roadmap
-      appendix with explicit expected outcomes and rationale.
+- Risk: GitHub Actions runners may not permit the desired root/unprivileged
+  split without containerization or `sudo`. Severity: medium Likelihood: medium
+  Mitigation: prototype the CI commands locally or in a minimal workflow
+  snippet, and document the chosen approach with reasoning.
+- Risk: behavioural tests might rely on global environment mutation that
+  becomes flaky when run in parallel CI jobs. Severity: medium Likelihood: low
+  Mitigation: reuse existing scoped environment helpers and keep tests
+  serialized where required.
+- Risk: macOS/Windows expectations might be unclear in existing docs.
+  Severity: low Likelihood: medium Mitigation: cross-reference the design
+  document and update the roadmap appendix with explicit expected outcomes and
+  rationale.
 
 ## Progress
 
-    - [x] (2026-01-13 00:00Z) Drafted initial ExecPlan.
-    - [x] (2026-01-13 00:05Z) Plan approved to proceed with implementation.
-    - [x] (2026-01-13 00:15Z) Inspect existing CI workflow, privilege tests,
-      and documentation references.
-    - [x] (2026-01-13 01:05Z) Add tests covering root/unprivileged happy paths
-      plus the missing-worker error path.
-    - [x] (2026-01-13 01:15Z) Extend CI workflow to run Linux root and
-      unprivileged matrix jobs.
-    - [x] (2026-01-13 01:30Z) Update roadmap appendix, user guide, developer
-      guide, and design notes; mark roadmap task done.
-    - [x] (2026-01-13 02:10Z) Add cross-process serialisation guards and a
-      nextest serial group for PostgreSQL behavioural suites.
-    - [x] (2026-01-13 02:20Z) Surface bootstrap errors when behavioural worlds
-      fail to create a `TestCluster`.
-    - [x] (2026-01-13 02:45Z) Run all quality gates and capture outputs.
+- [x] (2026-01-13 00:00Z) Drafted initial ExecPlan.
+- [x] (2026-01-13 00:05Z) Plan approved to proceed with implementation.
+- [x] (2026-01-13 00:15Z) Inspect existing CI workflow, privilege tests,
+  and documentation references.
+- [x] (2026-01-13 01:05Z) Add tests covering root/unprivileged happy paths
+  plus the missing-worker error path.
+- [x] (2026-01-13 01:15Z) Extend CI workflow to run Linux root and
+  unprivileged matrix jobs.
+- [x] (2026-01-13 01:30Z) Update roadmap appendix, user guide, developer
+  guide, and design notes; mark roadmap task done.
+- [x] (2026-01-13 02:10Z) Add cross-process serialization guards and a
+  nextest serial group for PostgreSQL behavioural suites.
+- [x] (2026-01-13 02:20Z) Surface bootstrap errors when behavioural worlds
+  fail to create a `TestCluster`.
+- [x] (2026-01-13 02:45Z) Run all quality gates and capture outputs.
 
 ## Surprises & Discoveries
 
@@ -92,23 +87,21 @@ None yet.
 
 ## Decision Log
 
-    - Decision: Use a CI matrix with unprivileged coverage via the existing
-      shared coverage action and a root variant that runs `make test` under
-      `sudo` to exercise privilege-aware paths.
-      Rationale: Keeps coverage collection unchanged while adding explicit root
-      coverage without altering the shared action.
-      Date/Author: 2026-01-13 (Codex)
-    - Decision: Serialise PostgreSQL behavioural suites across test binaries
-      with a shared lock file and a nextest serial test group.
-      Rationale: Prevents concurrent bootstrap/download races that caused
-      intermittent CI failures while keeping other tests parallel.
-      Date/Author: 2026-01-13 (Codex)
+- Decision: Use a CI matrix with unprivileged coverage via the existing
+  shared coverage action and a root variant that runs `make test` under `sudo`
+  to exercise privilege-aware paths. Rationale: Keeps coverage collection
+  unchanged while adding explicit root coverage without altering the shared
+  action. Date/Author: 2026-01-13 (Codex)
+- Decision: Serialize PostgreSQL behavioural suites across test binaries
+  with a shared lock file and a nextest serial test group. Rationale: Prevents
+  concurrent bootstrap/download races that caused intermittent CI failures
+  while keeping other tests parallel. Date/Author: 2026-01-13 (Codex)
 
 ## Outcomes & Retrospective
 
 - Added explicit root/unprivileged CI coverage alongside new behavioural and
   unit checks for privilege handling.
-- Serialised PostgreSQL behavioural suites across binaries to stabilise
+- Serialized PostgreSQL behavioural suites across binaries to stabilize
   nextest runs and improved error messages when bootstraps fail.
 
 ## Context and Orientation
@@ -127,10 +120,10 @@ in `docs/rust-testing-with-rstest-fixtures.md`,
 `docs/reliable-testing-in-rust-via-dependency-injection.md`,
 `docs/ortho-config-users-guide.md`, and `docs/rstest-bdd-users-guide.md`.
 
-For this task, “root path” means running the bootstrap flow with effective UID
-0 on Linux so the worker process is exercised, while “unprivileged path” means
-running as a standard user. The CI change must make these paths observable in
-separate matrix jobs so failures can be diagnosed independently.
+For this task, "root path" means running the bootstrap flow with effective user
+ID (UID) 0 on Linux so the worker process is exercised, while "unprivileged
+path" means running as a standard user. The CI change must make these paths
+observable in separate matrix jobs so failures can be diagnosed independently.
 
 ## Plan of Work
 

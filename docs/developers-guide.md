@@ -12,7 +12,7 @@ consumer-facing guidance.
   `TestCluster` teardown, demonstrating that no orphaned processes remain.
 - Behavioural tests driven by `rstest-bdd` exercise both privilege branches to
   guard against regressions in ownership or permission handling.
-- Behavioural suites coordinate via a shared lock file so concurrent test
+- Behavioural suites coordinate via a shared lock file, so concurrent test
   binaries do not contend over PostgreSQL setup or cache directories.
 
 ## Feature coverage in CI

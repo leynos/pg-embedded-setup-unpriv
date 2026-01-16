@@ -90,6 +90,12 @@ fn acquire_process_lock() -> ProcessLock {
                 lock_path.display()
             );
         });
+    // SAFETY: The file descriptor obtained from `lock_file.as_raw_fd()` is valid
+    // because `lock_file` was opened via `OpenOptions::open` and remains owned by
+    // this scope until after the `flock` call completes. No other code moves or
+    // closes the descriptor while this block runs. The `libc::flock` syscall
+    // operates on the OS-level file descriptor and does not access Rust memory,
+    // so there are no data-race concerns from Rust's perspective.
     let result = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX) };
     assert!(
         result == 0,
@@ -107,6 +113,8 @@ fn acquire_process_lock() -> ProcessLock {
 
 #[cfg(test)]
 mod tests {
+    //! Unit tests for scenario serialization guards.
+
     use super::*;
 
     #[test]
@@ -118,5 +126,42 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         drop(reacquired);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn acquire_process_lock_places_lock_file_in_cargo_target_dir() {
+        use std::{env, fs};
+
+        let tmp_dir = env::temp_dir().join("pg_scenario_lock_test");
+        drop(fs::remove_dir_all(&tmp_dir));
+        fs::create_dir_all(&tmp_dir)
+            .expect("failed to create temporary CARGO_TARGET_DIR for acquire_process_lock test");
+
+        // Temporarily set CARGO_TARGET_DIR to our test directory.
+        // SAFETY: This test runs serially via the serial_guard fixture, so no
+        // other threads are concurrently reading or writing environment variables.
+        let original = env::var_os("CARGO_TARGET_DIR");
+        unsafe { env::set_var("CARGO_TARGET_DIR", &tmp_dir) };
+        let _lock = acquire_process_lock();
+
+        // Restore original value.
+        // SAFETY: Same reasoning as above - test runs serially.
+        if let Some(val) = original {
+            unsafe { env::set_var("CARGO_TARGET_DIR", val) };
+        } else {
+            unsafe { env::remove_var("CARGO_TARGET_DIR") };
+        }
+
+        let entries: Vec<_> = fs::read_dir(&tmp_dir)
+            .expect("failed to read temporary CARGO_TARGET_DIR for acquire_process_lock test")
+            .collect();
+        assert!(
+            !entries.is_empty(),
+            "expected acquire_process_lock to create a lock file in {tmp_dir:?}, but directory was empty"
+        );
+
+        // Clean up.
+        drop(fs::remove_dir_all(&tmp_dir));
     }
 }

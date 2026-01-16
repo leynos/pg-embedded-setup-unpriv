@@ -68,36 +68,28 @@ impl BootstrapSandbox {
         })
     }
 
+    fn base_env(&self) -> Vec<(OsString, Option<OsString>)> {
+        build_env([
+            ("PG_RUNTIME_DIR", self.install_dir.as_str()),
+            ("PG_DATA_DIR", self.data_dir.as_str()),
+            ("PG_SUPERUSER", "postgres"),
+            ("PG_PASSWORD", "postgres"),
+        ])
+    }
+
     fn with_env<F, R>(&self, body: F) -> R
     where
         F: FnOnce() -> R,
     {
-        with_scoped_env(
-            build_env([
-                ("PG_RUNTIME_DIR", self.install_dir.as_str()),
-                ("PG_DATA_DIR", self.data_dir.as_str()),
-                ("PG_SUPERUSER", "postgres"),
-                ("PG_PASSWORD", "postgres"),
-            ]),
-            body,
-        )
+        with_scoped_env(self.base_env(), body)
     }
 
     fn with_env_without_worker<F, R>(&self, body: F) -> R
     where
         F: FnOnce() -> R,
     {
-        let mut vars = [
-            ("PG_RUNTIME_DIR", self.install_dir.as_str()),
-            ("PG_DATA_DIR", self.data_dir.as_str()),
-            ("PG_SUPERUSER", "postgres"),
-            ("PG_PASSWORD", "postgres"),
-        ]
-        .into_iter()
-        .map(|(key, value)| (OsString::from(key), Some(OsString::from(value))))
-        .collect::<Vec<_>>();
+        let mut vars = self.base_env();
         vars.push((OsString::from("PG_EMBEDDED_WORKER"), None));
-
         with_scoped_env(vars, body)
     }
 

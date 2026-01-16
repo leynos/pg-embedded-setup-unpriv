@@ -65,7 +65,7 @@
 ### macOS
 
 - Unprivileged runs are expected to behave like the Linux unprivileged flow,
-  executing in-process with the caller's UID/GID.
+  executing in-process with the caller's user ID (UID) / group ID (GID).
 - Root executions are expected to fail fast because privilege dropping is not
   supported on macOS targets; the worker-based path must not be relied on.
 - Behavioural tests that require root privileges should skip on macOS unless a

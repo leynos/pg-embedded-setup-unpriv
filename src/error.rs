@@ -107,3 +107,78 @@ pub struct PrivilegeError(#[from] Report);
 #[derive(Debug, Error)]
 #[error(transparent)]
 pub struct ConfigError(#[from] Report);
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for error display formats.
+
+    use super::*;
+    use color_eyre::eyre::eyre;
+
+    #[test]
+    fn pg_embedded_error_bootstrap_includes_inner_message() {
+        let inner_message = "PG_EMBEDDED_WORKER must be set";
+        let bootstrap_err = BootstrapError::from(eyre!(inner_message));
+        let pg_err = PgEmbeddedError::Bootstrap(bootstrap_err);
+
+        let display = pg_err.to_string();
+
+        assert!(
+            display.contains("bootstrap failed:"),
+            "expected 'bootstrap failed:' prefix, got: {display}"
+        );
+        assert!(
+            display.contains(inner_message),
+            "expected inner message '{inner_message}' in display, got: {display}"
+        );
+    }
+
+    #[test]
+    fn pg_embedded_error_privilege_includes_inner_message() {
+        let inner_message = "failed to drop privileges";
+        let privilege_err = PrivilegeError::from(eyre!(inner_message));
+        let pg_err = PgEmbeddedError::Privilege(privilege_err);
+
+        let display = pg_err.to_string();
+
+        assert!(
+            display.contains("privilege management failed:"),
+            "expected 'privilege management failed:' prefix, got: {display}"
+        );
+        assert!(
+            display.contains(inner_message),
+            "expected inner message '{inner_message}' in display, got: {display}"
+        );
+    }
+
+    #[test]
+    fn pg_embedded_error_config_includes_inner_message() {
+        let inner_message = "invalid port number";
+        let config_err = ConfigError::from(eyre!(inner_message));
+        let pg_err = PgEmbeddedError::Config(config_err);
+
+        let display = pg_err.to_string();
+
+        assert!(
+            display.contains("configuration parsing failed:"),
+            "expected 'configuration parsing failed:' prefix, got: {display}"
+        );
+        assert!(
+            display.contains(inner_message),
+            "expected inner message '{inner_message}' in display, got: {display}"
+        );
+    }
+
+    #[test]
+    fn bootstrap_error_displays_report_message() {
+        let inner_message = "database connection failed";
+        let err = BootstrapError::from(eyre!(inner_message));
+
+        let display = err.to_string();
+
+        assert!(
+            display.contains(inner_message),
+            "expected '{inner_message}' in display, got: {display}"
+        );
+    }
+}

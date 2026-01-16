@@ -34,6 +34,7 @@ jobs:
       - name: Lint
         run: make lint
       - name: Install cargo-nextest
+        if: ${{ matrix.privilege == 'unprivileged' }}
         run: cargo binstall -y cargo-nextest@0.9.122
       - name: Test and Measure Coverage (unprivileged)
         if: ${{ matrix.privilege == 'unprivileged' }}

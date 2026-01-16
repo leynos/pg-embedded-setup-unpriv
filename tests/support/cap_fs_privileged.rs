@@ -49,3 +49,28 @@ fn is_not_found(err: &color_eyre::Report) -> bool {
         .filter_map(|e| e.downcast_ref::<std::io::Error>())
         .any(|io_err| io_err.kind() == std::io::ErrorKind::NotFound)
 }
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for capability-based filesystem helpers.
+
+    use super::*;
+    use camino::Utf8PathBuf;
+
+    #[test]
+    fn remove_tree_returns_ok_when_parent_directory_missing() {
+        // Construct a path whose parent definitely does not exist.
+        let path = Utf8PathBuf::from("/this/parent/definitely/does/not/exist/remove_me");
+        // The function should treat a missing parent as a non-error.
+        remove_tree(&path).expect("remove_tree should return Ok for missing parent");
+    }
+
+    #[test]
+    fn remove_tree_returns_ok_for_nonexistent_file_with_existing_parent() {
+        // Use the temp directory which exists, but reference a nonexistent child.
+        let temp = std::env::temp_dir();
+        let temp_utf8 = Utf8PathBuf::from_path_buf(temp).expect("temp dir should be valid UTF-8");
+        let path = temp_utf8.join("nonexistent_test_file_for_remove_tree");
+        remove_tree(&path).expect("remove_tree should return Ok for nonexistent file");
+    }
+}
