@@ -13,7 +13,7 @@ use tokio::runtime::{Builder, Runtime};
 use crate::error::BootstrapResult;
 use crate::{
     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
-    TestCluster, env::ScopedEnv,
+    TestCluster, detect_execution_privileges, env::ScopedEnv,
 };
 use postgresql_embedded::Settings;
 
@@ -99,6 +99,11 @@ pub fn test_cluster() -> TestCluster {
 }
 
 fn ensure_worker_env() -> Option<ScopedEnv> {
+    // Unprivileged users can run tests in-process without the worker binary.
+    if detect_execution_privileges() == ExecutionPrivileges::Unprivileged {
+        return None;
+    }
+
     if std::env::var_os("PG_EMBEDDED_WORKER").is_some() {
         return None;
     }
