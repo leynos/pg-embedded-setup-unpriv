@@ -389,7 +389,7 @@ classDiagram
     secret_string_option ..> SecretString : uses
 ```
 
-*Figure: Worker payload serialization and redaction flow.*
+*Figure: Worker payload serialisation and redaction flow.*
 
 ### Implementation update (2026-01-12)
 
@@ -445,8 +445,8 @@ classDiagram
   rather than just being constructed.
 
 - Design decision: The async API is feature-gated to allow sync-only consumers
-  to avoid pulling in async codepaths. The feature is opt-in since tokio is
-  already a dependency but the async methods add compilation overhead.
+  to avoid pulling in async code paths. The feature is opt-in since tokio is
+  already a dependency, but the async methods add compilation overhead.
 
 - Added comprehensive async tests in `tests/test_cluster_async.rs` with
   `#[file_serial(cluster)]` serialisation to prevent data directory conflicts
@@ -473,6 +473,9 @@ classDiagram
 - This aligns test fixture behaviour with the existing privilege detection
   architecture, removing an unnecessary requirement for unprivileged scenarios
   whilst maintaining security for privileged execution.
+
+The following sequence diagram describes the control flow for worker detection
+and privilege handling.
 
 ```mermaid
 sequenceDiagram
@@ -507,8 +510,9 @@ sequenceDiagram
 
 *Figure: Control flow for privilege-aware worker binary requirement in test
 fixtures. Unprivileged users bypass worker detection entirely, whilst root users
-follow the existing worker location logic. See
-[issue #52](https://github.com/leynos/pg-embedded-setup-unpriv/issues/52).*
+follow the existing worker location logic. See issue #52[^1].*
+
+[^1]: https://github.com/leynos/pg-embedded-setup-unpriv/issues/52
 
 ### Ephemeral ports and isolation
 
@@ -553,7 +557,7 @@ Rust tests:
   contexts like `#[tokio::test]`. These methods run PostgreSQL lifecycle
   operations on the caller's runtime rather than creating a separate one,
   avoiding the "Cannot start a runtime from within a runtime" panic. Users must
-  call `stop_async()` explicitly before the cluster goes out of scope since
+  call `stop_async()` explicitly before the cluster goes out of scope, since
   `Drop` cannot be async. See the implementation update above for design details.
 
 - **Uniform API:** The same `TestCluster` type works for both sync and async

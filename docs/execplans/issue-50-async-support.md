@@ -192,20 +192,32 @@ Successfully implemented async API for `TestCluster`:
 
 ### Current Architecture
 
-    +---------------+       +------------------+       +----------------+
-    | TestCluster        | ------>                                      | WorkerInvoker   | ------> | postgresql_ |
-    | ------------------ | -------------------------------------------- | --------------- | ------- | ----------- |
-    | (owns Runtime)     |
-    | (borrows Runtime)  |
-    | embedded           | +---------------+       +------------------+ | (async methods) |
-    | +----------------+ |
-          v                        v
-    +---------------+       +------------------+
-    | Drop: calls      |
-    | block_on(future) |
-    | block_on()       |
-    | in invoke_unpriv |
-    +---------------+       +------------------+
+```mermaid
+flowchart LR
+    subgraph TestCluster
+        TC[TestCluster<br/>owns Runtime]
+    end
+
+    subgraph WorkerInvoker
+        WI[WorkerInvoker<br/>borrows &Runtime]
+    end
+
+    subgraph postgresql_embedded
+        PG[PostgreSQL<br/>async methods]
+    end
+
+    subgraph Sync Execution
+        DROP[Drop]
+        INVOKE[invoke_unpriv]
+        BLOCK[block_on]
+    end
+
+    TC -->|"&Runtime"| WI
+    WI -->|".await"| PG
+    DROP --> INVOKE
+    INVOKE --> BLOCK
+    BLOCK -->|"future"| PG
+```
 
 ### Terms
 
@@ -488,17 +500,10 @@ The key change in `WorkerInvoker` is adding an async path that bypasses
 
 ### Drop behaviour summary
 
-    +-------------------+------------------+--------------------------------+
-    | Mode | runtime field | Drop behaviour |
-    +-------------------+------------------+--------------------------------+
-    | Sync (new())         | Some(Runtime) | Uses runtime.block_on() to |
-    | call postgres.stop() |
-    +-------------------+------------------+--------------------------------+
-    | Async (start_                  | None | Warns if postgres not None; |
-    | async())                       |
-    | attempts Handle::try_current() |
-    | spawn for cleanup              |
-    +-------------------+------------------+--------------------------------+
+| Mode | runtime field | Drop behaviour |
+|------|---------------|----------------|
+| Sync (`new()`) | `Some(Runtime)` | Uses `runtime.block_on()` to call `postgres.stop()` |
+| Async (`start_async()`) | `None` | Warns if `postgres` not None; attempts `Handle::try_current()` spawn for cleanup |
 
 ## Interfaces and Dependencies
 

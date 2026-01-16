@@ -152,50 +152,27 @@ fn log_success(operation: WorkerOperation) {
 ///
 /// Used by both sync and async invokers. When `async_mode` is true, appends
 /// " (async)" to the message to distinguish async execution paths in logs.
-#[expect(
-    clippy::cognitive_complexity,
-    reason = "complexity is from info! macro expansion, not logic"
-)]
 fn log_in_process_start(operation: WorkerOperation, async_mode: bool) {
-    if async_mode {
-        info!(
-            target: LOG_TARGET,
-            operation = operation.as_str(),
-            "running lifecycle operation in-process (async)"
-        );
-    } else {
-        info!(
-            target: LOG_TARGET,
-            operation = operation.as_str(),
-            "running lifecycle operation in-process"
-        );
-    }
+    let suffix = if async_mode { " (async)" } else { "" };
+    info!(
+        target: LOG_TARGET,
+        operation = operation.as_str(),
+        "running lifecycle operation in-process{suffix}"
+    );
 }
 
 /// Logs the dispatch of a lifecycle operation to the worker subprocess.
 ///
 /// Used by both sync and async invokers. When `async_mode` is true, appends
 /// " (async)" to the message to distinguish async execution paths in logs.
-#[expect(
-    clippy::cognitive_complexity,
-    reason = "complexity is from info! macro expansion, not logic"
-)]
 fn log_worker_dispatch(operation: WorkerOperation, worker_binary: Option<&str>, async_mode: bool) {
-    if async_mode {
-        info!(
-            target: LOG_TARGET,
-            operation = operation.as_str(),
-            worker = worker_binary,
-            "dispatching lifecycle operation via worker (async)"
-        );
-    } else {
-        info!(
-            target: LOG_TARGET,
-            operation = operation.as_str(),
-            worker = worker_binary,
-            "dispatching lifecycle operation via worker"
-        );
-    }
+    let suffix = if async_mode { " (async)" } else { "" };
+    info!(
+        target: LOG_TARGET,
+        operation = operation.as_str(),
+        worker = worker_binary,
+        "dispatching lifecycle operation via worker{suffix}"
+    );
 }
 
 // ============================================================================

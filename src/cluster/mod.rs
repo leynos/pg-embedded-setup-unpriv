@@ -228,17 +228,20 @@ impl TestCluster {
     /// ```
     #[cfg(feature = "async-api")]
     pub async fn start_async() -> BootstrapResult<Self> {
+        use tracing::Instrument;
+
         let span = info_span!(target: LOG_TARGET, "test_cluster", async_mode = true);
-        let (env_vars, env_guard, outcome) = {
-            let _entered = span.enter();
-            let initial_bootstrap = bootstrap_for_tests()?;
-            let env_vars = initial_bootstrap.environment.to_env();
-            let env_guard = ScopedEnv::apply(&env_vars);
-            // Box::pin to avoid large future on the stack.
-            let outcome =
-                Box::pin(Self::start_postgres_async(initial_bootstrap, &env_vars)).await?;
-            (env_vars, env_guard, outcome)
-        };
+
+        // Sync bootstrap preparation (no await needed).
+        let initial_bootstrap = bootstrap_for_tests()?;
+        let env_vars = initial_bootstrap.environment.to_env();
+        let env_guard = ScopedEnv::apply(&env_vars);
+
+        // Async postgres startup, instrumented with the span.
+        // Box::pin to avoid large future on the stack.
+        let outcome = Box::pin(Self::start_postgres_async(initial_bootstrap, &env_vars))
+            .instrument(span.clone())
+            .await?;
 
         Ok(Self {
             runtime: None,
@@ -616,14 +619,32 @@ mod tests {
 
 /// Spawns async cleanup of a `PostgreSQL` instance on the provided runtime handle.
 ///
-/// The task is fire-and-forget; errors during shutdown are silently ignored.
+/// The task is fire-and-forget; errors during shutdown are logged at debug level.
 fn spawn_async_cleanup(
     handle: &tokio::runtime::Handle,
     postgres: PostgreSQL,
     timeout: std::time::Duration,
 ) {
     drop(handle.spawn(async move {
-        drop(time::timeout(timeout, postgres.stop()).await);
+        match time::timeout(timeout, postgres.stop()).await {
+            Ok(Ok(())) => {
+                tracing::debug!(target: LOG_TARGET, "async cleanup completed successfully");
+            }
+            Ok(Err(err)) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    error = %err,
+                    "async cleanup failed during postgres stop"
+                );
+            }
+            Err(_) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    timeout_secs = timeout.as_secs(),
+                    "async cleanup timed out"
+                );
+            }
+        }
     }));
 }
 
