@@ -450,7 +450,7 @@ classDiagram
   already a dependency, but the async methods add compilation overhead.
 
 - Added comprehensive async tests in `tests/test_cluster_async.rs` with
-  `#[file_serial(cluster)]` serialization to prevent data directory conflicts
+  `#[file_serial(cluster)]` serialisation to prevent data directory conflicts
   with other cluster tests.
 
 ### Implementation update (2026-01-16): Privilege-aware worker requirement
