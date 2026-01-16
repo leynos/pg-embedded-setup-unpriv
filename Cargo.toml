@@ -33,6 +33,11 @@ path = "tests/test_cluster.rs"
 required-features = ["cluster-unit-tests"]
 
 [[test]]
+name = "test_cluster_async"
+path = "tests/test_cluster_async.rs"
+required-features = ["async-api"]
+
+[[test]]
 name = "settings"
 path = "tests/settings.rs"
 
@@ -40,7 +45,7 @@ path = "tests/settings.rs"
 postgresql_embedded = { version = "0.20.0", features = ["tokio"] }
 nix = { version = "0.28", default-features = false, features = ["user", "fs"] }
 color-eyre = "0.6"
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_with = "3"
 diesel = { version = "2", default-features = false, features = ["postgres"], optional = true }
@@ -72,6 +77,7 @@ sha2 = "0.10"
 toml = []
 json5 = []
 yaml = []
+async-api = []
 privileged-tests = []
 cluster-unit-tests = ["dep:tracing-subscriber"]
 dev-worker = ["dep:tracing-subscriber"]
@@ -162,5 +168,5 @@ rstest-bdd = "0.3.2"
 rstest-bdd-macros = "0.3.2"
 once_cell = "1"
 unic-langid = "0.9"
-serial_test = "3.0.0"
+serial_test = { version = "3.0.0", features = ["file_locks"] }
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
