@@ -77,13 +77,35 @@ use tokio::runtime::Runtime;
 use tokio::time;
 use tracing::{info, info_span};
 
+/// Encodes the runtime mode for a `TestCluster`.
+///
+/// This enum eliminates the need for separate `runtime: Option<Runtime>` and
+/// `is_async_mode: bool` fields, preventing invalid states where the two could
+/// disagree.
+#[derive(Debug)]
+enum ClusterRuntime {
+    /// Synchronous mode: the cluster owns its own Tokio runtime.
+    Sync(Runtime),
+    /// Async mode: the cluster runs on the caller's runtime.
+    #[cfg_attr(
+        not(feature = "async-api"),
+        expect(dead_code, reason = "used when async-api feature is enabled")
+    )]
+    Async,
+}
+
+impl ClusterRuntime {
+    /// Returns `true` if this is async mode.
+    const fn is_async(&self) -> bool {
+        matches!(self, Self::Async)
+    }
+}
+
 /// Embedded `PostgreSQL` instance whose lifecycle follows Rust's drop semantics.
 #[derive(Debug)]
 pub struct TestCluster {
-    /// Owned runtime for synchronous API; `None` when using async API.
-    runtime: Option<Runtime>,
-    /// `true` when created via `start_async()`, indicating async cleanup is expected.
-    is_async_mode: bool,
+    /// Runtime mode: either owns a runtime (sync) or runs on caller's runtime (async).
+    runtime: ClusterRuntime,
     postgres: Option<PostgreSQL>,
     bootstrap: TestBootstrapSettings,
     is_managed_via_worker: bool,
@@ -122,8 +144,7 @@ impl TestCluster {
         };
 
         Ok(Self {
-            runtime: Some(runtime),
-            is_async_mode: false,
+            runtime: ClusterRuntime::Sync(runtime),
             postgres: outcome.postgres,
             bootstrap: outcome.bootstrap,
             is_managed_via_worker: outcome.is_managed_via_worker,
@@ -244,8 +265,7 @@ impl TestCluster {
             .await?;
 
         Ok(Self {
-            runtime: None,
-            is_async_mode: true,
+            runtime: ClusterRuntime::Async,
             postgres: outcome.postgres,
             bootstrap: outcome.bootstrap,
             is_managed_via_worker: outcome.is_managed_via_worker,
@@ -604,8 +624,7 @@ mod tests {
         let env_vars = bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
         TestCluster {
-            runtime: Some(runtime),
-            is_async_mode: false,
+            runtime: ClusterRuntime::Sync(runtime),
             postgres: None,
             bootstrap,
             is_managed_via_worker: false,
@@ -697,52 +716,56 @@ fn worker_stop_sync(
 }
 
 impl Drop for TestCluster {
-    #[expect(
-        clippy::cognitive_complexity,
-        reason = "drop path must branch between async/sync and worker/in-process shutdown"
-    )]
     fn drop(&mut self) {
         let context = Self::stop_context(&self.bootstrap.settings);
+        let is_async = self.runtime.is_async();
         info!(
             target: LOG_TARGET,
             context = %context,
             worker_managed = self.is_managed_via_worker,
-            async_mode = self.is_async_mode,
+            async_mode = is_async,
             "stopping embedded postgres cluster"
         );
 
-        // Async clusters should use stop_async() explicitly; attempt best-effort cleanup.
-        if self.is_async_mode {
+        if is_async {
+            // Async clusters should use stop_async() explicitly; attempt best-effort cleanup.
             self.drop_async_cluster(&context);
-            return;
+        } else {
+            self.drop_sync_cluster(&context);
         }
+        // Environment guards drop after this block, restoring the process state.
+    }
+}
 
-        // Sync path: runtime is guaranteed to be Some.
-        let Some(ref runtime) = self.runtime else {
-            tracing::error!(
-                target: LOG_TARGET,
-                "sync TestCluster missing runtime in drop; cannot clean up"
-            );
+impl TestCluster {
+    /// Synchronous drop path: stops the cluster using the owned runtime.
+    fn drop_sync_cluster(&mut self, context: &str) {
+        let ClusterRuntime::Sync(ref runtime) = self.runtime else {
+            // Should never happen: drop_sync_cluster is only called for sync mode.
             return;
         };
 
         if self.is_managed_via_worker {
             let invoker = ClusterWorkerInvoker::new(runtime, &self.bootstrap, &self.env_vars);
             if let Err(err) = invoker.invoke_as_root(worker_operation::WorkerOperation::Stop) {
-                Self::warn_stop_failure(&context, &err);
+                Self::warn_stop_failure(context, &err);
             }
-        } else if let Some(postgres) = self.postgres.take() {
-            let timeout = self.bootstrap.shutdown_timeout;
-            let timeout_secs = timeout.as_secs();
-            let outcome = runtime.block_on(async { time::timeout(timeout, postgres.stop()).await });
-
-            match outcome {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => Self::warn_stop_failure(&context, &err),
-                Err(_) => Self::warn_stop_timeout(timeout_secs, &context),
-            }
+            return;
         }
-        // Environment guards drop after this block, restoring the process state.
+
+        let Some(postgres) = self.postgres.take() else {
+            return;
+        };
+
+        let timeout = self.bootstrap.shutdown_timeout;
+        let timeout_secs = timeout.as_secs();
+        let outcome = runtime.block_on(async { time::timeout(timeout, postgres.stop()).await });
+
+        match outcome {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => Self::warn_stop_failure(context, &err),
+            Err(_) => Self::warn_stop_timeout(timeout_secs, context),
+        }
     }
 }
 

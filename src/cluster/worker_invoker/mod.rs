@@ -402,7 +402,7 @@ impl<'a> AsyncInvoker<'a> {
             true,
         );
         // Worker subprocess spawning is inherently blocking; use spawn_blocking.
-        let bootstrap = self.bootstrap.clone();
+        let bootstrap = (*self.bootstrap).clone();
         let env_vars = self.env_vars.to_vec();
         tokio::task::spawn_blocking(move || {
             execute_root_operation(&bootstrap, &env_vars, operation)

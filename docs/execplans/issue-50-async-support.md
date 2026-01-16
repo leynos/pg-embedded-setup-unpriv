@@ -1,6 +1,6 @@
 # Add Async API for TestCluster
 
-This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
+This Execution Plan (ExecPlan) is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
 `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
@@ -124,7 +124,7 @@ The synchronous API remains unchanged for backward compatibility.
   Date/Author: 2026-01-15 / Plan author
 
 - Decision: Feature-gate async API behind `async-api` feature
-  Rationale: Allows sync-only users to avoid pulling in async codepaths.
+  Rationale: Allows sync-only users to avoid pulling in async code paths.
   Default-enabled for convenience since tokio is already a dependency.
   Date/Author: 2026-01-15 / Plan author
 

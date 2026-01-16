@@ -83,3 +83,25 @@ async fn async_cluster_provides_database_url() -> Result<()> {
     cluster.stop_async().await?;
     Ok(())
 }
+
+/// Verifies that dropping an async cluster without calling `stop_async()` does not panic.
+///
+/// This exercises the best-effort cleanup path in `Drop`, which spawns a cleanup task
+/// on the current runtime handle if available.
+#[tokio::test]
+#[file_serial(cluster)]
+async fn async_drop_without_stop_does_not_panic() -> Result<()> {
+    let cluster = TestCluster::start_async().await?;
+
+    // Use the cluster briefly to ensure it's functional.
+    let _port = cluster.settings().port;
+
+    // Drop without calling stop_async() - this should trigger best-effort cleanup
+    // and log a warning, but not panic.
+    drop(cluster);
+
+    // Give the cleanup task a moment to complete.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    Ok(())
+}
