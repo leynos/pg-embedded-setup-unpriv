@@ -1,3 +1,6 @@
+//! Unit tests for the [`WorkerInvoker`] component, verifying both in-process
+//! execution for unprivileged operations and hook delegation for root operations.
+
 use super::*;
 use crate::ExecutionPrivileges;
 use crate::test_support::{
@@ -5,6 +8,7 @@ use crate::test_support::{
     install_run_root_operation_hook, test_runtime,
 };
 use color_eyre::eyre::{Result, ensure, eyre};
+use serial_test::serial;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -33,6 +37,7 @@ fn unprivileged_operations_execute_in_process() -> Result<()> {
 }
 
 #[test]
+#[serial(worker_hook)]
 fn root_operations_delegate_to_hook() -> Result<()> {
     let runtime = test_runtime()?;
     let bootstrap = dummy_settings(ExecutionPrivileges::Root);
@@ -61,6 +66,7 @@ fn root_operations_delegate_to_hook() -> Result<()> {
 }
 
 #[test]
+#[serial(worker_hook)]
 fn installing_hook_twice_errors() -> Result<()> {
     let _guard = install_run_root_operation_hook(|_, _, _| Ok(())).map_err(|err| eyre!(err))?;
 

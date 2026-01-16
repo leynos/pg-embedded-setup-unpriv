@@ -20,15 +20,18 @@
 //!
 //! Nested guards on the same thread reuse the held mutex whilst tracking the
 //! depth so callers can compose helpers without deadlocking. Different threads
-//! are still serialised.
+//! are still serialized.
 
 use crate::observability::LOG_TARGET;
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::marker::PhantomData;
 use std::rc::Rc;
+use std::thread_local;
 use tracing::{info, info_span};
 
+#[cfg(all(test, feature = "loom-tests"))]
+mod loom_tests;
 mod state;
 mod summary;
 #[cfg(test)]
@@ -37,6 +40,31 @@ mod tests;
 use state::ThreadState;
 use summary::{MAX_ENV_CHANGES_SUMMARY_LEN, truncate_env_changes_summary};
 
+thread_local! {
+    static THREAD_STATE: RefCell<ThreadState> = const { RefCell::new(ThreadState::new()) };
+}
+
+type EnterScopeFn = fn(Vec<(OsString, Option<OsString>)>) -> usize;
+type ExitScopeFn = fn(usize);
+
+fn with_state<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut ThreadState) -> R,
+{
+    THREAD_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        f(&mut state)
+    })
+}
+
+fn enter_scope_std(vars: Vec<(OsString, Option<OsString>)>) -> usize {
+    with_state(|state| state.enter_scope(vars))
+}
+
+fn exit_scope_std(index: usize) {
+    with_state(|state| state.exit_scope(index));
+}
+
 /// Restores the process environment when dropped, reverting to prior values.
 #[derive(Debug)]
 #[must_use = "Hold the guard until the end of the environment scope"]
@@ -44,12 +72,9 @@ pub struct ScopedEnv {
     index: usize,
     span: tracing::Span,
     change_count: usize,
+    exit_scope: ExitScopeFn,
     // !Send + !Sync so drops always occur on the creating thread.
     _not_send_or_sync: PhantomData<Rc<()>>,
-}
-
-thread_local! {
-    static THREAD_STATE: RefCell<ThreadState> = const { RefCell::new(ThreadState::new()) };
 }
 
 impl ScopedEnv {
@@ -67,7 +92,7 @@ impl ScopedEnv {
                 (OsString::from(key), owned_value)
             })
             .collect();
-        Self::apply_owned(owned)
+        Self::apply_owned_with_state(owned, enter_scope_std, exit_scope_std)
     }
 
     /// Applies environment variables provided as `OsString` pairs by any owned iterator.
@@ -76,14 +101,18 @@ impl ScopedEnv {
         I: IntoIterator<Item = (OsString, Option<OsString>)>,
     {
         let owned: Vec<(OsString, Option<OsString>)> = vars.into_iter().collect();
-        Self::apply_owned(owned)
+        Self::apply_owned_with_state(owned, enter_scope_std, exit_scope_std)
     }
 
     #[expect(
         clippy::cognitive_complexity,
         reason = "span entry plus bounded summary handling add structured branching"
     )]
-    fn apply_owned(vars: Vec<(OsString, Option<OsString>)>) -> Self {
+    fn apply_owned_with_state(
+        vars: Vec<(OsString, Option<OsString>)>,
+        enter_scope: EnterScopeFn,
+        exit_scope: ExitScopeFn,
+    ) -> Self {
         // Build a concise summary of applied changes whilst preserving count for full context.
         let summary: Vec<String> = vars
             .iter()
@@ -106,10 +135,7 @@ impl ScopedEnv {
         );
         let index = {
             let _entered = span.enter();
-            let index = THREAD_STATE.with(|cell| {
-                let mut state = cell.borrow_mut();
-                state.enter_scope(vars)
-            });
+            let index = enter_scope(vars);
             info!(
                 target: LOG_TARGET,
                 change_count,
@@ -122,6 +148,7 @@ impl ScopedEnv {
             index,
             span,
             change_count,
+            exit_scope,
             _not_send_or_sync: PhantomData,
         }
     }
@@ -135,9 +162,6 @@ impl Drop for ScopedEnv {
             change_count = self.change_count,
             "restoring scoped environment variables"
         );
-        THREAD_STATE.with(|cell| {
-            let mut state = cell.borrow_mut();
-            state.exit_scope(self.index);
-        });
+        (self.exit_scope)(self.index);
     }
 }

@@ -171,7 +171,7 @@ pub(super) fn spawn_outer_guard_thread(
 
         ready_tx.send(()).expect("ready signal must be sent");
         barrier.wait();
-        release_rx.recv().expect("release signal must be sent");
+        release_rx.recv().expect("release signal must be received");
         drop(guard);
         done_tx.send(()).expect("completion signal must be sent");
     })

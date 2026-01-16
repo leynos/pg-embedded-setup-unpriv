@@ -83,7 +83,7 @@ pub(super) fn apply_invalid_scope_exit() -> bool {
 }
 
 /// Returns false so callers skip restoration assertions.
-pub(super) fn no_corruption() -> bool {
+pub(super) const fn no_corruption() -> bool {
     false
 }
 

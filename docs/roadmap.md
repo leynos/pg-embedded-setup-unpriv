@@ -49,7 +49,7 @@
 
 ### 3.2 Strengthen concurrency guarantees
 
-- [ ] 3.2.1. Add Loom-based concurrency tests for the `ScopedEnv` mutex, gated
+- [x] 3.2.1. Add Loom-based concurrency tests for the `ScopedEnv` mutex, gated
   behind a feature flag, and document how to run them.
 
 ### 3.3 Validate cross-platform behaviour

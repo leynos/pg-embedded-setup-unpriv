@@ -280,17 +280,15 @@ essentially one line in the test setup.
 
 ### Implementation update (2025-11-15)
 
-- Adopted the general-availability `rstest-bdd` 0.1.0 release (and the matching
+- Adopted the general-availability `rstest-bdd` 0.3.2 release (and the matching
   macro crate) so behavioural coverage for privilege detection and Diesel flows
-  no longer depends on the alpha channel. The Fluent-backed localization layer
-  bundled with 0.1.0 keeps diagnostics actionable without bespoke plumbing in
-  our fixture.
-- Accepted the new i18n dependencies pulled in by `rstest-bdd` 0.1.0. They load
-  lazily through `rust-embed`, so the fixture's hot path remains unchanged
-  while we gain richer multi-locale reporting across the BDD suite.
+  uses the currently supported API line and aligns with `Cargo.toml`.
+- Confirmed that the Fluent-backed localization layer and i18n dependencies
+  continue to load lazily through `rust-embed`, keeping the fixture's hot path
+  unchanged while preserving multi-locale reporting across the BDD suite.
 - Recorded this dependency uplift to keep the design doc aligned with the tool
-  chain choices and to signpost downstream crates that they can safely rely on
-  the 0.1.0 APIs when authoring their own scenarios.
+  chain choices and to signpost downstream crates that they can rely on the
+  0.3.2 APIs when authoring scenarios.
 - Added a Dutch `rstest-bdd` scenario (`tests/localized_diagnostics.rs`) that
   switches diagnostics to French via `select_localizations`. The test is part
   of `make test`, giving CI a deterministic signal that localization bundles
@@ -393,6 +391,27 @@ classDiagram
 
 *Figure: Worker payload serialization and redaction flow.*
 
+### Implementation update (2026-01-12)
+
+- Introduced the optional `loom` dependency and `loom-tests` feature; runtime
+  code keeps `ENV_LOCK` as a `std::sync::Mutex`, while Loom tests use a
+  Loom-specific lock and thread state via a private state accessor hook.
+- Added Loom-backed concurrency tests for `ScopedEnv` under `loom-tests`; the
+  Loom tests are marked `#[ignore]` so `make test` does not run the
+  model-checking suite.
+- Documented the Loom test command in the developer guide; there are no
+  user-facing behaviour changes.
+- Behavioural tests (rstest-bdd) are not applicable because this change only
+  affects internal test instrumentation rather than observable runtime
+  behaviour.
+- Refactored `ScopedEnv` and `ThreadState` into generic cores parameterized by
+  pluggable lock and thread-state backends. The `EnvLockOps` trait abstracts
+  mutex operations, while `ThreadStateCore<L>` is a generic type parameterized
+  by the lock backend. Production builds use `StdEnvLock` (wrapping
+  `std::sync::Mutex`), while Loom tests supply `LoomEnvLock` (wrapping
+  `loom::sync::Mutex`). This enables swapping synchronization implementations
+  for model checking without altering runtime code paths.
+
 ### Ephemeral ports and isolation
 
 To allow the same tests to run concurrently (especially under `nextest`, which
@@ -472,7 +491,7 @@ will leverage that (see postgresql-embedded README).
   `test_cluster: TestCluster` parameter receives a ready instance without
   invoking `TestCluster::start()` manually. The fixture is validated by the
   `tests/test_cluster_fixture.rs` suite, which combines direct `#[rstest]`
-  tests with `rstest-bdd` (v0.1.0) scenarios that cover both successful
+  tests with `rstest-bdd` (v0.3.2) scenarios that cover both successful
   bootstraps and timezone failures. The fixture panics with a
   `SKIP-TEST-CLUSTER` prefix, so behavioural tests can convert known external
   issues into soft skips.
