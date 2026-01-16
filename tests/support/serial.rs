@@ -1,4 +1,4 @@
-//! Serialisation guard shared by behavioural test suites.
+//! Serialization guard shared by behavioural test suites.
 //!
 //! Acquire this guard **before** calling environment helpers such as
 //! [`crate::test_support::with_scoped_env`] to maintain the lock-ordering
@@ -25,13 +25,13 @@ type ProcessLock = std::fs::File;
 type ProcessLock = ();
 
 #[derive(Debug)]
-#[must_use = "Hold this guard for the duration of the serialised scenario"]
+#[must_use = "Hold this guard for the duration of the serialized scenario"]
 pub struct ScenarioSerialGuard {
     _guard: MutexGuard<'static, ()>,
     _lock_file: ProcessLock,
 }
 
-/// Provides a serialisation guard for behavioural test scenarios.
+/// Provides a serialization guard for behavioural test scenarios.
 ///
 /// Acquires a global mutex to ensure that scenarios relying on shared state
 /// (such as process environment variables or singleton resources) execute
