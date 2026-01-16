@@ -44,7 +44,7 @@ fn create_lifecycle_span(
 /// and platform-specific constraints.
 ///
 /// This is the shared implementation used by both sync (`WorkerInvoker::invoke_as_root`)
-/// and async (`invoke_as_root_sync`) code paths.
+/// and async (`AsyncInvoker::run_root_async`) code paths.
 fn execute_root_operation(
     bootstrap: &TestBootstrapSettings,
     env_vars: &[(String, Option<String>)],

@@ -1,12 +1,13 @@
-# Add Async API for TestCluster
+# Add async API for TestCluster
 
-This Execution Plan (ExecPlan) is a living document. The sections `Constraints`, `Tolerances`,
-`Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
-`Outcomes & Retrospective` must be kept up to date as work proceeds.
+This Execution Plan (ExecPlan) is a living document. The sections
+`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & discoveries`,
+`Decision log`, and `Outcomes & retrospective` must be kept up to date as work
+proceeds.
 
 Status: COMPLETE
 
-## Purpose / Big Picture
+## Purpose / big picture
 
 Enable `TestCluster` to be used directly within async contexts such as
 `#[tokio::test]` without panicking. Currently, calling `TestCluster::new()`
@@ -47,7 +48,7 @@ The synchronous API remains unchanged for backward compatibility.
 - **C6: Missing docs lint** - All public items require documentation
   (`#![deny(missing_docs)]`).
 
-## Tolerances (Exception Triggers)
+## Tolerances (exception triggers)
 
 - **Scope**: If implementation requires changes to more than 8 files, stop and
   escalate.
@@ -68,8 +69,8 @@ The synchronous API remains unchanged for backward compatibility.
   explicit shutdown. Document the requirement clearly.
 
 - Risk: Mixing sync and async APIs on the same cluster could cause undefined
-  behaviour. Severity: medium Likelihood: low Mitigation: Use `is_async_mode`
-  flag to detect and warn/error on misuse.
+  behaviour. Severity: medium Likelihood: low Mitigation: Use `ClusterRuntime`
+  enum to encode mode and warn/error on misuse.
 
 - Risk: `Drop` calling `block_on()` when cluster was created in async context
   could panic if the async runtime has been dropped. Severity: high Likelihood:
@@ -80,8 +81,8 @@ The synchronous API remains unchanged for backward compatibility.
 
 - [x] (2026-01-15) Stage A: Preparation - read all affected files, confirm
       approach
-- [x] (2026-01-15) Stage B: Modify runtime ownership in TestCluster to
-      `Option<Runtime>`
+- [x] (2026-01-15) Stage B: Modify runtime ownership in TestCluster to use
+      `ClusterRuntime` enum (Sync/Async variants)
 - [x] (2026-01-15) Stage C: Add async worker invoker methods
 - [x] (2026-01-15) Stage D: Add async constructors and lifecycle methods
 - [x] (2026-01-15) Stage E: Update Drop implementation with async-awareness
@@ -90,7 +91,7 @@ The synchronous API remains unchanged for backward compatibility.
 - [x] (2026-01-15) Stage H: Update documentation
 - [x] (2026-01-15) Final validation and cleanup
 
-## Surprises & Discoveries
+## Surprises & discoveries
 
 - Observation: Large futures (18KB+) caused clippy `large_futures` warnings
   Evidence: Clippy output showing future sizes exceeding default thresholds
@@ -111,12 +112,14 @@ The synchronous API remains unchanged for backward compatibility.
   available in async mode Impact: Created parallel `AsyncInvoker` struct
   without runtime reference
 
-## Decision Log
+## Decision log
 
-- Decision: Use `Option<Runtime>` rather than runtime-per-mode enum
-  Rationale: Simplest representation; `None` means async mode, `Some(_)` means
-  sync mode. Avoids complexity of enum matching throughout codebase.
-  Date/Author: 2026-01-15 / Plan author
+- Decision: Use `ClusterRuntime` enum to encode runtime mode
+  Rationale: Using a dedicated enum (`Sync(Runtime)` / `Async`) eliminates the
+  risk of inconsistent state between separate `runtime: Option<Runtime>` and
+  `is_async_mode: bool` fields. The enum pattern ensures mode and runtime
+  ownership are always in sync.
+  Date/Author: 2026-01-15 / Plan author (updated 2026-01-16)
 
 - Decision: Name async constructor `start_async()` not `new_async()`
   Rationale: Matches the design document proposal. `start_async()` is more
@@ -128,9 +131,9 @@ The synchronous API remains unchanged for backward compatibility.
   Default-enabled for convenience since tokio is already a dependency.
   Date/Author: 2026-01-15 / Plan author
 
-## Outcomes & Retrospective
+## Outcomes & retrospective
 
-### What Was Achieved
+### What was achieved
 
 Successfully implemented async API for `TestCluster`:
 
@@ -148,7 +151,7 @@ Successfully implemented async API for `TestCluster`:
 - All 116 tests pass including 4 new async tests
 - No new external dependencies (only internal feature flag for serial_test)
 
-### Lessons Learned
+### Lessons learned
 
 1. **Test isolation matters**: Async tests running in parallel with other
    cluster tests caused data directory conflicts. File-based serialization
@@ -166,9 +169,9 @@ Successfully implemented async API for `TestCluster`:
    - checking for active runtime, spawning cleanup tasks, and warning users
    about resource leaks.
 
-## Context and Orientation
+## Context and orientation
 
-### Key Files
+### Key files
 
 - `src/cluster/mod.rs` (354 lines) - Contains `TestCluster` struct definition,
   `new()` constructor, lifecycle methods, and `Drop` implementation.
@@ -190,7 +193,7 @@ Successfully implemented async API for `TestCluster`:
 - `Cargo.toml` - Line 43: `tokio = { version = "1", features = ["rt", "macros"]
   }`. Line 70-77: Feature flags section.
 
-### Current Architecture
+### Current architecture
 
     +---------------+        +------------------+        +-------------------+
     | TestCluster   |        | WorkerInvoker    |        | postgresql_       |
@@ -202,6 +205,9 @@ Successfully implemented async API for `TestCluster`:
     | Drop  |---->| invoke_unpriv |---->| block_on |----future----+
     +-------+     +---------------+     +----------+
 
+*Figure: Current architecture showing TestCluster ownership and lifecycle
+dispatch flow.*
+
 ### Terms
 
 - **Block_on**: `Runtime::block_on()` synchronously waits for an async future
@@ -211,7 +217,7 @@ Successfully implemented async API for `TestCluster`:
 - **Worker-managed**: When running as root, lifecycle operations are delegated
   to a privileged subprocess (`pg_worker`) rather than executed in-process.
 
-## Plan of Work
+## Plan of work
 
 ### Stage A: Preparation
 
@@ -219,24 +225,29 @@ Read all files that will be modified. Verify understanding of the current flow
 from `TestCluster::new()` through `WorkerInvoker::invoke()` to
 `runtime.block_on()`. No code changes.
 
-### Stage B: Modify Runtime Ownership
+### Stage B: Modify runtime ownership
 
-In `src/cluster/mod.rs`, change the `runtime` field from `Runtime` to
-`Option<Runtime>`. Add an `is_async_mode: bool` field to track mode.
+In `src/cluster/mod.rs`, replace the `runtime: Runtime` field with a
+`ClusterRuntime` enum that encodes both ownership and mode in a single field.
+
+Add the enum definition:
+
+    enum ClusterRuntime {
+        Sync(Runtime),  // Cluster owns its runtime
+        Async,          // Cluster runs on caller's runtime
+    }
 
 Edit the struct definition:
 
     pub struct TestCluster {
-        runtime: Option<Runtime>,  // Was: Runtime
-        is_async_mode: bool,       // New field
+        runtime: ClusterRuntime,  // Was: Runtime
         postgres: Option<PostgreSQL>,
         // … rest unchanged
     }
 
-Update the `new()` constructor to set `runtime: Some(runtime)` and
-`is_async_mode: false`.
+Update the `new()` constructor to set `runtime: ClusterRuntime::Sync(runtime)`.
 
-### Stage C: Async Worker Invoker Methods
+### Stage C: Async worker invoker methods
 
 In `src/cluster/worker_invoker/mod.rs`, add an async variant of
 `invoke_unprivileged()`. The new method directly `.await`s the future instead
@@ -273,7 +284,7 @@ awaits:
 Note: `invoke_as_root()` remains synchronous - subprocess spawning is
 inherently blocking.
 
-### Stage D: Async Constructors and Lifecycle Methods
+### Stage D: Async constructors and lifecycle methods
 
 In `src/cluster/mod.rs`, add the async constructor and shutdown method.
 
@@ -284,7 +295,7 @@ Add `start_async()`:
         // Similar to new() but:
         // 1. Does NOT call build_runtime()
         // 2. Calls start_postgres_async() instead of start_postgres()
-        // 3. Sets runtime: None, is_async_mode: true
+        // 3. Sets runtime: ClusterRuntime::Async
     }
 
 Add internal `start_postgres_async()`:
@@ -309,41 +320,43 @@ Add `stop_async()`:
 The `stop_async()` method consumes `self` to prevent the `Drop` implementation
 from attempting shutdown again.
 
-### Stage E: Update Drop Implementation
+### Stage E: Update Drop implementation
 
 Modify the `Drop` implementation to handle async-created clusters gracefully.
 
 In `src/cluster/mod.rs` Drop impl:
 
     fn drop(&mut self) {
-        if self.is_async_mode {
-            // Cluster was created async - user should have called stop_async()
-            // Try to detect if we're in an async context and warn appropriately
-            if self.postgres.is_some() {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    "async TestCluster dropped without calling stop_async(); \
-                     resources may not be cleaned up properly"
-                );
-                // Attempt cleanup via Handle::try_current() if available
-                if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                    // We're in an async context - spawn blocking cleanup
-                    let postgres = self.postgres.take();
-                    let timeout = self.bootstrap.shutdown_timeout;
-                    handle.spawn(async move {
-                        if let Some(pg) = postgres {
-                            let _ = tokio::time::timeout(timeout, pg.stop()).await;
-                        }
-                    });
+        match &self.runtime {
+            ClusterRuntime::Async => {
+                // Cluster was created async - user should have called stop_async()
+                // Try to detect if we're in an async context and warn appropriately
+                if self.postgres.is_some() {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        "async TestCluster dropped without calling stop_async(); \
+                         resources may not be cleaned up properly"
+                    );
+                    // Attempt cleanup via Handle::try_current() if available
+                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                        // We're in an async context - spawn blocking cleanup
+                        let postgres = self.postgres.take();
+                        let timeout = self.bootstrap.shutdown_timeout;
+                        handle.spawn(async move {
+                            if let Some(pg) = postgres {
+                                let _ = tokio::time::timeout(timeout, pg.stop()).await;
+                            }
+                        });
+                    }
                 }
             }
-            return;
+            ClusterRuntime::Sync(runtime) => {
+                // Existing sync drop logic using runtime.block_on()…
+            }
         }
-
-        // Existing sync drop logic follows…
     }
 
-### Stage F: Add Feature Flag
+### Stage F: Add feature flag
 
 In `Cargo.toml`, add the `async-api` feature:
 
@@ -358,7 +371,7 @@ Update tokio dependency to ensure `time` feature is available:
 
     tokio = { version = "1", features = ["rt", "macros", "time"] }
 
-### Stage G: Write Async Tests
+### Stage G: Write async tests
 
 Create `tests/test_cluster_async.rs`:
 
@@ -388,7 +401,7 @@ Add feature gate to Cargo.toml for test:
     path = "tests/test_cluster_async.rs"
     required-features = ["async-api"]
 
-### Stage H: Documentation
+### Stage H: documentation
 
 Update module-level docs in `src/cluster/mod.rs` with examples for both sync
 and async usage patterns.
@@ -398,25 +411,25 @@ Add doc comments to new public methods:
 - `start_async()` - Document when to use, show `#[tokio::test]` example
 - `stop_async()` - Document importance of calling explicitly in async context
 
-## Concrete Steps
+## Concrete steps
 
 All commands run from repository root:
 `/data/leynos/Projects/pg-embedded-setup-unpriv.worktrees/issue-50-async-support`
 
-### After each stage
+### After each stage (validation)
 
     make check-fmt && make lint && make test
 
 Expected: All pass with no warnings.
 
-### After Stage G (with async tests)
+### After stage G (with async tests)
 
     cargo test --features async-api test_cluster_async
 
 Expected: async tests pass without "Cannot start a runtime from within a
 runtime" panic.
 
-### Final validation
+### Final validation (acceptance)
 
     make check-fmt && make lint && make test
     cargo test --features async-api
@@ -427,9 +440,9 @@ Expected transcript fragment:
     test start_async_creates_cluster_without_panic … ok
     test stop_async_cleans_up_resources … ok
 
-## Validation and Acceptance
+## Validation and acceptance
 
-Quality criteria:
+Quality criteria (acceptance):
 
 - Tests: All existing tests pass unchanged. New async tests in
   `test_cluster_async.rs` pass.
@@ -439,19 +452,19 @@ Quality criteria:
 - Async functionality: `#[tokio::test]` functions can create and use
   `TestCluster` via `start_async()` without panic.
 
-Quality method:
+Quality method (validation):
 
     make check-fmt && make lint && make test
     cargo test --features async-api
 
-Observable behaviour:
+Observable behaviour (verification):
 
 1. Running `cargo test --features async-api test_cluster_async` produces
    passing tests.
 2. Running existing sync tests (`make test`) produces the same results as
    before this change.
 
-## Idempotence and Recovery
+## Idempotence and recovery
 
 All stages can be re-run safely. Each stage builds on the previous but does not
 destroy intermediate state. If a stage fails partway:
@@ -460,7 +473,7 @@ destroy intermediate state. If a stage fails partway:
 2. Re-read the affected files to understand current state
 3. Resume from the beginning of the failed stage
 
-## Artifacts and Notes
+## Artefacts and notes
 
 ### WorkerInvoker modification pattern
 
@@ -481,16 +494,16 @@ The key change in `WorkerInvoker` is adding an async path that bypasses
         future.await.context(ctx).map_err(…)
     }
 
-### Drop behaviour summary
+### Drop behaviour summary (implementation)
 
-| Mode | runtime field | Drop behaviour |
-|------|---------------|----------------|
-| Sync (`new()`) | `Some(Runtime)` | Uses `runtime.block_on()` to call `postgres.stop()` |
-| Async (`start_async()`) | `None` | Warns if `postgres` not None; attempts `Handle::try_current()` spawn for cleanup |
+| Mode                     | runtime field                    | Drop behaviour                                                                    |
+|--------------------------|----------------------------------|-----------------------------------------------------------------------------------|
+| Sync (`new()`)           | `ClusterRuntime::Sync(Runtime)`  | Uses `runtime.block_on()` to call `postgres.stop()`                               |
+| Async (`start_async()`)  | `ClusterRuntime::Async`          | Warns if `postgres` not None; attempts `Handle::try_current()` spawn for cleanup  |
 
-## Interfaces and Dependencies
+## Interfaces and dependencies
 
-### New Public API
+### New public API
 
 In `src/cluster/mod.rs`:
 
@@ -502,7 +515,7 @@ In `src/cluster/mod.rs`:
         pub async fn stop_async(self) -> BootstrapResult<()>;
     }
 
-### Internal Changes
+### Internal changes
 
 In `src/cluster/worker_invoker/mod.rs`:
 

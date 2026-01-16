@@ -419,10 +419,10 @@ classDiagram
   used within async contexts like `#[tokio::test]` without the "Cannot start a
   runtime from within a runtime" panic.
 
-- The `runtime` field in `TestCluster` is now `Option<Runtime>`. When `None`,
-  the cluster was created via `start_async()` and runs on the caller's runtime.
-  When `Some(_)`, the cluster owns its runtime (synchronous mode). An
-  `is_async_mode: bool` field tracks the mode explicitly.
+- The `runtime` field in `TestCluster` uses a `ClusterRuntime` enum that
+  encodes both ownership and mode: `ClusterRuntime::Sync(Runtime)` for clusters
+  that own their runtime (synchronous mode), and `ClusterRuntime::Async` for
+  clusters created via `start_async()` that run on the caller's runtime.
 
 - Created `AsyncInvoker` as a separate struct from `WorkerInvoker`. The existing
   `WorkerInvoker` holds `&'a Runtime` for `block_on()` calls, which is not
@@ -436,9 +436,10 @@ classDiagram
   users to call `stop_async()` explicitly. This avoids panicking in `Drop` while
   still attempting resource cleanup.
 
-- Design decision: `Option<Runtime>` was chosen over a dedicated enum because
-  it's the simplest representation—`None` means async mode, `Some(_)` means
-  sync mode—and avoids complexity of enum matching throughout the codebase.
+- Design decision: The `ClusterRuntime` enum was chosen to encode runtime mode
+  because it eliminates the risk of inconsistent state between separate fields.
+  The enum pattern (`Sync(Runtime)` / `Async`) ensures mode and runtime
+  ownership are always in sync, avoiding invalid states.
 
 - Design decision: `start_async()` was named to match the design document
   proposal and be action-oriented, clearly indicating that the cluster starts

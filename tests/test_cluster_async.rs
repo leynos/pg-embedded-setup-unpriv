@@ -1,4 +1,3 @@
-#![cfg(all(unix, feature = "async-api"))]
 //! Async API tests for `TestCluster`.
 //!
 //! These tests verify that `TestCluster::start_async()` and `stop_async()` work
@@ -7,18 +6,34 @@
 //! All tests are serialized using `file_serial` to prevent conflicts with other
 //! cluster tests that use the same default data directory.
 
+#![cfg(all(unix, feature = "async-api"))]
+
 use color_eyre::eyre::{Result, ensure};
-use pg_embedded_setup_unpriv::TestCluster;
+use pg_embedded_setup_unpriv::{BootstrapResult, TestCluster};
+use rstest::{fixture, rstest};
 use serial_test::file_serial;
+
+/// Async fixture that provides a running `TestCluster`.
+///
+/// This fixture starts the cluster asynchronously and should be used with
+/// `#[rstest]` and `#[tokio::test]`. Note that callers are responsible for
+/// calling `stop_async()` when done, as the fixture cannot perform async cleanup.
+#[fixture]
+fn cluster_future() -> impl std::future::Future<Output = BootstrapResult<TestCluster>> {
+    TestCluster::start_async()
+}
 
 /// Verifies that `start_async()` can be called from within an async context.
 ///
 /// This is the primary test - it confirms that the async API does not panic with
 /// "Cannot start a runtime from within a runtime" when called from `#[tokio::test]`.
+#[rstest]
 #[tokio::test]
 #[file_serial(cluster)]
-async fn start_async_succeeds_in_async_context() -> Result<()> {
-    let cluster = TestCluster::start_async().await?;
+async fn start_async_succeeds_in_async_context(
+    cluster_future: impl std::future::Future<Output = BootstrapResult<TestCluster>>,
+) -> Result<()> {
+    let cluster = cluster_future.await?;
 
     // Verify the cluster is functional by checking settings.
     let settings = cluster.settings();
@@ -33,10 +48,13 @@ async fn start_async_succeeds_in_async_context() -> Result<()> {
 }
 
 /// Verifies that `stop_async()` properly shuts down the cluster.
+#[rstest]
 #[tokio::test]
 #[file_serial(cluster)]
-async fn stop_async_cleans_up_resources() -> Result<()> {
-    let cluster = TestCluster::start_async().await?;
+async fn stop_async_cleans_up_resources(
+    cluster_future: impl std::future::Future<Output = BootstrapResult<TestCluster>>,
+) -> Result<()> {
+    let cluster = cluster_future.await?;
 
     // Stop should succeed.
     cluster.stop_async().await?;
@@ -45,10 +63,13 @@ async fn stop_async_cleans_up_resources() -> Result<()> {
 }
 
 /// Verifies that connection metadata is available from async-created clusters.
+#[rstest]
 #[tokio::test]
 #[file_serial(cluster)]
-async fn async_cluster_provides_connection_metadata() -> Result<()> {
-    let cluster = TestCluster::start_async().await?;
+async fn async_cluster_provides_connection_metadata(
+    cluster_future: impl std::future::Future<Output = BootstrapResult<TestCluster>>,
+) -> Result<()> {
+    let cluster = cluster_future.await?;
 
     let connection = cluster.connection();
     let metadata = connection.metadata();
@@ -66,10 +87,13 @@ async fn async_cluster_provides_connection_metadata() -> Result<()> {
 }
 
 /// Verifies that `database_url` can be constructed from async-created clusters.
+#[rstest]
 #[tokio::test]
 #[file_serial(cluster)]
-async fn async_cluster_provides_database_url() -> Result<()> {
-    let cluster = TestCluster::start_async().await?;
+async fn async_cluster_provides_database_url(
+    cluster_future: impl std::future::Future<Output = BootstrapResult<TestCluster>>,
+) -> Result<()> {
+    let cluster = cluster_future.await?;
 
     let url = cluster.connection().database_url("test_db");
 
@@ -88,10 +112,13 @@ async fn async_cluster_provides_database_url() -> Result<()> {
 ///
 /// This exercises the best-effort cleanup path in `Drop`, which spawns a cleanup task
 /// on the current runtime handle if available.
+#[rstest]
 #[tokio::test]
 #[file_serial(cluster)]
-async fn async_drop_without_stop_does_not_panic() -> Result<()> {
-    let cluster = TestCluster::start_async().await?;
+async fn async_drop_without_stop_does_not_panic(
+    cluster_future: impl std::future::Future<Output = BootstrapResult<TestCluster>>,
+) -> Result<()> {
+    let cluster = cluster_future.await?;
 
     // Use the cluster briefly to ensure it's functional.
     let _port = cluster.settings().port;

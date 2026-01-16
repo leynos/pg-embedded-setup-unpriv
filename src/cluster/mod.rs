@@ -43,7 +43,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! pg-embed-setup-unpriv = { version = "...", features = ["async-api"] }
+//! pg-embedded-setup-unpriv = { version = "...", features = ["async-api"] }
 //! ```
 
 mod connection;
