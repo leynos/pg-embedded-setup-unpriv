@@ -37,7 +37,7 @@ fn unprivileged_operations_execute_in_process() -> Result<()> {
 }
 
 #[test]
-#[serial]
+#[serial(worker_hook)]
 fn root_operations_delegate_to_hook() -> Result<()> {
     let runtime = test_runtime()?;
     let bootstrap = dummy_settings(ExecutionPrivileges::Root);
@@ -66,7 +66,7 @@ fn root_operations_delegate_to_hook() -> Result<()> {
 }
 
 #[test]
-#[serial]
+#[serial(worker_hook)]
 fn installing_hook_twice_errors() -> Result<()> {
     let _guard = install_run_root_operation_hook(|_, _, _| Ok(())).map_err(|err| eyre!(err))?;
 
