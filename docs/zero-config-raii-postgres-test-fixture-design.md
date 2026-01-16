@@ -512,7 +512,7 @@ sequenceDiagram
 fixtures. Unprivileged users bypass worker detection entirely, whilst root users
 follow the existing worker location logic. See issue #52[^1].*
 
-[^1]: https://github.com/leynos/pg-embedded-setup-unpriv/issues/52
+[^1]: <https://github.com/leynos/pg-embedded-setup-unpriv/issues/52>
 
 ### Ephemeral ports and isolation
 

@@ -192,32 +192,15 @@ Successfully implemented async API for `TestCluster`:
 
 ### Current Architecture
 
-```mermaid
-flowchart LR
-    subgraph TestCluster
-        TC[TestCluster<br/>owns Runtime]
-    end
-
-    subgraph WorkerInvoker
-        WI[WorkerInvoker<br/>borrows &Runtime]
-    end
-
-    subgraph postgresql_embedded
-        PG[PostgreSQL<br/>async methods]
-    end
-
-    subgraph Sync Execution
-        DROP[Drop]
-        INVOKE[invoke_unpriv]
-        BLOCK[block_on]
-    end
-
-    TC -->|"&Runtime"| WI
-    WI -->|".await"| PG
-    DROP --> INVOKE
-    INVOKE --> BLOCK
-    BLOCK -->|"future"| PG
-```
+    +---------------+        +------------------+        +-------------------+
+    | TestCluster   |        | WorkerInvoker    |        | postgresql_       |
+    | (owns Runtime)|--&rt-->| (borrows &Runtime)|--await->| embedded          |
+    +---------------+        +------------------+        | (async methods)   |
+                                                         +-------------------+
+                                                                  ^
+    +-------+     +---------------+     +----------+              |
+    | Drop  |---->| invoke_unpriv |---->| block_on |----future----+
+    +-------+     +---------------+     +----------+
 
 ### Terms
 
