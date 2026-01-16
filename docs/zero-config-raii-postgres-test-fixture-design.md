@@ -452,6 +452,64 @@ classDiagram
   `#[file_serial(cluster)]` serialisation to prevent data directory conflicts
   with other cluster tests.
 
+### Implementation update (2026-01-16): Privilege-aware worker requirement
+
+- Fixed issue where `test_cluster` and `shared_test_cluster` fixtures
+  unconditionally required the `pg_worker` binary, causing tests to fail for
+  unprivileged users with "SKIP-TEST-CLUSTER: PG_EMBEDDED_WORKER is not set and
+  pg_worker binary was not found".
+
+- Root cause: The `ensure_worker_env()` function in `src/test_support/fixtures.rs`
+  did not check execution privileges before requiring the worker binary. The
+  correct logic already existed in `src/bootstrap/mode.rs`, where unprivileged
+  execution runs in-process without a worker, while root execution requires the
+  worker for privilege dropping.
+
+- Fix: Modified `ensure_worker_env()` to call `detect_execution_privileges()`
+  first and return `None` immediately for unprivileged users, bypassing the
+  worker requirement entirely. Root users continue to require the worker binary
+  (or `PG_EMBEDDED_WORKER` environment variable).
+
+- This aligns test fixture behaviour with the existing privilege detection
+  architecture, removing an unnecessary requirement for unprivileged scenarios
+  whilst maintaining security for privileged execution.
+
+```mermaid
+sequenceDiagram
+    participant Test as Test Fixture
+    participant Ensure as ensure_worker_env()
+    participant Detect as detect_execution_privileges()
+    participant Worker as worker_binary()
+
+    Test->>Ensure: Call ensure_worker_env()
+    Ensure->>Detect: Check privileges
+
+    alt Unprivileged User
+        Detect-->>Ensure: ExecutionPrivileges::Unprivileged
+        Ensure-->>Test: Return None (no worker needed)
+    else Root User
+        Detect-->>Ensure: ExecutionPrivileges::Root
+        Ensure->>Ensure: Check PG_EMBEDDED_WORKER env var
+        alt Env var set
+            Ensure-->>Test: Return None (already configured)
+        else Env var not set
+            Ensure->>Worker: Locate worker binary
+            alt Worker found
+                Worker-->>Ensure: Return worker path
+                Ensure-->>Test: Return ScopedEnv with worker
+            else Worker not found
+                Worker-->>Ensure: None
+                Ensure-->>Test: Panic with error message
+            end
+        end
+    end
+```
+
+*Figure: Control flow for privilege-aware worker binary requirement in test
+fixtures. Unprivileged users bypass worker detection entirely, whilst root users
+follow the existing worker location logic. See
+[issue #52](https://github.com/leynos/pg-embedded-setup-unpriv/issues/52).*
+
 ### Ephemeral ports and isolation
 
 To allow the same tests to run concurrently (especially under `nextest`, which
