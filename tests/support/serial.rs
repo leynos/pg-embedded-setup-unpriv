@@ -121,6 +121,25 @@ mod tests {
 
     use super::*;
 
+    /// Drop guard to restore `CARGO_TARGET_DIR` even on panic.
+    #[cfg(unix)]
+    struct EnvGuard {
+        original: Option<std::ffi::OsString>,
+    }
+
+    #[cfg(unix)]
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            use std::env;
+            // SAFETY: Test runs serially via serial_guard fixture.
+            if let Some(val) = &self.original {
+                unsafe { env::set_var("CARGO_TARGET_DIR", val) };
+            } else {
+                unsafe { env::remove_var("CARGO_TARGET_DIR") };
+            }
+        }
+    }
+
     #[test]
     fn serial_guard_is_not_reentrant() {
         let guard = serial_guard();
@@ -134,6 +153,10 @@ mod tests {
 
     #[cfg(unix)]
     #[rstest]
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "intentionally ignoring remove_dir_all result for best-effort cleanup"
+    )]
     fn acquire_process_lock_places_lock_file_in_cargo_target_dir(
         serial_guard: ScenarioSerialGuard,
     ) {
@@ -142,24 +165,20 @@ mod tests {
         let _guard = serial_guard;
 
         let tmp_dir = env::temp_dir().join("pg_scenario_lock_test");
-        drop(fs::remove_dir_all(&tmp_dir));
+        let _ = fs::remove_dir_all(&tmp_dir);
         fs::create_dir_all(&tmp_dir)
             .expect("failed to create temporary CARGO_TARGET_DIR for acquire_process_lock test");
 
-        // Temporarily set CARGO_TARGET_DIR to our test directory.
         // SAFETY: This test runs serially via the serial_guard fixture, so no
         // other threads are concurrently reading or writing environment variables.
-        let original = env::var_os("CARGO_TARGET_DIR");
+        let _env_guard = EnvGuard {
+            original: env::var_os("CARGO_TARGET_DIR"),
+        };
+
+        // Temporarily set CARGO_TARGET_DIR to our test directory.
+        // SAFETY: Same reasoning as above - test runs serially.
         unsafe { env::set_var("CARGO_TARGET_DIR", &tmp_dir) };
         let _lock = acquire_process_lock();
-
-        // Restore original value.
-        // SAFETY: Same reasoning as above - test runs serially.
-        if let Some(val) = original {
-            unsafe { env::set_var("CARGO_TARGET_DIR", val) };
-        } else {
-            unsafe { env::remove_var("CARGO_TARGET_DIR") };
-        }
 
         let entries: Vec<_> = fs::read_dir(&tmp_dir)
             .expect("failed to read temporary CARGO_TARGET_DIR for acquire_process_lock test")
@@ -170,6 +189,6 @@ mod tests {
         );
 
         // Clean up.
-        drop(fs::remove_dir_all(&tmp_dir));
+        let _ = fs::remove_dir_all(&tmp_dir);
     }
 }
