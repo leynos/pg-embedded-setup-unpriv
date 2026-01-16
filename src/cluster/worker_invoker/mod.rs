@@ -148,6 +148,56 @@ fn log_success(operation: WorkerOperation) {
     );
 }
 
+/// Logs the start of an in-process lifecycle operation.
+///
+/// Used by both sync and async invokers. When `async_mode` is true, appends
+/// " (async)" to the message to distinguish async execution paths in logs.
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "complexity is from info! macro expansion, not logic"
+)]
+fn log_in_process_start(operation: WorkerOperation, async_mode: bool) {
+    if async_mode {
+        info!(
+            target: LOG_TARGET,
+            operation = operation.as_str(),
+            "running lifecycle operation in-process (async)"
+        );
+    } else {
+        info!(
+            target: LOG_TARGET,
+            operation = operation.as_str(),
+            "running lifecycle operation in-process"
+        );
+    }
+}
+
+/// Logs the dispatch of a lifecycle operation to the worker subprocess.
+///
+/// Used by both sync and async invokers. When `async_mode` is true, appends
+/// " (async)" to the message to distinguish async execution paths in logs.
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "complexity is from info! macro expansion, not logic"
+)]
+fn log_worker_dispatch(operation: WorkerOperation, worker_binary: Option<&str>, async_mode: bool) {
+    if async_mode {
+        info!(
+            target: LOG_TARGET,
+            operation = operation.as_str(),
+            worker = worker_binary,
+            "dispatching lifecycle operation via worker (async)"
+        );
+    } else {
+        info!(
+            target: LOG_TARGET,
+            operation = operation.as_str(),
+            worker = worker_binary,
+            "dispatching lifecycle operation via worker"
+        );
+    }
+}
+
 // ============================================================================
 // Synchronous invoker
 // ============================================================================
@@ -249,24 +299,15 @@ impl<'a> WorkerInvoker<'a> {
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
-        info!(
-            target: LOG_TARGET,
-            operation = operation.as_str(),
-            "running lifecycle operation in-process"
-        );
+        log_in_process_start(operation, false);
         self.invoke_unprivileged(in_process_op, operation.error_context())
     }
 
     fn run_root(&self, operation: WorkerOperation) -> BootstrapResult<()> {
-        info!(
-            target: LOG_TARGET,
-            operation = operation.as_str(),
-            worker = self
-                .bootstrap
-                .worker_binary
-                .as_ref()
-                .map(|path| path.as_str()),
-            "dispatching lifecycle operation via worker"
+        log_worker_dispatch(
+            operation,
+            self.bootstrap.worker_binary.as_ref().map(|p| p.as_str()),
+            false,
         );
         self.invoke_as_root(operation)
     }
@@ -373,24 +414,15 @@ impl<'a> AsyncInvoker<'a> {
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
-        info!(
-            target: LOG_TARGET,
-            operation = operation.as_str(),
-            "running lifecycle operation in-process (async)"
-        );
+        log_in_process_start(operation, true);
         invoke_unprivileged_async(in_process_op, operation.error_context()).await
     }
 
     async fn run_root_async(&self, operation: WorkerOperation) -> BootstrapResult<()> {
-        info!(
-            target: LOG_TARGET,
-            operation = operation.as_str(),
-            worker = self
-                .bootstrap
-                .worker_binary
-                .as_ref()
-                .map(|path| path.as_str()),
-            "dispatching lifecycle operation via worker (async)"
+        log_worker_dispatch(
+            operation,
+            self.bootstrap.worker_binary.as_ref().map(|p| p.as_str()),
+            true,
         );
         // Worker subprocess spawning is inherently blocking; use spawn_blocking.
         let bootstrap = self.bootstrap.clone();
