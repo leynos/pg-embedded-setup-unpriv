@@ -124,12 +124,12 @@ The synchronous API remains unchanged for backward compatibility.
 - Decision: Name async constructor `start_async()` not `new_async()`
   Rationale: Matches the design document proposal. `start_async()` is more
   action-oriented and clearly indicates what happens (the cluster starts).
-  Date/Author: 2026-01-15 / Plan author
+  Date/Author: 2026-01-15 / Plan author.
 
 - Decision: Feature-gate async API behind `async-api` feature
   Rationale: Allows sync-only users to avoid pulling in async code paths.
   Default-enabled for convenience since tokio is already a dependency.
-  Date/Author: 2026-01-15 / Plan author
+  Date/Author: 2026-01-15 / Plan author.
 
 ## Outcomes & retrospective
 
@@ -148,7 +148,7 @@ Successfully implemented async API for `TestCluster`:
 
 - Files modified: 4 (within 8-file tolerance)
 - New test file: 1 (`tests/test_cluster_async.rs`)
-- All 116 tests pass including 4 new async tests
+- All 116 tests pass, including 4 new async tests
 - No new external dependencies (only internal feature flag for serial_test)
 
 ### Lessons learned

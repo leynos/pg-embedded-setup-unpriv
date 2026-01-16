@@ -427,7 +427,7 @@ classDiagram
 - Created `AsyncInvoker` as a separate struct from `WorkerInvoker`. The existing
   `WorkerInvoker` holds `&'a Runtime` for `block_on()` calls, which is not
   available in async mode. `AsyncInvoker` directly `.await`s futures for
-  unprivileged operations and uses `spawn_blocking` for root operations that
+  unprivileged operations, and uses `spawn_blocking` for root operations that
   require subprocess spawning.
 
 - The `Drop` implementation handles async-created clusters via best-effort
