@@ -111,11 +111,11 @@ setup.
 
 ### Async API for `#[tokio::test]` contexts
 
-When writing tests within an async runtime (e.g. `#[tokio::test]`), the standard
-`TestCluster::new()` constructor will panic with "Cannot start a runtime from
-within a runtime" because it creates its own internal Tokio runtime. To use
-`TestCluster` in async contexts, enable the `async-api` feature and use the
-async constructor and shutdown methods.
+When writing tests within an async runtime (e.g. `#[tokio::test]`), the
+standard `TestCluster::new()` constructor will panic with "Cannot start a
+runtime from within a runtime" because it creates its own internal Tokio
+runtime. To use `TestCluster` in async contexts, enable the `async-api` feature
+and use the async constructor and shutdown methods.
 
 Enable the feature in your `Cargo.toml`:
 
@@ -143,16 +143,24 @@ async fn test_async_database_operations() -> BootstrapResult<()> {
 }
 ```
 
-**Important:** Always call `stop_async()` explicitly before the cluster goes out
-of scope. Unlike the synchronous API where `Drop` can reliably shut down
+Async clusters behave like the synchronous guard: the same accessors apply, and
+the environment overrides are restored on shutdown. `stop_async()` consumes the
+guard, so capture any connection details you need before calling it.
+
+**Important:** Always call `stop_async()` explicitly before the cluster goes
+out of scope. Unlike the synchronous API where `Drop` can reliably shut down
 PostgreSQL using its internal runtime, async-created clusters cannot guarantee
 cleanup in `Drop` because `Drop` cannot be async. If you forget to call
-`stop_async()`, the library will attempt best-effort cleanup and log a warning,
-but resources may not be released properly.
+`stop_async()`, the library will attempt best-effort cleanup and log a warning;
+if no async runtime handle is available (for example, after the runtime has
+shut down), resources may leak and you may need to stop the process manually.
 
 The async API runs PostgreSQL lifecycle operations on the caller's runtime
 rather than creating a separate one, avoiding the nested-runtime panic whilst
-maintaining the same zero-configuration experience as the synchronous API.
+maintaining the same zero-configuration experience as the synchronous API. When
+running as `root`, the async API still delegates to the worker helper, and
+those operations are executed with `spawn_blocking` so they do not block the
+async executor.
 
 ## Observability
 
@@ -180,7 +188,10 @@ normal informational lifecycle noise.
 `pg_embedded_setup_unpriv::test_support::test_cluster` exposes an `rstest`
 fixture that constructs the RAII guard on demand. Import the fixture so it is
 in scope and declare a `test_cluster: TestCluster` parameter inside an
-`#[rstest]` function; the macro injects the running cluster automatically.
+`#[rstest]` function; the macro injects the running cluster automatically. The
+`test_cluster` and `shared_test_cluster` fixtures are synchronous and use
+`TestCluster::new()`, so avoid calling them inside async tests; use
+`TestCluster::start_async()` instead.
 
 ```rust,no_run
 use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
