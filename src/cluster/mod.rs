@@ -3,7 +3,11 @@
 //! The cluster starts during [`TestCluster::new`] and shuts down automatically when the
 //! value drops out of scope.
 //!
-//! # Examples
+//! # Synchronous API
+//!
+//! Use [`TestCluster::new`] from synchronous contexts or when you want the cluster to
+//! own its own Tokio runtime:
+//!
 //! ```no_run
 //! use pg_embedded_setup_unpriv::TestCluster;
 //!
@@ -14,6 +18,32 @@
 //! drop(cluster); // `PostgreSQL` stops automatically.
 //! # Ok(())
 //! # }
+//! ```
+//!
+//! # Async API
+//!
+//! When running within an existing async runtime (e.g., `#[tokio::test]`), use
+//! [`TestCluster::start_async`] to avoid the "Cannot start a runtime from within a
+//! runtime" panic that occurs when nesting Tokio runtimes:
+//!
+//! ```ignore
+//! use pg_embedded_setup_unpriv::TestCluster;
+//!
+//! #[tokio::test]
+//! async fn test_with_embedded_postgres() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+//!     let cluster = TestCluster::start_async().await?;
+//!     let url = cluster.settings().url("my_database");
+//!     // ... async database operations ...
+//!     cluster.stop_async().await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! The async API requires the `async-api` feature flag:
+//!
+//! ```toml
+//! [dependencies]
+//! pg-embedded-setup-unpriv = { version = "...", features = ["async-api"] }
 //! ```
 
 mod connection;
@@ -33,6 +63,8 @@ pub use self::worker_invoker::WorkerInvoker;
 pub use self::worker_operation::WorkerOperation;
 
 use self::runtime::build_runtime;
+#[cfg(feature = "async-api")]
+use self::worker_invoker::AsyncInvoker;
 use self::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use crate::bootstrap_for_tests;
 use crate::env::ScopedEnv;
@@ -45,10 +77,35 @@ use tokio::runtime::Runtime;
 use tokio::time;
 use tracing::{info, info_span};
 
+/// Encodes the runtime mode for a `TestCluster`.
+///
+/// This enum eliminates the need for separate `runtime: Option<Runtime>` and
+/// `is_async_mode: bool` fields, preventing invalid states where the two could
+/// disagree.
+#[derive(Debug)]
+enum ClusterRuntime {
+    /// Synchronous mode: the cluster owns its own Tokio runtime.
+    Sync(Runtime),
+    /// Async mode: the cluster runs on the caller's runtime.
+    #[cfg_attr(
+        not(feature = "async-api"),
+        expect(dead_code, reason = "used when async-api feature is enabled")
+    )]
+    Async,
+}
+
+impl ClusterRuntime {
+    /// Returns `true` if this is async mode.
+    const fn is_async(&self) -> bool {
+        matches!(self, Self::Async)
+    }
+}
+
 /// Embedded `PostgreSQL` instance whose lifecycle follows Rust's drop semantics.
 #[derive(Debug)]
 pub struct TestCluster {
-    runtime: Runtime,
+    /// Runtime mode: either owns a runtime (sync) or runs on caller's runtime (async).
+    runtime: ClusterRuntime,
     postgres: Option<PostgreSQL>,
     bootstrap: TestBootstrapSettings,
     is_managed_via_worker: bool,
@@ -87,7 +144,7 @@ impl TestCluster {
         };
 
         Ok(Self {
-            runtime,
+            runtime: ClusterRuntime::Sync(runtime),
             postgres: outcome.postgres,
             bootstrap: outcome.bootstrap,
             is_managed_via_worker: outcome.is_managed_via_worker,
@@ -161,6 +218,131 @@ impl TestCluster {
         })
     }
 
+    /// Boots a `PostgreSQL` instance asynchronously for use in `#[tokio::test]` contexts.
+    ///
+    /// Unlike [`TestCluster::new`], this constructor does not create its own Tokio runtime.
+    /// Instead, it runs on the caller's async runtime, making it safe to call from within
+    /// `#[tokio::test]` and other async contexts.
+    ///
+    /// **Important:** Clusters created with `start_async()` should be shut down explicitly
+    /// using [`stop_async()`](Self::stop_async). The `Drop` implementation will attempt
+    /// best-effort cleanup but may not succeed if the runtime is no longer available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bootstrap configuration cannot be prepared or if starting
+    /// the embedded cluster fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// #[tokio::test]
+    /// async fn test_with_embedded_postgres() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    ///     let cluster = TestCluster::start_async().await?;
+    ///     let url = cluster.settings().url("my_database");
+    ///     // ... async database operations ...
+    ///     cluster.stop_async().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(feature = "async-api")]
+    pub async fn start_async() -> BootstrapResult<Self> {
+        use tracing::Instrument;
+
+        let span = info_span!(target: LOG_TARGET, "test_cluster", async_mode = true);
+
+        // Sync bootstrap preparation (no await needed).
+        let initial_bootstrap = bootstrap_for_tests()?;
+        let env_vars = initial_bootstrap.environment.to_env();
+        let env_guard = ScopedEnv::apply(&env_vars);
+
+        // Async postgres startup, instrumented with the span.
+        // Box::pin to avoid large future on the stack.
+        let outcome = Box::pin(Self::start_postgres_async(initial_bootstrap, &env_vars))
+            .instrument(span.clone())
+            .await?;
+
+        Ok(Self {
+            runtime: ClusterRuntime::Async,
+            postgres: outcome.postgres,
+            bootstrap: outcome.bootstrap,
+            is_managed_via_worker: outcome.is_managed_via_worker,
+            env_vars,
+            worker_guard: None,
+            _env_guard: env_guard,
+            _cluster_span: span,
+        })
+    }
+
+    /// Async variant of `start_postgres` that runs on the caller's runtime.
+    #[cfg(feature = "async-api")]
+    async fn start_postgres_async(
+        mut bootstrap: TestBootstrapSettings,
+        env_vars: &[(String, Option<String>)],
+    ) -> BootstrapResult<StartupOutcome> {
+        let privileges = bootstrap.privileges;
+        let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
+        Self::log_lifecycle_start(privileges, &bootstrap);
+
+        let invoker = AsyncInvoker::new(&bootstrap, env_vars);
+        Box::pin(Self::invoke_lifecycle_async(&invoker, &mut embedded)).await?;
+
+        let is_managed_via_worker = matches!(privileges, ExecutionPrivileges::Root);
+        let postgres =
+            Self::prepare_postgres_handle(is_managed_via_worker, &mut bootstrap, embedded);
+
+        Self::log_lifecycle_complete(privileges, is_managed_via_worker);
+        Ok(StartupOutcome {
+            bootstrap,
+            postgres,
+            is_managed_via_worker,
+        })
+    }
+
+    #[cfg(feature = "async-api")]
+    fn log_lifecycle_start(privileges: ExecutionPrivileges, bootstrap: &TestBootstrapSettings) {
+        info!(
+            target: LOG_TARGET,
+            privileges = ?privileges,
+            mode = ?bootstrap.execution_mode,
+            async_mode = true,
+            "starting embedded postgres lifecycle"
+        );
+    }
+
+    #[cfg(feature = "async-api")]
+    fn log_lifecycle_complete(privileges: ExecutionPrivileges, is_managed_via_worker: bool) {
+        info!(
+            target: LOG_TARGET,
+            privileges = ?privileges,
+            worker_managed = is_managed_via_worker,
+            async_mode = true,
+            "embedded postgres started"
+        );
+    }
+
+    /// Async variant of `invoke_lifecycle`.
+    #[cfg(feature = "async-api")]
+    async fn invoke_lifecycle_async(
+        invoker: &AsyncInvoker<'_>,
+        embedded: &mut PostgreSQL,
+    ) -> BootstrapResult<()> {
+        Box::pin(
+            invoker.invoke(worker_operation::WorkerOperation::Setup, async {
+                embedded.setup().await
+            }),
+        )
+        .await?;
+        Box::pin(
+            invoker.invoke(worker_operation::WorkerOperation::Start, async {
+                embedded.start().await
+            }),
+        )
+        .await
+    }
+
     /// Extends the cluster lifetime to cover additional scoped environment guards.
     ///
     /// Primarily used by fixtures that need to ensure `PG_EMBEDDED_WORKER` remains set for the
@@ -170,6 +352,116 @@ impl TestCluster {
     pub fn with_worker_guard(mut self, worker_guard: Option<ScopedEnv>) -> Self {
         self.worker_guard = worker_guard;
         self
+    }
+
+    /// Explicitly shuts down an async cluster.
+    ///
+    /// This method should be called for clusters created with [`start_async()`](Self::start_async)
+    /// to ensure proper cleanup. It consumes `self` to prevent the `Drop` implementation from
+    /// attempting duplicate shutdown.
+    ///
+    /// For worker-managed clusters (root privileges), the worker subprocess is invoked
+    /// synchronously via `spawn_blocking`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the shutdown operation fails. The cluster resources are released
+    /// regardless of whether shutdown succeeds.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::TestCluster;
+    ///
+    /// #[tokio::test]
+    /// async fn test_explicit_shutdown() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    ///     let cluster = TestCluster::start_async().await?;
+    ///     // ... use cluster ...
+    ///     cluster.stop_async().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(feature = "async-api")]
+    pub async fn stop_async(mut self) -> BootstrapResult<()> {
+        let context = Self::stop_context(&self.bootstrap.settings);
+        Self::log_async_stop(&context, self.is_managed_via_worker);
+
+        if self.is_managed_via_worker {
+            Self::stop_worker_managed_async(&self.bootstrap, &self.env_vars, &context).await
+        } else if let Some(postgres) = self.postgres.take() {
+            Self::stop_in_process_async(postgres, self.bootstrap.shutdown_timeout, &context).await
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(feature = "async-api")]
+    fn log_async_stop(context: &str, is_managed_via_worker: bool) {
+        info!(
+            target: LOG_TARGET,
+            context = %context,
+            worker_managed = is_managed_via_worker,
+            async_mode = true,
+            "stopping embedded postgres cluster"
+        );
+    }
+
+    #[cfg(feature = "async-api")]
+    async fn stop_worker_managed_async(
+        bootstrap: &TestBootstrapSettings,
+        env_vars: &[(String, Option<String>)],
+        context: &str,
+    ) -> BootstrapResult<()> {
+        let owned_bootstrap = bootstrap.clone();
+        let owned_env_vars = env_vars.to_vec();
+        let owned_context = context.to_owned();
+        tokio::task::spawn_blocking(move || {
+            Self::stop_via_worker_sync(&owned_bootstrap, &owned_env_vars, &owned_context)
+        })
+        .await
+        .map_err(|err| {
+            crate::error::BootstrapError::from(color_eyre::eyre::eyre!(
+                "worker stop task panicked: {err}"
+            ))
+        })?
+    }
+
+    #[cfg(feature = "async-api")]
+    async fn stop_in_process_async(
+        postgres: PostgreSQL,
+        timeout: std::time::Duration,
+        context: &str,
+    ) -> BootstrapResult<()> {
+        match time::timeout(timeout, postgres.stop()).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => {
+                Self::warn_stop_failure(context, &err);
+                Err(crate::error::BootstrapError::from(color_eyre::eyre::eyre!(
+                    "failed to stop postgres: {err}"
+                )))
+            }
+            Err(_) => {
+                let timeout_secs = timeout.as_secs();
+                Self::warn_stop_timeout(timeout_secs, context);
+                Err(crate::error::BootstrapError::from(color_eyre::eyre::eyre!(
+                    "stop timed out after {timeout_secs}s"
+                )))
+            }
+        }
+    }
+
+    /// Synchronous worker stop for use with `spawn_blocking`.
+    #[cfg(feature = "async-api")]
+    fn stop_via_worker_sync(
+        bootstrap: &TestBootstrapSettings,
+        env_vars: &[(String, Option<String>)],
+        context: &str,
+    ) -> BootstrapResult<()> {
+        let runtime = build_runtime()?;
+        let invoker = ClusterWorkerInvoker::new(&runtime, bootstrap, env_vars);
+        invoker
+            .invoke_as_root(worker_operation::WorkerOperation::Stop)
+            .inspect_err(|err| Self::warn_stop_failure(context, err))
     }
 
     /// Returns the prepared `PostgreSQL` settings for the running cluster.
@@ -214,6 +506,64 @@ impl TestCluster {
         let data_dir = settings.data_dir.display();
         let version = settings.version.to_string();
         format!("version {version}, data_dir {data_dir}")
+    }
+
+    /// Best-effort cleanup for async clusters dropped without `stop_async()`.
+    ///
+    /// Attempts to spawn cleanup on the current runtime handle if available.
+    /// For worker-managed clusters, attempts to invoke the worker stop operation.
+    fn drop_async_cluster(&mut self, context: &str) {
+        Self::warn_async_drop_without_stop(context);
+
+        if self.is_managed_via_worker {
+            self.drop_async_worker_managed(context);
+        } else if let Some(postgres) = self.postgres.take() {
+            self.drop_async_in_process(context, postgres);
+        }
+        // If neither worker-managed nor has postgres handle, already cleaned up via stop_async().
+    }
+
+    /// Best-effort worker stop for async clusters dropped without `stop_async()`.
+    fn drop_async_worker_managed(&self, context: &str) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            Self::error_no_runtime_for_cleanup(context);
+            return;
+        };
+
+        let bootstrap = self.bootstrap.clone();
+        let env_vars = self.env_vars.clone();
+        let owned_context = context.to_owned();
+
+        drop(handle.spawn(spawn_worker_stop_task(bootstrap, env_vars, owned_context)));
+    }
+
+    /// Best-effort in-process stop for async clusters dropped without `stop_async()`.
+    fn drop_async_in_process(&self, context: &str, postgres: PostgreSQL) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            Self::error_no_runtime_for_cleanup(context);
+            return;
+        };
+
+        spawn_async_cleanup(&handle, postgres, self.bootstrap.shutdown_timeout);
+    }
+
+    fn warn_async_drop_without_stop(context: &str) {
+        tracing::warn!(
+            target: LOG_TARGET,
+            context = %context,
+            concat!(
+                "async TestCluster dropped without calling stop_async(); ",
+                "attempting best-effort cleanup"
+            )
+        );
+    }
+
+    fn error_no_runtime_for_cleanup(context: &str) {
+        tracing::error!(
+            target: LOG_TARGET,
+            context = %context,
+            "no async runtime available for cleanup; resources may leak"
+        );
     }
 
     fn warn_stop_failure(context: &str, err: &impl Display) {
@@ -274,7 +624,7 @@ mod tests {
         let env_vars = bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
         TestCluster {
-            runtime,
+            runtime: ClusterRuntime::Sync(runtime),
             postgres: None,
             bootstrap,
             is_managed_via_worker: false,
@@ -286,39 +636,136 @@ mod tests {
     }
 }
 
+/// Spawns async cleanup of a `PostgreSQL` instance on the provided runtime handle.
+///
+/// The task is fire-and-forget; errors during shutdown are logged at debug level.
+fn spawn_async_cleanup(
+    handle: &tokio::runtime::Handle,
+    postgres: PostgreSQL,
+    timeout: std::time::Duration,
+) {
+    drop(handle.spawn(async move {
+        match time::timeout(timeout, postgres.stop()).await {
+            Ok(Ok(())) => {
+                tracing::debug!(target: LOG_TARGET, "async cleanup completed successfully");
+            }
+            Ok(Err(err)) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    error = %err,
+                    "async cleanup failed during postgres stop"
+                );
+            }
+            Err(_) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    timeout_secs = timeout.as_secs(),
+                    "async cleanup timed out"
+                );
+            }
+        }
+    }));
+}
+
+/// Spawns a blocking task to stop a worker-managed cluster.
+///
+/// Used by the async drop path to invoke the worker stop operation without
+/// blocking the current async context.
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "complexity is from spawn_blocking + error! macro expansion, not logic"
+)]
+async fn spawn_worker_stop_task(
+    bootstrap: TestBootstrapSettings,
+    env_vars: Vec<(String, Option<String>)>,
+    context: String,
+) {
+    let result =
+        tokio::task::spawn_blocking(move || worker_stop_sync(&bootstrap, &env_vars, &context))
+            .await;
+
+    if let Err(err) = result {
+        tracing::error!(
+            target: LOG_TARGET,
+            error = %err,
+            "worker stop task panicked during async drop"
+        );
+    }
+}
+
+/// Synchronous worker stop for async drop cleanup.
+///
+/// Builds a temporary runtime to invoke the worker stop operation.
+fn worker_stop_sync(
+    bootstrap: &TestBootstrapSettings,
+    env_vars: &[(String, Option<String>)],
+    context: &str,
+) {
+    let Ok(runtime) = build_runtime() else {
+        tracing::error!(
+            target: LOG_TARGET,
+            "failed to build runtime for worker stop during async drop"
+        );
+        return;
+    };
+
+    let invoker = ClusterWorkerInvoker::new(&runtime, bootstrap, env_vars);
+    if let Err(err) = invoker.invoke_as_root(worker_operation::WorkerOperation::Stop) {
+        TestCluster::warn_stop_failure(context, &err);
+    }
+}
+
 impl Drop for TestCluster {
-    #[expect(
-        clippy::cognitive_complexity,
-        reason = "drop path must branch between worker and in-process shutdown with logging"
-    )]
     fn drop(&mut self) {
         let context = Self::stop_context(&self.bootstrap.settings);
+        let is_async = self.runtime.is_async();
         info!(
             target: LOG_TARGET,
             context = %context,
             worker_managed = self.is_managed_via_worker,
+            async_mode = is_async,
             "stopping embedded postgres cluster"
         );
 
-        if self.is_managed_via_worker {
-            let invoker = ClusterWorkerInvoker::new(&self.runtime, &self.bootstrap, &self.env_vars);
-            if let Err(err) = invoker.invoke_as_root(worker_operation::WorkerOperation::Stop) {
-                Self::warn_stop_failure(&context, &err);
-            }
-        } else if let Some(postgres) = self.postgres.take() {
-            let timeout = self.bootstrap.shutdown_timeout;
-            let timeout_secs = timeout.as_secs();
-            let outcome = self
-                .runtime
-                .block_on(async { time::timeout(timeout, postgres.stop()).await });
-
-            match outcome {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => Self::warn_stop_failure(&context, &err),
-                Err(_) => Self::warn_stop_timeout(timeout_secs, &context),
-            }
+        if is_async {
+            // Async clusters should use stop_async() explicitly; attempt best-effort cleanup.
+            self.drop_async_cluster(&context);
+        } else {
+            self.drop_sync_cluster(&context);
         }
         // Environment guards drop after this block, restoring the process state.
+    }
+}
+
+impl TestCluster {
+    /// Synchronous drop path: stops the cluster using the owned runtime.
+    fn drop_sync_cluster(&mut self, context: &str) {
+        let ClusterRuntime::Sync(ref runtime) = self.runtime else {
+            // Should never happen: drop_sync_cluster is only called for sync mode.
+            return;
+        };
+
+        if self.is_managed_via_worker {
+            let invoker = ClusterWorkerInvoker::new(runtime, &self.bootstrap, &self.env_vars);
+            if let Err(err) = invoker.invoke_as_root(worker_operation::WorkerOperation::Stop) {
+                Self::warn_stop_failure(context, &err);
+            }
+            return;
+        }
+
+        let Some(postgres) = self.postgres.take() else {
+            return;
+        };
+
+        let timeout = self.bootstrap.shutdown_timeout;
+        let timeout_secs = timeout.as_secs();
+        let outcome = runtime.block_on(async { time::timeout(timeout, postgres.stop()).await });
+
+        match outcome {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => Self::warn_stop_failure(context, &err),
+            Err(_) => Self::warn_stop_timeout(timeout_secs, context),
+        }
     }
 }
 

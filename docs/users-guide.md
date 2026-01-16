@@ -109,6 +109,51 @@ The guard keeps `PGPASSFILE`, `TZ`, `TZDIR`, and the XDG directories populated
 for the duration of its lifetime, making synchronous tests usable without extra
 setup.
 
+### Async API for `#[tokio::test]` contexts
+
+When writing tests within an async runtime (e.g. `#[tokio::test]`), the standard
+`TestCluster::new()` constructor will panic with "Cannot start a runtime from
+within a runtime" because it creates its own internal Tokio runtime. To use
+`TestCluster` in async contexts, enable the `async-api` feature and use the
+async constructor and shutdown methods.
+
+Enable the feature in your `Cargo.toml`:
+
+```toml
+[dev-dependencies]
+pg-embed-setup-unpriv = { version = "0.2", features = ["async-api"] }
+```
+
+Then use `start_async()` and `stop_async()` in your async tests:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::{TestCluster, error::BootstrapResult};
+
+#[tokio::test]
+async fn test_async_database_operations() -> BootstrapResult<()> {
+    let cluster = TestCluster::start_async().await?;
+
+    // Access connection metadata as usual.
+    let url = cluster.connection().database_url("app_db");
+    // Issue async queries using sqlx or other async clients here.
+
+    // Explicitly shut down to ensure clean resource release.
+    cluster.stop_async().await?;
+    Ok(())
+}
+```
+
+**Important:** Always call `stop_async()` explicitly before the cluster goes out
+of scope. Unlike the synchronous API where `Drop` can reliably shut down
+PostgreSQL using its internal runtime, async-created clusters cannot guarantee
+cleanup in `Drop` because `Drop` cannot be async. If you forget to call
+`stop_async()`, the library will attempt best-effort cleanup and log a warning,
+but resources may not be released properly.
+
+The async API runs PostgreSQL lifecycle operations on the caller's runtime
+rather than creating a separate one, avoiding the nested-runtime panic whilst
+maintaining the same zero-configuration experience as the synchronous API.
+
 ## Observability
 
 Set `RUST_LOG=pg_embed::observability=info` to emit tracing spans that describe
