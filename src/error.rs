@@ -114,54 +114,36 @@ mod tests {
 
     use super::*;
     use color_eyre::eyre::eyre;
+    use rstest::rstest;
 
-    #[test]
-    fn pg_embedded_error_bootstrap_includes_inner_message() {
-        let inner_message = "PG_EMBEDDED_WORKER must be set";
-        let bootstrap_err = BootstrapError::from(eyre!(inner_message));
-        let pg_err = PgEmbeddedError::Bootstrap(bootstrap_err);
-
-        let display = pg_err.to_string();
-
-        assert!(
-            display.contains("bootstrap failed:"),
-            "expected 'bootstrap failed:' prefix, got: {display}"
-        );
-        assert!(
-            display.contains(inner_message),
-            "expected inner message '{inner_message}' in display, got: {display}"
-        );
-    }
-
-    #[test]
-    fn pg_embedded_error_privilege_includes_inner_message() {
-        let inner_message = "failed to drop privileges";
-        let privilege_err = PrivilegeError::from(eyre!(inner_message));
-        let pg_err = PgEmbeddedError::Privilege(privilege_err);
-
-        let display = pg_err.to_string();
-
-        assert!(
-            display.contains("privilege management failed:"),
-            "expected 'privilege management failed:' prefix, got: {display}"
-        );
-        assert!(
-            display.contains(inner_message),
-            "expected inner message '{inner_message}' in display, got: {display}"
-        );
-    }
-
-    #[test]
-    fn pg_embedded_error_config_includes_inner_message() {
-        let inner_message = "invalid port number";
-        let config_err = ConfigError::from(eyre!(inner_message));
-        let pg_err = PgEmbeddedError::Config(config_err);
+    #[rstest]
+    #[case::bootstrap(
+        "PG_EMBEDDED_WORKER must be set",
+        "bootstrap failed:",
+        |msg: &str| PgEmbeddedError::Bootstrap(BootstrapError::from(eyre!("{}", msg)))
+    )]
+    #[case::privilege(
+        "failed to drop privileges",
+        "privilege management failed:",
+        |msg: &str| PgEmbeddedError::Privilege(PrivilegeError::from(eyre!("{}", msg)))
+    )]
+    #[case::config(
+        "invalid port number",
+        "configuration parsing failed:",
+        |msg: &str| PgEmbeddedError::Config(ConfigError::from(eyre!("{}", msg)))
+    )]
+    fn pg_embedded_error_includes_inner_message(
+        #[case] inner_message: &str,
+        #[case] expected_prefix: &str,
+        #[case] constructor: fn(&str) -> PgEmbeddedError,
+    ) {
+        let pg_err = constructor(inner_message);
 
         let display = pg_err.to_string();
 
         assert!(
-            display.contains("configuration parsing failed:"),
-            "expected 'configuration parsing failed:' prefix, got: {display}"
+            display.contains(expected_prefix),
+            "expected '{expected_prefix}' prefix, got: {display}"
         );
         assert!(
             display.contains(inner_message),

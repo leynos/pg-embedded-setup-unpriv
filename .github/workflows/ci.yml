@@ -44,28 +44,21 @@ jobs:
           format: lcov
           features: dev-worker
           with-default-features: "false"
-      - name: Install cargo-nextest for root
+      - name: Install cargo-nextest and test (root)
         if: ${{ matrix.privilege == 'root' }}
         run: |
-          : "${RUSTUP_HOME:=$HOME/.rustup}"
-          : "${CARGO_HOME:=$HOME/.cargo}"
-          sudo -E env \
-            HOME="$HOME" \
-            RUSTUP_HOME="$RUSTUP_HOME" \
-            CARGO_HOME="$CARGO_HOME" \
-            PATH="$CARGO_HOME/bin:$PATH" \
-            cargo binstall -y cargo-nextest@0.9.122
-      - name: Test (root)
-        if: ${{ matrix.privilege == 'root' }}
-        run: |
-          : "${RUSTUP_HOME:=$HOME/.rustup}"
-          : "${CARGO_HOME:=$HOME/.cargo}"
-          sudo -E env \
-            HOME="$HOME" \
-            RUSTUP_HOME="$RUSTUP_HOME" \
-            CARGO_HOME="$CARGO_HOME" \
-            PATH="$CARGO_HOME/bin:$PATH" \
-            make test
+          run_as_root() {
+            : "${RUSTUP_HOME:=$HOME/.rustup}"
+            : "${CARGO_HOME:=$HOME/.cargo}"
+            sudo -E env \
+              HOME="$HOME" \
+              RUSTUP_HOME="$RUSTUP_HOME" \
+              CARGO_HOME="$CARGO_HOME" \
+              PATH="$CARGO_HOME/bin:$PATH" \
+              "$@"
+          }
+          run_as_root cargo binstall -y cargo-nextest@0.9.122
+          run_as_root make test
       - name: Upload coverage data to CodeScene
         env:
           CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}

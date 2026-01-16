@@ -366,6 +366,8 @@ fn override_env_value(vars: &mut ScopedEnvVars, key: &str, value: &str) {
 mod tests {
     //! Unit tests for database lifecycle helpers.
 
+    use rstest::rstest;
+
     use super::*;
 
     /// Helper to construct the "`TestCluster` was not created" error message.
@@ -376,57 +378,38 @@ mod tests {
         )
     }
 
-    #[test]
-    fn cluster_not_created_error_includes_bootstrap_error_message() {
-        let underlying = "failed to connect to test database";
-        let msg = cluster_not_created_error(Some(underlying));
-
-        assert!(
-            msg.contains("TestCluster was not created"),
-            "expected generic prefix in error message, got: {msg}"
-        );
-        assert!(
-            msg.contains(underlying),
-            "expected underlying bootstrap error in error message, got: {msg}"
-        );
+    #[rstest]
+    #[case::with_bootstrap_error(
+        Some("failed to connect to test database"),
+        "TestCluster was not created: failed to connect to test database"
+    )]
+    #[case::without_bootstrap_error(None, "TestCluster was not created")]
+    fn cluster_not_created_error_formats_message(
+        #[case] bootstrap_error: Option<&str>,
+        #[case] expected: &str,
+    ) {
+        let msg = cluster_not_created_error(bootstrap_error);
+        assert_eq!(msg, expected);
     }
 
-    #[test]
-    fn cluster_not_created_error_omits_bootstrap_error_when_absent() {
-        let msg = cluster_not_created_error(None);
-        assert_eq!(msg, "TestCluster was not created");
-    }
-
-    #[test]
-    fn cluster_returns_error_with_bootstrap_message_when_cluster_missing() {
+    #[rstest]
+    #[case::with_bootstrap_error(
+        Some("bootstrap failed: missing worker".to_owned()),
+        "TestCluster was not created: bootstrap failed: missing worker"
+    )]
+    #[case::without_bootstrap_error(None, "TestCluster was not created")]
+    fn cluster_error_includes_bootstrap_context(
+        #[case] bootstrap_error: Option<String>,
+        #[case] expected: &str,
+    ) {
         let mut world = DatabaseWorld::new().expect("create world");
-        world.bootstrap_error = Some("bootstrap failed: missing worker".to_owned());
+        world.bootstrap_error = bootstrap_error;
         world.cluster = None;
 
         let result = world.cluster();
         let err = result.expect_err("cluster() should return error when cluster is None");
         let msg = err.to_string();
 
-        assert!(
-            msg.contains("TestCluster was not created"),
-            "expected 'TestCluster was not created' in error, got: {msg}"
-        );
-        assert!(
-            msg.contains("bootstrap failed"),
-            "expected bootstrap error in message, got: {msg}"
-        );
-    }
-
-    #[test]
-    fn cluster_returns_generic_error_when_no_bootstrap_error_recorded() {
-        let mut world = DatabaseWorld::new().expect("create world");
-        world.cluster = None;
-        world.bootstrap_error = None;
-
-        let result = world.cluster();
-        let err = result.expect_err("cluster() should return error when cluster is None");
-        let msg = err.to_string();
-
-        assert_eq!(msg, "TestCluster was not created");
+        assert_eq!(msg, expected);
     }
 }

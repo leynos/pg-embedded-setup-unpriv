@@ -115,6 +115,8 @@ fn acquire_process_lock() -> ProcessLock {
 mod tests {
     //! Unit tests for scenario serialization guards.
 
+    use rstest::rstest;
+
     use super::*;
 
     #[test]
@@ -129,9 +131,13 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn acquire_process_lock_places_lock_file_in_cargo_target_dir() {
+    #[rstest]
+    fn acquire_process_lock_places_lock_file_in_cargo_target_dir(
+        serial_guard: ScenarioSerialGuard,
+    ) {
         use std::{env, fs};
+
+        let _guard = serial_guard;
 
         let tmp_dir = env::temp_dir().join("pg_scenario_lock_test");
         drop(fs::remove_dir_all(&tmp_dir));
