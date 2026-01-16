@@ -12,6 +12,146 @@ use crate::{ExecutionMode, ExecutionPrivileges, TestBootstrapSettings};
 use super::WorkerOperation;
 use tracing::{error, info, info_span};
 
+// ============================================================================
+// Shared helper functions
+// ============================================================================
+
+/// Creates a tracing span for lifecycle operations.
+///
+/// Used by both sync and async invokers to maintain consistent observability.
+/// The `async_mode` field is only recorded when `true` to maintain backward
+/// compatibility with existing sync span format.
+fn create_lifecycle_span(
+    operation: WorkerOperation,
+    bootstrap: &TestBootstrapSettings,
+    async_mode: bool,
+) -> tracing::Span {
+    let span = info_span!(
+        target: LOG_TARGET,
+        "lifecycle_operation",
+        operation = operation.as_str(),
+        privileges = ?bootstrap.privileges,
+        mode = ?bootstrap.execution_mode,
+        async_mode = tracing::field::Empty
+    );
+    if async_mode {
+        span.record("async_mode", true);
+    }
+    span
+}
+
+/// Executes a root operation, handling test hooks, execution mode validation,
+/// and platform-specific constraints.
+///
+/// This is the shared implementation used by both sync (`WorkerInvoker::invoke_as_root`)
+/// and async (`invoke_as_root_sync`) code paths.
+fn execute_root_operation(
+    bootstrap: &TestBootstrapSettings,
+    env_vars: &[(String, Option<String>)],
+    operation: WorkerOperation,
+) -> BootstrapResult<()> {
+    #[cfg(any(test, feature = "cluster-unit-tests"))]
+    {
+        let hook_slot = crate::test_support::run_root_operation_hook()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone();
+        if let Some(hook) = hook_slot {
+            return hook(bootstrap, env_vars, operation);
+        }
+    }
+
+    match bootstrap.execution_mode {
+        ExecutionMode::InProcess => Err(BootstrapError::from(eyre!(concat!(
+            "ExecutionMode::InProcess is unsafe for root because process-wide ",
+            "UID/GID changes race in multi-threaded tests; switch to ",
+            "ExecutionMode::Subprocess"
+        )))),
+        ExecutionMode::Subprocess => spawn_worker_inner(bootstrap, env_vars, operation),
+    }
+}
+
+/// Spawns the worker subprocess to execute a privileged operation.
+///
+/// This is the shared implementation for worker spawning, used by both sync and
+/// async code paths. Contains platform-specific guards for privilege dropping.
+fn spawn_worker_inner(
+    bootstrap: &TestBootstrapSettings,
+    env_vars: &[(String, Option<String>)],
+    operation: WorkerOperation,
+) -> BootstrapResult<()> {
+    #[cfg(not(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    )))]
+    {
+        return Err(BootstrapError::from(eyre!(
+            "privilege drop not supported on this target; refusing to run as root: {}",
+            operation.error_context()
+        )));
+    }
+
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+        ),
+    ))]
+    {
+        let worker = bootstrap.worker_binary.as_ref().ok_or_else(|| {
+            BootstrapError::from(eyre!(
+                "PG_EMBEDDED_WORKER must be set when using ExecutionMode::Subprocess"
+            ))
+        })?;
+
+        let args = WorkerRequestArgs {
+            worker,
+            settings: &bootstrap.settings,
+            env_vars,
+            operation,
+            timeout: operation.timeout(bootstrap),
+        };
+        let request = WorkerRequest::new(args);
+        return worker_process::run(&request);
+    }
+
+    #[expect(unreachable_code, reason = "cfg guard ensures all targets handled")]
+    Err(BootstrapError::from(eyre!(
+        "privilege drop support unexpectedly unavailable"
+    )))
+}
+
+fn log_failure(operation: WorkerOperation, err: &BootstrapError) {
+    error!(
+        target: LOG_TARGET,
+        operation = operation.as_str(),
+        error = %err,
+        "lifecycle operation failed"
+    );
+}
+
+fn log_success(operation: WorkerOperation) {
+    info!(
+        target: LOG_TARGET,
+        operation = operation.as_str(),
+        "lifecycle operation completed"
+    );
+}
+
+// ============================================================================
+// Synchronous invoker
+// ============================================================================
+
 /// Executes worker operations whilst respecting configured privileges.
 #[derive(Debug)]
 #[doc(hidden)]
@@ -150,108 +290,12 @@ impl<'a> WorkerInvoker<'a> {
     }
 
     fn lifecycle_span(&self, operation: WorkerOperation) -> tracing::Span {
-        info_span!(
-            target: LOG_TARGET,
-            "lifecycle_operation",
-            operation = operation.as_str(),
-            privileges = ?self.bootstrap.privileges,
-            mode = ?self.bootstrap.execution_mode
-        )
+        create_lifecycle_span(operation, self.bootstrap, false)
     }
 
     pub(super) fn invoke_as_root(&self, operation: WorkerOperation) -> BootstrapResult<()> {
-        #[cfg(any(test, feature = "cluster-unit-tests"))]
-        {
-            let hook_slot = crate::test_support::run_root_operation_hook()
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .clone();
-            if let Some(hook) = hook_slot {
-                return hook(self.bootstrap, self.env_vars, operation);
-            }
-        }
-
-        match self.bootstrap.execution_mode {
-            ExecutionMode::InProcess => Err(BootstrapError::from(eyre!(concat!(
-                "ExecutionMode::InProcess is unsafe for root because process-wide ",
-                "UID/GID changes race in multi-threaded tests; switch to ",
-                "ExecutionMode::Subprocess"
-            )))),
-            ExecutionMode::Subprocess => {
-                #[cfg(not(all(
-                    unix,
-                    any(
-                        target_os = "linux",
-                        target_os = "android",
-                        target_os = "freebsd",
-                        target_os = "openbsd",
-                        target_os = "dragonfly",
-                    ),
-                )))]
-                {
-                    return Err(BootstrapError::from(eyre!(
-                        "privilege drop not supported on this target; refusing to run as root: {}",
-                        operation.error_context()
-                    )));
-                }
-
-                #[cfg(all(
-                    unix,
-                    any(
-                        target_os = "linux",
-                        target_os = "android",
-                        target_os = "freebsd",
-                        target_os = "openbsd",
-                        target_os = "dragonfly",
-                    ),
-                ))]
-                {
-                    return self.spawn_worker(operation);
-                }
-
-                #[expect(unreachable_code, reason = "cfg guard ensures all targets handled")]
-                Err(BootstrapError::from(eyre!(
-                    "privilege drop support unexpectedly unavailable"
-                )))
-            }
-        }
+        execute_root_operation(self.bootstrap, self.env_vars, operation)
     }
-
-    fn spawn_worker(&self, operation: WorkerOperation) -> BootstrapResult<()> {
-        let worker = self.bootstrap.worker_binary.as_ref().ok_or_else(|| {
-            BootstrapError::from(eyre!(
-                "PG_EMBEDDED_WORKER must be set when using ExecutionMode::Subprocess"
-            ))
-        })?;
-
-        let args = WorkerRequestArgs {
-            worker,
-            settings: &self.bootstrap.settings,
-            env_vars: self.env_vars,
-            operation,
-            timeout: operation.timeout(self.bootstrap),
-        };
-        let request = WorkerRequest::new(args);
-
-        worker_process::run(&request)
-    }
-}
-
-fn log_failure(operation: WorkerOperation, err: &BootstrapError) {
-    error!(
-        target: LOG_TARGET,
-        operation = operation.as_str(),
-        error = %err,
-        "lifecycle operation failed"
-    );
-}
-
-fn log_success(operation: WorkerOperation) {
-    info!(
-        target: LOG_TARGET,
-        operation = operation.as_str(),
-        "lifecycle operation completed"
-    );
 }
 
 /// Async variant of [`WorkerInvoker`] that operates on the caller's runtime.
@@ -351,20 +395,15 @@ impl<'a> AsyncInvoker<'a> {
         // Worker subprocess spawning is inherently blocking; use spawn_blocking.
         let bootstrap = self.bootstrap.clone();
         let env_vars = self.env_vars.to_vec();
-        tokio::task::spawn_blocking(move || invoke_as_root_sync(&bootstrap, &env_vars, operation))
-            .await
-            .map_err(|err| BootstrapError::from(eyre!("worker task panicked: {err}")))?
+        tokio::task::spawn_blocking(move || {
+            execute_root_operation(&bootstrap, &env_vars, operation)
+        })
+        .await
+        .map_err(|err| BootstrapError::from(eyre!("worker task panicked: {err}")))?
     }
 
     fn lifecycle_span(&self, operation: WorkerOperation) -> tracing::Span {
-        info_span!(
-            target: LOG_TARGET,
-            "lifecycle_operation",
-            operation = operation.as_str(),
-            privileges = ?self.bootstrap.privileges,
-            mode = ?self.bootstrap.execution_mode,
-            async_mode = true
-        )
+        create_lifecycle_span(operation, self.bootstrap, true)
     }
 }
 
@@ -375,91 +414,6 @@ where
     Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
 {
     future.await.context(ctx).map_err(BootstrapError::from)
-}
-
-/// Synchronous root operation invocation for use with `spawn_blocking`.
-#[cfg(feature = "async-api")]
-fn invoke_as_root_sync(
-    bootstrap: &TestBootstrapSettings,
-    env_vars: &[(String, Option<String>)],
-    operation: WorkerOperation,
-) -> BootstrapResult<()> {
-    #[cfg(any(test, feature = "cluster-unit-tests"))]
-    {
-        let hook_slot = crate::test_support::run_root_operation_hook()
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .clone();
-        if let Some(hook) = hook_slot {
-            return hook(bootstrap, env_vars, operation);
-        }
-    }
-
-    match bootstrap.execution_mode {
-        ExecutionMode::InProcess => Err(BootstrapError::from(eyre!(concat!(
-            "ExecutionMode::InProcess is unsafe for root because process-wide ",
-            "UID/GID changes race in multi-threaded tests; switch to ",
-            "ExecutionMode::Subprocess"
-        )))),
-        ExecutionMode::Subprocess => spawn_worker_sync(bootstrap, env_vars, operation),
-    }
-}
-
-#[cfg(feature = "async-api")]
-fn spawn_worker_sync(
-    bootstrap: &TestBootstrapSettings,
-    env_vars: &[(String, Option<String>)],
-    operation: WorkerOperation,
-) -> BootstrapResult<()> {
-    #[cfg(not(all(
-        unix,
-        any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "dragonfly",
-        ),
-    )))]
-    {
-        return Err(BootstrapError::from(eyre!(
-            "privilege drop not supported on this target; refusing to run as root: {}",
-            operation.error_context()
-        )));
-    }
-
-    #[cfg(all(
-        unix,
-        any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "dragonfly",
-        ),
-    ))]
-    {
-        let worker = bootstrap.worker_binary.as_ref().ok_or_else(|| {
-            BootstrapError::from(eyre!(
-                "PG_EMBEDDED_WORKER must be set when using ExecutionMode::Subprocess"
-            ))
-        })?;
-
-        let args = WorkerRequestArgs {
-            worker,
-            settings: &bootstrap.settings,
-            env_vars,
-            operation,
-            timeout: operation.timeout(bootstrap),
-        };
-        let request = WorkerRequest::new(args);
-        return worker_process::run(&request);
-    }
-
-    #[expect(unreachable_code, reason = "cfg guard ensures all targets handled")]
-    Err(BootstrapError::from(eyre!(
-        "privilege drop support unexpectedly unavailable"
-    )))
 }
 
 #[cfg(test)]
