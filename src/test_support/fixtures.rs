@@ -99,29 +99,38 @@ pub fn test_cluster() -> TestCluster {
 }
 
 fn ensure_worker_env() -> Option<ScopedEnv> {
-    ensure_worker_env_impl(
+    let worker_path = resolve_worker_path(
         detect_execution_privileges(),
         std::env::var_os("PG_EMBEDDED_WORKER").is_some(),
         worker_binary,
-    )
+    )?;
+
+    Some(scoped_env(vec![(
+        OsString::from("PG_EMBEDDED_WORKER"),
+        Some(worker_path),
+    )]))
 }
 
-/// Core logic for determining whether to set up the worker environment.
+/// Returns true if the worker environment needs to be configured.
 ///
-/// Separated from `ensure_worker_env()` to enable testing with controlled inputs.
-/// The `worker_finder` closure is only called when actually needed (privileged
-/// execution without an existing worker env var).
-fn ensure_worker_env_impl(
+/// Worker setup is required only when running as root without an existing
+/// `PG_EMBEDDED_WORKER` environment variable. Unprivileged users run in-process
+/// and do not need the worker binary.
+fn is_worker_env_required(privileges: ExecutionPrivileges, worker_env_present: bool) -> bool {
+    privileges == ExecutionPrivileges::Root && !worker_env_present
+}
+
+/// Locates the worker binary path if required by the current execution context.
+///
+/// Returns `Some(path)` when running as root without `PG_EMBEDDED_WORKER` set,
+/// `None` when no worker setup is needed (unprivileged or already configured).
+/// Panics if root execution requires a worker but none can be found.
+fn resolve_worker_path(
     privileges: ExecutionPrivileges,
     worker_env_present: bool,
     worker_finder: impl FnOnce() -> Option<OsString>,
-) -> Option<ScopedEnv> {
-    // Unprivileged users can run tests in-process without the worker binary.
-    if privileges == ExecutionPrivileges::Unprivileged {
-        return None;
-    }
-
-    if worker_env_present {
+) -> Option<OsString> {
+    if !is_worker_env_required(privileges, worker_env_present) {
         return None;
     }
 
@@ -131,10 +140,7 @@ fn ensure_worker_env_impl(
         );
     };
 
-    Some(scoped_env(vec![(
-        OsString::from("PG_EMBEDDED_WORKER"),
-        Some(worker),
-    )]))
+    Some(worker)
 }
 
 fn worker_binary() -> Option<OsString> {
@@ -287,14 +293,14 @@ mod tests {
     #[case::worker_would_not_be_found(false)]
     fn unprivileged_user_does_not_require_worker(#[case] worker_exists: bool) {
         let worker_finder = move || worker_exists.then(|| OsString::from("/fake/worker"));
-        let result = ensure_worker_env_impl(
+        let result = resolve_worker_path(
             ExecutionPrivileges::Unprivileged,
             false, // PG_EMBEDDED_WORKER not set
             worker_finder,
         );
         assert!(
             result.is_none(),
-            "unprivileged execution should not set up worker env"
+            "unprivileged execution should not resolve worker path"
         );
     }
 
@@ -303,40 +309,33 @@ mod tests {
     #[test]
     fn privileged_user_with_existing_worker_env_does_not_override() {
         let worker_finder = || panic!("worker_finder should not be called when env var is set");
-        let result = ensure_worker_env_impl(
+        let result = resolve_worker_path(
             ExecutionPrivileges::Root,
             true, // PG_EMBEDDED_WORKER already set
             worker_finder,
         );
         assert!(
             result.is_none(),
-            "should not override existing PG_EMBEDDED_WORKER"
+            "should not resolve worker path when PG_EMBEDDED_WORKER is set"
         );
     }
 
-    /// Privileged users without `PG_EMBEDDED_WORKER` set should receive a
-    /// `ScopedEnv` that configures the worker binary path.
+    /// Privileged users without `PG_EMBEDDED_WORKER` set should receive the
+    /// worker binary path for environment configuration.
     #[test]
-    fn privileged_user_without_worker_env_sets_up_worker() {
+    fn privileged_user_without_worker_env_resolves_worker_path() {
         let worker_path = OsString::from("/path/to/pg_worker");
         let expected_path = worker_path.clone();
         let worker_finder = move || Some(worker_path);
-        let result = ensure_worker_env_impl(
+        let result = resolve_worker_path(
             ExecutionPrivileges::Root,
             false, // PG_EMBEDDED_WORKER not set
             worker_finder,
         );
-        assert!(
-            result.is_some(),
-            "should return ScopedEnv for privileged execution"
-        );
-        // Verify the env var was set by checking the current environment
-        // (ScopedEnv sets it on construction).
-        let env_value = std::env::var_os("PG_EMBEDDED_WORKER");
         assert_eq!(
-            env_value,
+            result,
             Some(expected_path),
-            "PG_EMBEDDED_WORKER should be set"
+            "should return worker path for privileged execution"
         );
     }
 
@@ -346,7 +345,7 @@ mod tests {
     #[should_panic(expected = "SKIP-TEST-CLUSTER")]
     fn privileged_user_without_worker_binary_panics() {
         let worker_finder = || None;
-        let _result = ensure_worker_env_impl(
+        let _result = resolve_worker_path(
             ExecutionPrivileges::Root,
             false, // PG_EMBEDDED_WORKER not set
             worker_finder,
