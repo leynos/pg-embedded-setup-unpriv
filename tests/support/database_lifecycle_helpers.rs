@@ -132,15 +132,19 @@ impl DatabaseWorld {
         self.ensure_not_skipped()?;
         self.cluster.as_ref().map_or_else(
             || {
-                let message = self.bootstrap_error.as_deref().map_or_else(
-                    || "TestCluster was not created".to_owned(),
-                    |err| format!("TestCluster was not created: {err}"),
-                );
+                let message = format_cluster_not_created_error(self.bootstrap_error.as_deref());
                 Err(eyre!(message))
             },
             Ok,
         )
     }
+}
+
+fn format_cluster_not_created_error(bootstrap_error: Option<&str>) -> String {
+    bootstrap_error.map_or_else(
+        || "TestCluster was not created".to_owned(),
+        |err| format!("TestCluster was not created: {err}"),
+    )
 }
 
 /// Type alias for the world fixture result.
@@ -370,14 +374,6 @@ mod tests {
 
     use super::*;
 
-    /// Helper to construct the "`TestCluster` was not created" error message.
-    fn cluster_not_created_error(bootstrap_error: Option<&str>) -> String {
-        bootstrap_error.map_or_else(
-            || "TestCluster was not created".to_owned(),
-            |err| format!("TestCluster was not created: {err}"),
-        )
-    }
-
     #[rstest]
     #[case::with_bootstrap_error(
         Some("failed to connect to test database"),
@@ -388,7 +384,7 @@ mod tests {
         #[case] bootstrap_error: Option<&str>,
         #[case] expected: &str,
     ) {
-        let msg = cluster_not_created_error(bootstrap_error);
+        let msg = format_cluster_not_created_error(bootstrap_error);
         assert_eq!(msg, expected);
     }
 

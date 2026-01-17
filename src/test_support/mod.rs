@@ -17,6 +17,7 @@ mod hook;
 #[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod logging;
 mod scoped_env;
+mod worker_env;
 
 #[cfg(doc)]
 mod fixtures_docs;
@@ -45,3 +46,4 @@ pub use logging::{
     capture_debug_logs, capture_info_logs, capture_info_logs_with_spans, capture_warn_logs,
 };
 pub use scoped_env::scoped_env;
+pub use worker_env::worker_binary_for_tests;

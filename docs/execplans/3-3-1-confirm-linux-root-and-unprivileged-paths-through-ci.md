@@ -51,22 +51,17 @@ code.
 ## Risks
 
 - Risk: GitHub Actions runners may not permit the desired root/unprivileged
-  split without containerization or `sudo`.
-  Severity: medium.
-  Likelihood: medium.
-  Mitigation: prototype the CI commands locally or in a minimal workflow
-  snippet, and document the chosen approach with reasoning.
+  split without containerization or `sudo`. Severity: medium. Likelihood:
+  medium. Mitigation: prototype the CI commands locally or in a minimal
+  workflow snippet, and document the chosen approach with reasoning.
 - Risk: behavioural tests might rely on global environment mutation that
-  becomes flaky when run in parallel CI jobs.
-  Severity: medium.
-  Likelihood: low.
-  Mitigation: reuse existing scoped environment helpers and keep tests
-  serialised where required.
+  becomes flaky when run in parallel CI jobs. Severity: medium. Likelihood:
+  low. Mitigation: reuse existing scoped environment helpers and keep tests
+  serialized where required.
 - Risk: macOS/Windows expectations might be unclear in existing docs.
-  Severity: low.
-  Likelihood: medium.
-  Mitigation: cross-reference the design document and update the roadmap
-  appendix with explicit expected outcomes and rationale.
+  Severity: low. Likelihood: medium. Mitigation: cross-reference the design
+  document and update the roadmap appendix with explicit expected outcomes and
+  rationale.
 
 ## Progress
 

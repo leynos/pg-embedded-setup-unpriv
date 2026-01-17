@@ -57,13 +57,16 @@ mod tests {
     use super::*;
     use camino::Utf8PathBuf;
 
+    fn temp_utf8_dir() -> Utf8PathBuf {
+        let temp = std::env::temp_dir();
+        Utf8PathBuf::from_path_buf(temp).expect("temp dir should be valid UTF-8")
+    }
+
     #[test]
     fn remove_tree_returns_ok_when_parent_directory_missing() {
         // Construct an absolute path rooted in temp_dir whose parent definitely
         // does not exist.
-        let temp = std::env::temp_dir();
-        let temp_utf8 = Utf8PathBuf::from_path_buf(temp).expect("temp dir should be valid UTF-8");
-        let path = temp_utf8.join("this/parent/definitely/does/not/exist/remove_me");
+        let path = temp_utf8_dir().join("this/parent/definitely/does/not/exist/remove_me");
         // The function should treat a missing parent as a non-error.
         remove_tree(&path).expect("remove_tree should return Ok for missing parent");
     }
@@ -71,9 +74,7 @@ mod tests {
     #[test]
     fn remove_tree_returns_ok_for_nonexistent_file_with_existing_parent() {
         // Use the temp directory which exists, but reference a nonexistent child.
-        let temp = std::env::temp_dir();
-        let temp_utf8 = Utf8PathBuf::from_path_buf(temp).expect("temp dir should be valid UTF-8");
-        let path = temp_utf8.join("nonexistent_test_file_for_remove_tree");
+        let path = temp_utf8_dir().join("nonexistent_test_file_for_remove_tree");
         remove_tree(&path).expect("remove_tree should return Ok for nonexistent file");
     }
 }

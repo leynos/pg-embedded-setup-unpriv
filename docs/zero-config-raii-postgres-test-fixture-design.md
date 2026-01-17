@@ -331,8 +331,8 @@ essentially one line in the test setup.
 ### Implementation update (2026-01-13)
 
 - Continuous Integration (CI) now runs a Linux matrix that exercises both
-  unprivileged and root execution paths, using a privileged test run to validate
-  the worker-based bootstrap flow.
+  unprivileged and root execution paths, using a privileged test run to
+  validate the worker-based bootstrap flow.
 - The root CI variant runs the same quality gates but executes tests via
   `sudo` so the effective UID is `0`, ensuring the privilege-aware logic is
   exercised in automated runs.

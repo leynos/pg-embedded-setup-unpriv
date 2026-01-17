@@ -120,6 +120,15 @@ mod tests {
         assert_eq!(mode, ExecutionMode::InProcess);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn determine_execution_mode_ignores_worker_when_unprivileged() {
+        let worker = Utf8PathBuf::from("/tmp/pg_worker");
+        let mode = determine_execution_mode(ExecutionPrivileges::Unprivileged, Some(&worker))
+            .expect("unprivileged execution should succeed with worker configured");
+        assert_eq!(mode, ExecutionMode::InProcess);
+    }
+
     #[cfg(not(unix))]
     #[test]
     fn determine_execution_mode_defaults_to_in_process() {
