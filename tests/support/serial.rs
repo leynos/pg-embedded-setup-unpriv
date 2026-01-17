@@ -31,6 +31,12 @@ pub struct ScenarioSerialGuard {
     _lock_file: ProcessLock,
 }
 
+#[derive(Debug)]
+#[must_use = "Hold this guard for the duration of the serialized scenario"]
+pub struct ScenarioLocalGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
 /// Provides a serialization guard for behavioural test scenarios.
 ///
 /// Acquires a global mutex to ensure that scenarios relying on shared state
@@ -61,13 +67,48 @@ pub struct ScenarioSerialGuard {
 #[fixture]
 pub fn serial_guard() -> ScenarioSerialGuard {
     let lock_file = acquire_process_lock();
-    let guard = SCENARIO_MUTEX
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let guard = acquire_scenario_guard();
     ScenarioSerialGuard {
         _guard: guard,
         _lock_file: lock_file,
     }
+}
+
+/// Provides a local-only serialization guard for behavioural scenarios.
+///
+/// Use this guard when a test only needs in-process serialization (for example,
+/// it uses sandboxed directories) and does not require a cross-process file
+/// lock.
+///
+/// # Behaviour
+///
+/// - Acquires the global `SCENARIO_MUTEX` and wraps the guard.
+/// - If the mutex is poisoned (a previous test panicked whilst holding the lock),
+///   the poison is cleared and execution continues.
+/// - The guard is automatically released when dropped at the end of the test.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use rstest::rstest;
+/// use tests::support::serial::{local_serial_guard, ScenarioLocalGuard};
+///
+/// #[rstest]
+/// fn my_scenario(local_serial_guard: ScenarioLocalGuard) {
+///     let _guard = local_serial_guard;
+///     // Test code that uses sandboxed directories
+/// }
+/// ```
+#[fixture]
+pub fn local_serial_guard() -> ScenarioLocalGuard {
+    let guard = acquire_scenario_guard();
+    ScenarioLocalGuard { _guard: guard }
+}
+
+fn acquire_scenario_guard() -> MutexGuard<'static, ()> {
+    SCENARIO_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(unix)]

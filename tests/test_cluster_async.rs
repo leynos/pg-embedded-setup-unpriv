@@ -3,29 +3,41 @@
 //! These tests verify that `TestCluster::start_async()` and `stop_async()` work
 //! correctly within async contexts like `#[tokio::test]`.
 //!
-//! All tests are serialized using `file_serial` to prevent conflicts with other
-//! cluster tests that use the same default data directory.
+//! All tests acquire the local scenario guard while using sandboxed directories
+//! to prevent environment lock ordering issues without sharing global data
+//! paths.
 
 #![cfg(all(unix, feature = "async-api"))]
 
 use color_eyre::eyre::{Result, ensure};
-use pg_embedded_setup_unpriv::test_support::ensure_worker_env;
-use pg_embedded_setup_unpriv::{BootstrapResult, TestCluster};
-use rstest::{fixture, rstest};
-use serial_test::file_serial;
+use pg_embedded_setup_unpriv::test_support::scoped_env;
+use pg_embedded_setup_unpriv::{ScopedEnv, TestCluster};
+use rstest::rstest;
 
-/// Async fixture that provides a running `TestCluster`.
-///
-/// This fixture starts the cluster asynchronously and should be used with
-/// `#[rstest]` and `#[tokio::test]`. Note that callers are responsible for
-/// calling `stop_async()` when done, as the fixture cannot perform async cleanup.
-#[fixture]
-fn cluster_future() -> impl std::future::Future<Output = BootstrapResult<TestCluster>> {
-    let worker_guard = ensure_worker_env();
-    async move {
-        let _guard = worker_guard;
-        TestCluster::start_async().await
-    }
+#[path = "support/cap_fs_bootstrap.rs"]
+mod cap_fs;
+#[path = "support/env.rs"]
+mod env;
+#[path = "support/sandbox.rs"]
+mod sandbox;
+#[path = "support/serial.rs"]
+mod serial;
+
+use sandbox::TestSandbox;
+use serial::{ScenarioLocalGuard, local_serial_guard};
+
+async fn start_sandboxed_cluster() -> Result<(TestCluster, TestSandbox, ScopedEnv)> {
+    let sandbox = TestSandbox::new("test-cluster-async")?;
+    sandbox.reset()?;
+    let env_vars = sandbox.env_without_timezone();
+    let runtime_dir = sandbox.with_env(env_vars.clone(), || std::env::var("PG_RUNTIME_DIR").ok());
+    ensure!(
+        runtime_dir.as_deref() == Some(sandbox.install_dir().as_str()),
+        "PG_RUNTIME_DIR should match sandbox install dir"
+    );
+    let env_guard = scoped_env(env_vars);
+    let cluster = TestCluster::start_async().await?;
+    Ok((cluster, sandbox, env_guard))
 }
 
 /// Verifies that `start_async()` can be called from within an async context.
@@ -33,12 +45,12 @@ fn cluster_future() -> impl std::future::Future<Output = BootstrapResult<TestClu
 /// This is the primary test - it confirms that the async API does not panic with
 /// "Cannot start a runtime from within a runtime" when called from `#[tokio::test]`.
 #[rstest]
-#[tokio::test]
-#[file_serial(cluster)]
+#[tokio::test(flavor = "current_thread")]
 async fn start_async_succeeds_in_async_context(
-    cluster_future: impl std::future::Future<Output = BootstrapResult<TestCluster>>,
+    local_serial_guard: ScenarioLocalGuard,
 ) -> Result<()> {
-    let cluster = cluster_future.await?;
+    let _guard = local_serial_guard;
+    let (cluster, _sandbox, _env_guard) = start_sandboxed_cluster().await?;
 
     // Verify the cluster is functional by checking settings.
     let settings = cluster.settings();
@@ -54,12 +66,10 @@ async fn start_async_succeeds_in_async_context(
 
 /// Verifies that `stop_async()` properly shuts down the cluster.
 #[rstest]
-#[tokio::test]
-#[file_serial(cluster)]
-async fn stop_async_cleans_up_resources(
-    cluster_future: impl std::future::Future<Output = BootstrapResult<TestCluster>>,
-) -> Result<()> {
-    let cluster = cluster_future.await?;
+#[tokio::test(flavor = "current_thread")]
+async fn stop_async_cleans_up_resources(local_serial_guard: ScenarioLocalGuard) -> Result<()> {
+    let _guard = local_serial_guard;
+    let (cluster, _sandbox, _env_guard) = start_sandboxed_cluster().await?;
 
     // Stop should succeed.
     cluster.stop_async().await?;
@@ -69,12 +79,12 @@ async fn stop_async_cleans_up_resources(
 
 /// Verifies that connection metadata is available from async-created clusters.
 #[rstest]
-#[tokio::test]
-#[file_serial(cluster)]
+#[tokio::test(flavor = "current_thread")]
 async fn async_cluster_provides_connection_metadata(
-    cluster_future: impl std::future::Future<Output = BootstrapResult<TestCluster>>,
+    local_serial_guard: ScenarioLocalGuard,
 ) -> Result<()> {
-    let cluster = cluster_future.await?;
+    let _guard = local_serial_guard;
+    let (cluster, _sandbox, _env_guard) = start_sandboxed_cluster().await?;
 
     let connection = cluster.connection();
     let metadata = connection.metadata();
@@ -93,12 +103,10 @@ async fn async_cluster_provides_connection_metadata(
 
 /// Verifies that `database_url` can be constructed from async-created clusters.
 #[rstest]
-#[tokio::test]
-#[file_serial(cluster)]
-async fn async_cluster_provides_database_url(
-    cluster_future: impl std::future::Future<Output = BootstrapResult<TestCluster>>,
-) -> Result<()> {
-    let cluster = cluster_future.await?;
+#[tokio::test(flavor = "current_thread")]
+async fn async_cluster_provides_database_url(local_serial_guard: ScenarioLocalGuard) -> Result<()> {
+    let _guard = local_serial_guard;
+    let (cluster, _sandbox, _env_guard) = start_sandboxed_cluster().await?;
 
     let url = cluster.connection().database_url("test_db");
 
@@ -118,12 +126,12 @@ async fn async_cluster_provides_database_url(
 /// This exercises the best-effort cleanup path in `Drop`, which spawns a cleanup task
 /// on the current runtime handle if available.
 #[rstest]
-#[tokio::test]
-#[file_serial(cluster)]
+#[tokio::test(flavor = "current_thread")]
 async fn async_drop_without_stop_does_not_panic(
-    cluster_future: impl std::future::Future<Output = BootstrapResult<TestCluster>>,
+    local_serial_guard: ScenarioLocalGuard,
 ) -> Result<()> {
-    let cluster = cluster_future.await?;
+    let _guard = local_serial_guard;
+    let (cluster, _sandbox, _env_guard) = start_sandboxed_cluster().await?;
 
     // Use the cluster briefly to ensure it's functional.
     let _port = cluster.settings().port;

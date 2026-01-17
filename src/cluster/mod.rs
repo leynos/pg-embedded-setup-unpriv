@@ -211,6 +211,7 @@ impl TestCluster {
         env_vars: &[(String, Option<String>)],
         embedded: &mut PostgreSQL,
     ) -> BootstrapResult<()> {
+        // Scope ensures the setup invoker releases its borrows before we refresh the settings.
         {
             let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
             invoker.invoke(worker_operation::WorkerOperation::Setup, async {
@@ -224,6 +225,10 @@ impl TestCluster {
         })
     }
 
+    /// Refreshes the installation directory after worker setup for root runs.
+    ///
+    /// The worker helper may install `PostgreSQL` under a subdirectory, so we
+    /// re-resolve the installation directory before starting the server.
     fn refresh_worker_installation_dir(bootstrap: &mut TestBootstrapSettings) {
         if bootstrap.privileges != ExecutionPrivileges::Root {
             return;
@@ -376,6 +381,7 @@ impl TestCluster {
         env_vars: &[(String, Option<String>)],
         embedded: &mut PostgreSQL,
     ) -> BootstrapResult<()> {
+        // Scope ensures the setup invoker releases its borrows before we refresh the settings.
         {
             let invoker = AsyncInvoker::new(bootstrap, env_vars);
             Box::pin(

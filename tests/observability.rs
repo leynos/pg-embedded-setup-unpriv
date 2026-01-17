@@ -35,7 +35,7 @@ use cluster_skip::cluster_skip_message;
 use env_isolation::override_env_path;
 use sandbox::TestSandbox;
 use scenario::expect_fixture;
-use serial::{ScenarioSerialGuard, serial_guard};
+use serial::{ScenarioLocalGuard, local_serial_guard};
 
 struct ObservabilityWorld {
     sandbox: TestSandbox,
@@ -326,13 +326,13 @@ fn assert_worker_present(env_vars: &[(OsString, Option<OsString>)]) -> Result<()
 }
 
 #[scenario(path = "tests/features/observability.feature", index = 0)]
-fn scenario_observability_success(serial_guard: ScenarioSerialGuard, world: WorldFixture) {
-    let _guard = serial_guard;
+fn scenario_observability_success(local_serial_guard: ScenarioLocalGuard, world: WorldFixture) {
+    let _guard = local_serial_guard;
     let _ = expect_fixture(world, "observability success world");
 }
 
 #[scenario(path = "tests/features/observability.feature", index = 1)]
-fn scenario_observability_failure(serial_guard: ScenarioSerialGuard, world: WorldFixture) {
-    let _guard = serial_guard;
+fn scenario_observability_failure(local_serial_guard: ScenarioLocalGuard, world: WorldFixture) {
+    let _guard = local_serial_guard;
     let _ = expect_fixture(world, "observability failure world");
 }

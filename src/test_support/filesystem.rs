@@ -76,6 +76,26 @@ pub fn metadata(path: &Utf8Path) -> std::io::Result<Metadata> {
     }
 }
 
+fn temp_root_dir() -> Result<Utf8PathBuf> {
+    let base = if let Some(path) = std::env::var_os("PG_EMBEDDED_TEST_TMPDIR") {
+        Utf8PathBuf::try_from(std::path::PathBuf::from(path))
+            .map_err(|_| Report::msg("PG_EMBEDDED_TEST_TMPDIR is not valid UTF-8"))?
+    } else if let Some(path) = std::env::var_os("CARGO_TARGET_DIR") {
+        Utf8PathBuf::try_from(std::path::PathBuf::from(path))
+            .map_err(|_| Report::msg("CARGO_TARGET_DIR is not valid UTF-8"))?
+    } else {
+        let cwd_path = std::env::current_dir().context("resolve current directory")?;
+        let cwd = Utf8PathBuf::try_from(cwd_path)
+            .map_err(|_| Report::msg("current directory is not valid UTF-8"))?;
+        cwd.join("target")
+    };
+
+    let root = base.join("pg-embedded-setup-unpriv-tmp");
+    std::fs::create_dir_all(root.as_std_path())
+        .with_context(|| format!("create temp root at {root}"))?;
+    Ok(root)
+}
+
 /// Capability-aware temporary directory that exposes both a [`Dir`] handle and the UTF-8 path.
 #[derive(Debug)]
 pub struct CapabilityTempDir {
@@ -84,14 +104,16 @@ pub struct CapabilityTempDir {
 }
 
 impl CapabilityTempDir {
-    /// Creates a new temporary directory rooted under the system temporary location.
+    /// Creates a new temporary directory rooted under the test temp location.
+    ///
+    /// Uses `PG_EMBEDDED_TEST_TMPDIR` when set, otherwise prefers
+    /// `CARGO_TARGET_DIR` (or `./target`) to avoid exhausting shared `/tmp`
+    /// space during heavy test runs.
     pub fn new(prefix: &str) -> Result<Self> {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-        let system_tmp_dir = std::env::temp_dir();
-        let system_tmp_path = Utf8PathBuf::try_from(system_tmp_dir)
-            .map_err(|_| Report::msg("system temp dir is not valid UTF-8"))?;
-        let ambient = Dir::open_ambient_dir(system_tmp_path.as_std_path(), ambient_authority())
+        let temp_root = temp_root_dir()?;
+        let ambient = Dir::open_ambient_dir(temp_root.as_std_path(), ambient_authority())
             .context("open ambient temp directory")?;
 
         let pid = std::process::id();
@@ -106,7 +128,7 @@ impl CapabilityTempDir {
             match ambient.create_dir(&name) {
                 Ok(()) => {
                     let dir = ambient.open_dir(&name).context("open capability tempdir")?;
-                    let path = system_tmp_path.join(&name);
+                    let path = temp_root.join(&name);
                     return Ok(Self {
                         dir: Some(dir),
                         path,
