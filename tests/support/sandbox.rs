@@ -6,6 +6,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::{Context, Result, eyre};
 
 use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
+use pg_embedded_setup_unpriv::{ExecutionPrivileges, detect_execution_privileges};
 
 use super::cap_fs::{remove_tree, set_permissions};
 use super::env::{ScopedEnvVars, build_env, with_scoped_env};
@@ -61,8 +62,8 @@ impl TestSandbox {
         let guard = CapabilityTempDir::new(prefix).context("create sandbox tempdir")?;
         let base_dir = guard.path().to_owned();
         // Allow the postgres child processes to traverse and modify the tree
-        // whilst keeping the directory world-readable but not world-writable.
-        set_permissions(&base_dir, 0o755)?;
+        // whilst keeping the directory mode aligned with privilege mode.
+        set_permissions(&base_dir, base_dir_mode())?;
         let install_dir = base_dir.join("install");
         let data_dir = base_dir.join("data");
 
@@ -245,8 +246,15 @@ impl TestSandbox {
     pub fn reset(&self) -> Result<()> {
         remove_tree(self.install_dir())?;
         remove_tree(self.data_dir())?;
-        set_permissions(&self.base_dir, 0o755)?;
+        set_permissions(&self.base_dir, base_dir_mode())?;
         Ok(())
+    }
+}
+
+fn base_dir_mode() -> u32 {
+    match detect_execution_privileges() {
+        ExecutionPrivileges::Root => 0o777,
+        ExecutionPrivileges::Unprivileged => 0o755,
     }
 }
 
