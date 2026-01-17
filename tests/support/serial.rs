@@ -50,10 +50,11 @@ pub struct ScenarioSerialGuard {
 ///
 /// ```rust,ignore
 /// use rstest::rstest;
-/// use tests::support::serial::serial_guard;
+/// use tests::support::serial::{serial_guard, ScenarioSerialGuard};
 ///
 /// #[rstest]
-/// fn my_scenario(_guard: serial_guard) {
+/// fn my_scenario(serial_guard: ScenarioSerialGuard) {
+///     let _guard = serial_guard;
 ///     // Test code that mutates shared state
 /// }
 /// ```

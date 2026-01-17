@@ -45,7 +45,7 @@ code.
 - Tests: if tests still fail after 2 targeted fixes, stop and escalate.
 - Time: if any single milestone exceeds 3 hours, stop and escalate.
 - Ambiguity: if multiple valid CI strategies (container vs sudo vs matrix
-  scripts) remain after initial research, stop and present options with
+  scripts) remain after initial research, stop, and present options with
   trade-offs.
 
 ## Risks
