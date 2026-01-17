@@ -98,7 +98,21 @@ pub fn test_cluster() -> TestCluster {
     cluster.with_worker_guard(worker_guard)
 }
 
-fn ensure_worker_env() -> Option<ScopedEnv> {
+/// Ensures `PG_EMBEDDED_WORKER` is set when privileged test runs require it.
+///
+/// Returns `Some(ScopedEnv)` when the helper configures the environment, and
+/// `None` when no changes are needed (for example, when already unprivileged
+/// or when `PG_EMBEDDED_WORKER` is present).
+///
+/// # Examples
+///
+/// ```no_run
+/// use pg_embedded_setup_unpriv::test_support::ensure_worker_env;
+///
+/// let guard = ensure_worker_env();
+/// drop(guard); // Restores the previous environment values.
+/// ```
+pub fn ensure_worker_env() -> Option<ScopedEnv> {
     let worker_path = resolve_worker_path(
         detect_execution_privileges(),
         std::env::var_os("PG_EMBEDDED_WORKER").is_some(),

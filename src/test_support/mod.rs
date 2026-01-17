@@ -27,7 +27,9 @@ pub use errors::{bootstrap_error, privilege_error};
 pub use filesystem::{
     CapabilityTempDir, ambient_dir_and_path, ensure_dir_exists, metadata, set_permissions,
 };
-pub use fixtures::{dummy_environment, dummy_settings, shared_cluster, test_runtime};
+pub use fixtures::{
+    dummy_environment, dummy_settings, ensure_worker_env, shared_cluster, test_runtime,
+};
 #[cfg(not(doc))]
 pub use fixtures::{shared_test_cluster, test_cluster};
 #[cfg(doc)]

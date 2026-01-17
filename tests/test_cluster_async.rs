@@ -9,6 +9,7 @@
 #![cfg(all(unix, feature = "async-api"))]
 
 use color_eyre::eyre::{Result, ensure};
+use pg_embedded_setup_unpriv::test_support::ensure_worker_env;
 use pg_embedded_setup_unpriv::{BootstrapResult, TestCluster};
 use rstest::{fixture, rstest};
 use serial_test::file_serial;
@@ -20,7 +21,11 @@ use serial_test::file_serial;
 /// calling `stop_async()` when done, as the fixture cannot perform async cleanup.
 #[fixture]
 fn cluster_future() -> impl std::future::Future<Output = BootstrapResult<TestCluster>> {
-    TestCluster::start_async()
+    let worker_guard = ensure_worker_env();
+    async move {
+        let _guard = worker_guard;
+        TestCluster::start_async().await
+    }
 }
 
 /// Verifies that `start_async()` can be called from within an async context.
