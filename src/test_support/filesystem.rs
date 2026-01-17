@@ -11,7 +11,7 @@ use cap_std::{
 };
 use color_eyre::eyre::{Context, Report, Result};
 
-use crate::fs;
+use crate::{ExecutionPrivileges, detect_execution_privileges, fs};
 
 /// Opens the ambient directory containing `path` and returns its relative component.
 ///
@@ -77,9 +77,10 @@ pub fn metadata(path: &Utf8Path) -> std::io::Result<Metadata> {
 }
 
 fn temp_root_dir() -> Result<Utf8PathBuf> {
-    let base = match env_temp_base()? {
+    let privileges = detect_execution_privileges();
+    let base = match env_temp_base(privileges)? {
         Some(path) => path,
-        None => default_temp_base()?,
+        None => default_temp_base(privileges)?,
     };
 
     let root = base.join("pg-embedded-setup-unpriv-tmp");
@@ -88,8 +89,13 @@ fn temp_root_dir() -> Result<Utf8PathBuf> {
     Ok(root)
 }
 
-fn env_temp_base() -> Result<Option<Utf8PathBuf>> {
-    for var in ["PG_EMBEDDED_TEST_TMPDIR", "CARGO_TARGET_DIR"] {
+fn env_temp_base(privileges: ExecutionPrivileges) -> Result<Option<Utf8PathBuf>> {
+    let vars: &[&str] = match privileges {
+        ExecutionPrivileges::Root => &["PG_EMBEDDED_TEST_TMPDIR"],
+        ExecutionPrivileges::Unprivileged => &["PG_EMBEDDED_TEST_TMPDIR", "CARGO_TARGET_DIR"],
+    };
+
+    for var in vars {
         if let Some(path) = resolve_env_path(var)? {
             return Ok(Some(path));
         }
@@ -106,7 +112,24 @@ fn resolve_env_path(var: &str) -> Result<Option<Utf8PathBuf>> {
         .transpose()
 }
 
-fn default_temp_base() -> Result<Utf8PathBuf> {
+fn default_temp_base(privileges: ExecutionPrivileges) -> Result<Utf8PathBuf> {
+    match privileges {
+        ExecutionPrivileges::Root => {
+            #[cfg(unix)]
+            {
+                Ok(Utf8PathBuf::from("/var/tmp"))
+            }
+
+            #[cfg(not(unix))]
+            {
+                target_temp_base()
+            }
+        }
+        ExecutionPrivileges::Unprivileged => target_temp_base(),
+    }
+}
+
+fn target_temp_base() -> Result<Utf8PathBuf> {
     let cwd_path = std::env::current_dir().context("resolve current directory")?;
     let cwd = Utf8PathBuf::try_from(cwd_path)
         .map_err(|_| Report::msg("current directory is not valid UTF-8"))?;
@@ -123,9 +146,10 @@ pub struct CapabilityTempDir {
 impl CapabilityTempDir {
     /// Creates a new temporary directory rooted under the test temp location.
     ///
-    /// Uses `PG_EMBEDDED_TEST_TMPDIR` when set, otherwise prefers
+    /// Uses `PG_EMBEDDED_TEST_TMPDIR` when set. Unprivileged tests prefer
     /// `CARGO_TARGET_DIR` (or `./target`) to avoid exhausting shared `/tmp`
-    /// space during heavy test runs.
+    /// space; privileged tests default to `/var/tmp` so the unprivileged worker
+    /// can access the directory tree.
     pub fn new(prefix: &str) -> Result<Self> {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
