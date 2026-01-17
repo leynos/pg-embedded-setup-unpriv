@@ -135,6 +135,10 @@ mod tests {
 
     #[cfg(unix)]
     #[rstest]
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort cleanup where errors are intentionally ignored"
+    )]
     fn acquire_process_lock_places_lock_file_in_cargo_target_dir(
         serial_guard: ScenarioSerialGuard,
     ) {
@@ -148,9 +152,7 @@ mod tests {
         let tmp_dir = env::temp_dir().join("pg_scenario_lock_test");
         // Best-effort cleanup of any previous test run; errors are expected if
         // the directory does not exist.
-        match fs::remove_dir_all(&tmp_dir) {
-            Ok(()) | Err(_) => {}
-        }
+        let _ = fs::remove_dir_all(&tmp_dir);
         fs::create_dir_all(&tmp_dir)
             .expect("failed to create temporary CARGO_TARGET_DIR for acquire_process_lock test");
 
@@ -171,8 +173,6 @@ mod tests {
         );
 
         // Best-effort cleanup; errors are non-fatal in test teardown.
-        match fs::remove_dir_all(&tmp_dir) {
-            Ok(()) | Err(_) => {}
-        }
+        let _ = fs::remove_dir_all(&tmp_dir);
     }
 }

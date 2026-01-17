@@ -51,17 +51,22 @@ code.
 ## Risks
 
 - Risk: GitHub Actions runners may not permit the desired root/unprivileged
-  split without containerization or `sudo`. Severity: medium Likelihood: medium
+  split without containerization or `sudo`.
+  Severity: medium.
+  Likelihood: medium.
   Mitigation: prototype the CI commands locally or in a minimal workflow
   snippet, and document the chosen approach with reasoning.
 - Risk: behavioural tests might rely on global environment mutation that
-  becomes flaky when run in parallel CI jobs. Severity: medium Likelihood: low
+  becomes flaky when run in parallel CI jobs.
+  Severity: medium.
+  Likelihood: low.
   Mitigation: reuse existing scoped environment helpers and keep tests
-  serialized where required.
+  serialised where required.
 - Risk: macOS/Windows expectations might be unclear in existing docs.
-  Severity: low Likelihood: medium Mitigation: cross-reference the design
-  document and update the roadmap appendix with explicit expected outcomes and
-  rationale.
+  Severity: low.
+  Likelihood: medium.
+  Mitigation: cross-reference the design document and update the roadmap
+  appendix with explicit expected outcomes and rationale.
 
 ## Progress
 
@@ -121,9 +126,9 @@ in `docs/rust-testing-with-rstest-fixtures.md`,
 `docs/ortho-config-users-guide.md`, and `docs/rstest-bdd-users-guide.md`.
 
 For this task, "root path" means running the bootstrap flow with effective user
-ID (UID) 0 on Linux so the worker process is exercised, while "unprivileged
+ID (UID) 0 on Linux, so the worker process is exercised, while "unprivileged
 path" means running as a standard user. The CI change must make these paths
-observable in separate matrix jobs so failures can be diagnosed independently.
+observable in separate matrix jobs, so failures can be diagnosed independently.
 
 ## Plan of work
 
@@ -228,7 +233,7 @@ record the decision in the design document.
 ## Artifacts and notes
 
 Capture key command outputs in `/tmp/*-$(get-project)-$(git branch --show).out`
-files so failures can be reviewed after truncated command output. Include any
+files, so failures can be reviewed after truncated command output. Include any
 notable CI error messages in the Decision log for future reference.
 
 ## Interfaces and dependencies
@@ -246,5 +251,5 @@ Updated the status to IN PROGRESS and recorded plan approval plus the initial
 discovery step completion in Progress to reflect the start of implementation.
 
 Recorded completed test additions, CI workflow updates, and documentation
-changes in Progress, and logged the CI strategy decision so remaining work is
+changes in Progress, and logged the CI strategy decision, so remaining work is
 limited to running quality gates and capturing outputs.

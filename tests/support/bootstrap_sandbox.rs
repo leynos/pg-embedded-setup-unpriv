@@ -8,11 +8,10 @@ use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::fs::MetadataExt;
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use nix::unistd::Uid;
-use pg_embedded_setup_unpriv::test_support::CapabilityTempDir;
-use pg_embedded_setup_unpriv::test_support::metadata;
 use pg_embedded_setup_unpriv::ExecutionPrivileges;
 #[cfg(feature = "privileged-tests")]
 use pg_embedded_setup_unpriv::nobody_uid;
+use pg_embedded_setup_unpriv::test_support::{CapabilityTempDir, metadata};
 use rstest::fixture;
 
 use super::cap_fs_bootstrap::{remove_tree, set_permissions};
