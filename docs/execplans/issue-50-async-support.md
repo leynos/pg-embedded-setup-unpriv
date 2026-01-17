@@ -118,8 +118,8 @@ The synchronous API remains unchanged for backward compatibility.
   Rationale: Using a dedicated enum (`Sync(Runtime)` / `Async`) eliminates the
   risk of inconsistent state between separate `runtime: Option<Runtime>` and
   `is_async_mode: bool` fields. The enum pattern ensures mode and runtime
-  ownership are always in sync.
-  Date/Author: 2026-01-15 / Plan author (updated 2026-01-16)
+  ownership are always in sync. Date/Author: 2026-01-15 / Plan author (updated
+  2026-01-16)
 
 - Decision: Name async constructor `start_async()` not `new_async()`
   Rationale: Matches the design document proposal. `start_async()` is more
@@ -195,15 +195,10 @@ Successfully implemented async API for `TestCluster`:
 
 ### Current architecture
 
-    +---------------+        +------------------+        +-------------------+
-    | TestCluster   |        | WorkerInvoker    |        | postgresql_       |
-    | (owns Runtime)|--&rt-->| (borrows &Runtime)|--await->| embedded          |
-    +---------------+        +------------------+        | (async methods)   |
-                                                         +-------------------+
-                                                                  ^
-    +-------+     +---------------+     +----------+              |
-    | Drop  |---->| invoke_unpriv |---->| block_on |----future----+
-    +-------+     +---------------+     +----------+
+    [TestCluster (owns Runtime)] --&rt--> [WorkerInvoker (borrows &Runtime)]
+        --await--> [postgresql_embedded (async methods)]
+                                   ^
+    [Drop] --> [invoke_unpriv] --> [block_on] --> future
 
 *Figure: Current architecture showing TestCluster ownership and lifecycle
 dispatch flow.*
@@ -496,10 +491,10 @@ The key change in `WorkerInvoker` is adding an async path that bypasses
 
 ### Drop behaviour summary (implementation)
 
-| Mode                     | runtime field                    | Drop behaviour                                                                    |
-|--------------------------|----------------------------------|-----------------------------------------------------------------------------------|
-| Sync (`new()`)           | `ClusterRuntime::Sync(Runtime)`  | Uses `runtime.block_on()` to call `postgres.stop()`                               |
-| Async (`start_async()`)  | `ClusterRuntime::Async`          | Warns if `postgres` not None; attempts `Handle::try_current()` spawn for cleanup  |
+| Mode                    | runtime field                   | Drop behaviour                                                                   |
+| ----------------------- | ------------------------------- | -------------------------------------------------------------------------------- |
+| Sync (`new()`)          | `ClusterRuntime::Sync(Runtime)` | Uses `runtime.block_on()` to call `postgres.stop()`                              |
+| Async (`start_async()`) | `ClusterRuntime::Async`         | Warns if `postgres` not None; attempts `Handle::try_current()` spawn for cleanup |
 
 ## Interfaces and dependencies
 

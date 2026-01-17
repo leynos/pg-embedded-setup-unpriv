@@ -431,10 +431,10 @@ classDiagram
   require subprocess spawning.
 
 - The `Drop` implementation handles async-created clusters via best-effort
-  cleanup. It uses `tokio::runtime::Handle::try_current()` to detect if an async
-  runtime is available, spawns a cleanup task if so, and logs a warning advising
-  users to call `stop_async()` explicitly. This avoids panicking in `Drop` while
-  still attempting resource cleanup.
+  cleanup. It uses `tokio::runtime::Handle::try_current()` to detect if an
+  async runtime is available, spawns a cleanup task if so, and logs a warning
+  advising users to call `stop_async()` explicitly. This avoids panicking in
+  `Drop` while still attempting resource cleanup.
 
 - Design decision: The `ClusterRuntime` enum was chosen to encode runtime mode
   because it eliminates the risk of inconsistent state between separate fields.
@@ -460,11 +460,11 @@ classDiagram
   unprivileged users with "SKIP-TEST-CLUSTER: PG_EMBEDDED_WORKER is not set and
   pg_worker binary was not found".
 
-- Root cause: The `ensure_worker_env()` function in `src/test_support/fixtures.rs`
-  did not check execution privileges before requiring the worker binary. The
-  correct logic already existed in `src/bootstrap/mode.rs`, where unprivileged
-  execution runs in-process without a worker, while root execution requires the
-  worker for privilege dropping.
+- Root cause: The `ensure_worker_env()` function in
+  `src/test_support/fixtures.rs` did not check execution privileges before
+  requiring the worker binary. The correct logic already existed in
+  `src/bootstrap/mode.rs`, where unprivileged execution runs in-process without
+  a worker, while root execution requires the worker for privilege dropping.
 
 - Fix: Modified `ensure_worker_env()` to call `detect_execution_privileges()`
   first and return `None` immediately for unprivileged users, bypassing the
@@ -510,8 +510,8 @@ sequenceDiagram
 ```
 
 *Figure: Control flow for privilege-aware worker binary requirement in test
-fixtures. Unprivileged users bypass worker detection entirely, whilst root users
-follow the existing worker location logic. See issue #52[^1].*
+fixtures. Unprivileged users bypass worker detection entirely, whilst root
+users follow the existing worker location logic. See issue #52[^1].*
 
 [^1]: <https://github.com/leynos/pg-embedded-setup-unpriv/issues/52>
 
@@ -559,13 +559,14 @@ Rust tests:
   operations on the caller's runtime rather than creating a separate one,
   avoiding the "Cannot start a runtime from within a runtime" panic. Users must
   call `stop_async()` explicitly before the cluster goes out of scope, since
-  `Drop` cannot be async. See the implementation update above for design details.
+  `Drop` cannot be async. Implementation details are provided above.
 
 - **Uniform API:** The same `TestCluster` type works for both sync and async
   tests. Calling `new()` in a sync test performs blocking startup using an
-  internal Tokio runtime, whilst calling `start_async()` in an async test awaits
-  the lifecycle operations on the caller's runtime. Both paths share the same
-  bootstrap logic and produce identical cluster configurations. For example:
+  internal Tokio runtime, whilst calling `start_async()` in an async test
+  awaits the lifecycle operations on the caller's runtime. Both paths share the
+  same bootstrap logic and produce identical cluster configurations. For
+  example:
 
 ```rust
 // Synchronous test
