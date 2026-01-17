@@ -1,14 +1,14 @@
 # Confirm Linux root and unprivileged CI coverage
 
 This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
-`Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
-`Outcomes & Retrospective` must be kept up to date as work proceeds.
+`Risks`, `Progress`, `Surprises & discoveries`, `Decision log`, and
+`Outcomes & retrospective` must be kept up to date as work proceeds.
 
 Status: COMPLETE
 
 No `PLANS.md` file exists in the repository.
 
-## Purpose / Big Picture
+## Purpose / big picture
 
 Deliver explicit CI coverage for both Linux privilege paths (root and
 unprivileged) and document the expected behaviour on macOS and Windows in the
@@ -35,7 +35,7 @@ code.
   contributor-visible behaviour changes.
 - Mark the roadmap task as done once the feature is complete.
 
-## Tolerances (Exception Triggers)
+## Tolerances (exception triggers)
 
 - Scope: if changes require more than 8 files or more than 300 net lines of
   code, stop and escalate.
@@ -81,11 +81,11 @@ code.
   fail to create a `TestCluster`.
 - [x] (2026-01-13 02:45Z) Run all quality gates and capture outputs.
 
-## Surprises & Discoveries
+## Surprises & discoveries
 
 None yet.
 
-## Decision Log
+## Decision log
 
 - Decision: Use a CI matrix with unprivileged coverage via the existing
   shared coverage action and a root variant that runs `make test` under `sudo`
@@ -97,14 +97,14 @@ None yet.
   concurrent bootstrap/download races that caused intermittent CI failures
   while keeping other tests parallel. Date/Author: 2026-01-13 (Codex)
 
-## Outcomes & Retrospective
+## Outcomes & retrospective
 
 - Added explicit root/unprivileged CI coverage alongside new behavioural and
   unit checks for privilege handling.
 - Serialized PostgreSQL behavioural suites across binaries to stabilize
   nextest runs and improved error messages when bootstraps fail.
 
-## Context and Orientation
+## Context and orientation
 
 The current CI definition lives at `.github/workflows/ci.yml` and runs a single
 Ubuntu job that formats, lints, and tests the workspace. The roadmap task in
@@ -125,13 +125,13 @@ ID (UID) 0 on Linux so the worker process is exercised, while "unprivileged
 path" means running as a standard user. The CI change must make these paths
 observable in separate matrix jobs so failures can be diagnosed independently.
 
-## Plan of Work
+## Plan of work
 
 Stage A: Review current CI workflow, test coverage, and privilege-detection
 behaviour. Identify where root and unprivileged flows are currently tested and
 what gaps exist for CI observability. If multiple CI approaches are viable
 (e.g., containerized root job vs `sudo`), evaluate trade-offs and record the
-choice in the Decision Log.
+choice in the Decision log.
 
 Stage B: Add or adjust unit and behavioural tests to explicitly confirm the
 root and unprivileged paths. Use `rstest-bdd` v0.3.2 for behavioural coverage
@@ -153,7 +153,7 @@ CI-related clarifications. Record design decisions in
 
 Each stage ends by running the relevant validation steps before proceeding.
 
-## Concrete Steps
+## Concrete steps
 
 1. Inspect current CI and test structure:
 
@@ -198,7 +198,7 @@ Each stage ends by running the relevant validation steps before proceeding.
    commit each logical change with a descriptive message and ensure gates pass
    before each commit.
 
-## Validation and Acceptance
+## Validation and acceptance
 
 Success means:
 
@@ -215,23 +215,23 @@ Success means:
 
 Quality method:
 
-- Run the Makefile targets listed in the Concrete Steps and confirm the new
+- Run the Makefile targets listed in the Concrete steps and confirm the new
   tests fail before the change and pass after.
 
-## Idempotence and Recovery
+## Idempotence and recovery
 
 All steps should be re-runnable. If a CI change fails, revert the workflow file
 and reapply the edits with a smaller matrix or a simpler privilege strategy. If
 tests become flaky, isolate the scenario or run with serial execution and
 record the decision in the design document.
 
-## Artifacts and Notes
+## Artifacts and notes
 
 Capture key command outputs in `/tmp/*-$(get-project)-$(git branch --show).out`
 files so failures can be reviewed after truncated command output. Include any
-notable CI error messages in the Decision Log for future reference.
+notable CI error messages in the Decision log for future reference.
 
-## Interfaces and Dependencies
+## Interfaces and dependencies
 
 - `rstest-bdd` must remain at v0.3.2 in `Cargo.toml` and should be used for all
   new behavioural scenarios in this change.

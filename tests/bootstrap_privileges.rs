@@ -88,8 +88,13 @@ impl BootstrapSandbox {
     where
         F: FnOnce() -> R,
     {
-        let mut vars = self.base_env();
-        vars.push((OsString::from("PG_EMBEDDED_WORKER"), None));
+        let worker_key = OsString::from("PG_EMBEDDED_WORKER");
+        let mut vars: Vec<_> = self
+            .base_env()
+            .into_iter()
+            .filter(|(key, _)| *key != worker_key)
+            .collect();
+        vars.push((worker_key, None));
         with_scoped_env(vars, body)
     }
 

@@ -36,6 +36,11 @@ jobs:
       - name: Install cargo-nextest
         if: ${{ matrix.privilege == 'unprivileged' }}
         run: cargo binstall -y cargo-nextest@0.9.122
+      - name: Test with all features (unprivileged)
+        if: ${{ matrix.privilege == 'unprivileged' }}
+        run: >-
+          RUSTFLAGS="-D warnings"
+          cargo nextest run --all-targets --all-features
       - name: Test and Measure Coverage (unprivileged)
         if: ${{ matrix.privilege == 'unprivileged' }}
         uses: leynos/shared-actions/.github/actions/generate-coverage@fb861087e1ddbbe32c3f44d7896f1d2364dd7711

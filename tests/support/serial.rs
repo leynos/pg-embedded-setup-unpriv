@@ -121,25 +121,6 @@ mod tests {
 
     use super::*;
 
-    /// Drop guard to restore `CARGO_TARGET_DIR` even on panic.
-    #[cfg(unix)]
-    struct EnvGuard {
-        original: Option<std::ffi::OsString>,
-    }
-
-    #[cfg(unix)]
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            use std::env;
-            // SAFETY: Test runs serially via serial_guard fixture.
-            if let Some(val) = &self.original {
-                unsafe { env::set_var("CARGO_TARGET_DIR", val) };
-            } else {
-                unsafe { env::remove_var("CARGO_TARGET_DIR") };
-            }
-        }
-    }
-
     #[test]
     fn serial_guard_is_not_reentrant() {
         let guard = serial_guard();
@@ -156,7 +137,10 @@ mod tests {
     fn acquire_process_lock_places_lock_file_in_cargo_target_dir(
         serial_guard: ScenarioSerialGuard,
     ) {
+        use std::ffi::OsString;
         use std::{env, fs};
+
+        use pg_embedded_setup_unpriv::test_support::scoped_env;
 
         let _guard = serial_guard;
 
@@ -169,15 +153,12 @@ mod tests {
         fs::create_dir_all(&tmp_dir)
             .expect("failed to create temporary CARGO_TARGET_DIR for acquire_process_lock test");
 
-        // SAFETY: This test runs serially via the serial_guard fixture, so no
-        // other threads are concurrently reading or writing environment variables.
-        let _env_guard = EnvGuard {
-            original: env::var_os("CARGO_TARGET_DIR"),
-        };
-
-        // Temporarily set CARGO_TARGET_DIR to our test directory.
-        // SAFETY: Same reasoning as above - test runs serially.
-        unsafe { env::set_var("CARGO_TARGET_DIR", &tmp_dir) };
+        // Set CARGO_TARGET_DIR to our test directory using the shared scoped_env
+        // helper, which restores the original value when the guard is dropped.
+        let _env_guard = scoped_env(vec![(
+            OsString::from("CARGO_TARGET_DIR"),
+            Some(tmp_dir.clone().into_os_string()),
+        )]);
         let _lock = acquire_process_lock();
 
         let entries: Vec<_> = fs::read_dir(&tmp_dir)

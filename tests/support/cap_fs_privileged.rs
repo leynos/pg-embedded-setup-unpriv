@@ -59,8 +59,11 @@ mod tests {
 
     #[test]
     fn remove_tree_returns_ok_when_parent_directory_missing() {
-        // Construct a path whose parent definitely does not exist.
-        let path = Utf8PathBuf::from("/this/parent/definitely/does/not/exist/remove_me");
+        // Construct an absolute path rooted in temp_dir whose parent definitely
+        // does not exist.
+        let temp = std::env::temp_dir();
+        let temp_utf8 = Utf8PathBuf::from_path_buf(temp).expect("temp dir should be valid UTF-8");
+        let path = temp_utf8.join("this/parent/definitely/does/not/exist/remove_me");
         // The function should treat a missing parent as a non-error.
         remove_tree(&path).expect("remove_tree should return Ok for missing parent");
     }
