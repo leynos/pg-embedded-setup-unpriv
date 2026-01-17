@@ -77,23 +77,40 @@ pub fn metadata(path: &Utf8Path) -> std::io::Result<Metadata> {
 }
 
 fn temp_root_dir() -> Result<Utf8PathBuf> {
-    let base = if let Some(path) = std::env::var_os("PG_EMBEDDED_TEST_TMPDIR") {
-        Utf8PathBuf::try_from(std::path::PathBuf::from(path))
-            .map_err(|_| Report::msg("PG_EMBEDDED_TEST_TMPDIR is not valid UTF-8"))?
-    } else if let Some(path) = std::env::var_os("CARGO_TARGET_DIR") {
-        Utf8PathBuf::try_from(std::path::PathBuf::from(path))
-            .map_err(|_| Report::msg("CARGO_TARGET_DIR is not valid UTF-8"))?
-    } else {
-        let cwd_path = std::env::current_dir().context("resolve current directory")?;
-        let cwd = Utf8PathBuf::try_from(cwd_path)
-            .map_err(|_| Report::msg("current directory is not valid UTF-8"))?;
-        cwd.join("target")
+    let base = match env_temp_base()? {
+        Some(path) => path,
+        None => default_temp_base()?,
     };
 
     let root = base.join("pg-embedded-setup-unpriv-tmp");
     std::fs::create_dir_all(root.as_std_path())
         .with_context(|| format!("create temp root at {root}"))?;
     Ok(root)
+}
+
+fn env_temp_base() -> Result<Option<Utf8PathBuf>> {
+    for var in ["PG_EMBEDDED_TEST_TMPDIR", "CARGO_TARGET_DIR"] {
+        if let Some(path) = resolve_env_path(var)? {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+fn resolve_env_path(var: &str) -> Result<Option<Utf8PathBuf>> {
+    std::env::var_os(var)
+        .map(|path| {
+            Utf8PathBuf::try_from(std::path::PathBuf::from(path))
+                .map_err(|_| Report::msg(format!("{var} is not valid UTF-8")))
+        })
+        .transpose()
+}
+
+fn default_temp_base() -> Result<Utf8PathBuf> {
+    let cwd_path = std::env::current_dir().context("resolve current directory")?;
+    let cwd = Utf8PathBuf::try_from(cwd_path)
+        .map_err(|_| Report::msg("current directory is not valid UTF-8"))?;
+    Ok(cwd.join("target"))
 }
 
 /// Capability-aware temporary directory that exposes both a [`Dir`] handle and the UTF-8 path.
