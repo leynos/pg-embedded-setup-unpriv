@@ -111,11 +111,11 @@ setup.
 
 ### Async API for `#[tokio::test]` contexts
 
-When writing tests within an async runtime (e.g. `#[tokio::test]`), the
-standard `TestCluster::new()` constructor will panic with "Cannot start a
-runtime from within a runtime" because it creates its own internal Tokio
-runtime. To use `TestCluster` in async contexts, enable the `async-api` feature
-and use the async constructor and shutdown methods.
+Tests within an async runtime (e.g. `#[tokio::test]`) must not use the standard
+`TestCluster::new()` constructor, which panics with "Cannot start a runtime
+from within a runtime" because it creates its own internal Tokio runtime. Async
+contexts require enabling the `async-api` feature and using the async
+constructor and shutdown methods.
 
 Enable the feature in your `Cargo.toml`:
 
@@ -147,13 +147,13 @@ Async clusters behave like the synchronous guard: the same accessors apply, and
 the environment overrides are restored on shutdown. `stop_async()` consumes the
 guard, so capture any required connection details before calling it.
 
-**Important:** Always call `stop_async()` explicitly before the cluster goes
+**Important:** `stop_async()` must be called explicitly before the cluster goes
 out of scope. Unlike the synchronous API where `Drop` can reliably shut down
 PostgreSQL using its internal runtime, async-created clusters cannot guarantee
-cleanup in `Drop` because `Drop` cannot be async. If you forget to call
-`stop_async()`, the library will attempt best-effort cleanup and log a warning;
-if no async runtime handle is available (for example, after the runtime has
-shut down), resources may leak and the process may need to be stopped manually.
+cleanup in `Drop` because `Drop` cannot be async. When `stop_async()` is not
+called, the library will attempt best-effort cleanup and log a warning; if no
+async runtime handle is available (for example, after the runtime has shut
+down), resources may leak and the process may need to be stopped manually.
 
 The async API runs PostgreSQL lifecycle operations on the caller's runtime
 rather than creating a separate one, avoiding the nested-runtime panic whilst
