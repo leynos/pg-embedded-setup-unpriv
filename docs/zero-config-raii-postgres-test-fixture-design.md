@@ -461,11 +461,10 @@ classDiagram
   pg_worker binary was not found".
 
 - Root cause: The `ensure_worker_env()` function in
-  `src/test_support/fixtures.rs`
-  did not check execution privileges before requiring the worker binary. The
-  correct logic already existed in `src/bootstrap/mode.rs`, where unprivileged
-  execution runs in-process without a worker, while root execution requires the
-  worker for privilege dropping.
+  `src/test_support/fixtures.rs` did not check execution privileges before
+  requiring the worker binary. The correct logic already existed in
+  `src/bootstrap/mode.rs`, where unprivileged execution runs in-process without
+  a worker, while root execution requires the worker for privilege dropping.
 
 - Fix: Modified `ensure_worker_env()` to call `detect_execution_privileges()`
   first and return `None` immediately for unprivileged users, bypassing the
@@ -560,8 +559,7 @@ Rust tests:
   operations on the caller's runtime rather than creating a separate one,
   avoiding the "Cannot start a runtime from within a runtime" panic. Users must
   call `stop_async()` explicitly before the cluster goes out of scope, since
-  `Drop` cannot be async. See the implementation update above for design
-  details.
+  `Drop` cannot be async. Implementation details are provided above.
 
 - **Uniform API:** The same `TestCluster` type works for both sync and async
   tests. Calling `new()` in a sync test performs blocking startup using an
