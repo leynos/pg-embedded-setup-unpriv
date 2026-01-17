@@ -173,8 +173,7 @@ impl TestCluster {
             "starting embedded postgres lifecycle"
         );
 
-        let invoker = ClusterWorkerInvoker::new(runtime, &bootstrap, env_vars);
-        Self::invoke_lifecycle(&invoker, &mut embedded)?;
+        Self::invoke_lifecycle(runtime, &mut bootstrap, env_vars, &mut embedded)?;
 
         let is_managed_via_worker = matches!(privileges, ExecutionPrivileges::Root);
         let postgres =
@@ -207,15 +206,58 @@ impl TestCluster {
     }
 
     fn invoke_lifecycle(
-        invoker: &ClusterWorkerInvoker<'_>,
+        runtime: &Runtime,
+        bootstrap: &mut TestBootstrapSettings,
+        env_vars: &[(String, Option<String>)],
         embedded: &mut PostgreSQL,
     ) -> BootstrapResult<()> {
-        invoker.invoke(worker_operation::WorkerOperation::Setup, async {
-            embedded.setup().await
-        })?;
+        {
+            let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
+            invoker.invoke(worker_operation::WorkerOperation::Setup, async {
+                embedded.setup().await
+            })?;
+        }
+        Self::refresh_worker_installation_dir(bootstrap);
+        let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
         invoker.invoke(worker_operation::WorkerOperation::Start, async {
             embedded.start().await
         })
+    }
+
+    fn refresh_worker_installation_dir(bootstrap: &mut TestBootstrapSettings) {
+        if bootstrap.privileges != ExecutionPrivileges::Root {
+            return;
+        }
+
+        if let Some(installed_dir) = Self::resolve_installed_dir(&bootstrap.settings) {
+            bootstrap.settings.installation_dir = installed_dir;
+        }
+    }
+
+    fn resolve_installed_dir(settings: &Settings) -> Option<std::path::PathBuf> {
+        let install_dir = &settings.installation_dir;
+
+        if install_dir.join("bin").is_dir() {
+            return Some(install_dir.clone());
+        }
+
+        if settings.trust_installation_dir {
+            return Some(install_dir.clone());
+        }
+
+        let mut candidates = std::fs::read_dir(install_dir)
+            .ok()?
+            .filter_map(|dir_entry| {
+                let entry = dir_entry.ok()?;
+                if !entry.file_type().ok()?.is_dir() {
+                    return None;
+                }
+                let path = entry.path();
+                path.join("bin").is_dir().then_some(path)
+            })
+            .collect::<Vec<_>>();
+        candidates.sort();
+        candidates.pop()
     }
 
     /// Boots a `PostgreSQL` instance asynchronously for use in `#[tokio::test]` contexts.
@@ -286,8 +328,12 @@ impl TestCluster {
         let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
         Self::log_lifecycle_start(privileges, &bootstrap);
 
-        let invoker = AsyncInvoker::new(&bootstrap, env_vars);
-        Box::pin(Self::invoke_lifecycle_async(&invoker, &mut embedded)).await?;
+        Box::pin(Self::invoke_lifecycle_async(
+            &mut bootstrap,
+            env_vars,
+            &mut embedded,
+        ))
+        .await?;
 
         let is_managed_via_worker = matches!(privileges, ExecutionPrivileges::Root);
         let postgres =
@@ -326,15 +372,21 @@ impl TestCluster {
     /// Async variant of `invoke_lifecycle`.
     #[cfg(feature = "async-api")]
     async fn invoke_lifecycle_async(
-        invoker: &AsyncInvoker<'_>,
+        bootstrap: &mut TestBootstrapSettings,
+        env_vars: &[(String, Option<String>)],
         embedded: &mut PostgreSQL,
     ) -> BootstrapResult<()> {
-        Box::pin(
-            invoker.invoke(worker_operation::WorkerOperation::Setup, async {
-                embedded.setup().await
-            }),
-        )
-        .await?;
+        {
+            let invoker = AsyncInvoker::new(bootstrap, env_vars);
+            Box::pin(
+                invoker.invoke(worker_operation::WorkerOperation::Setup, async {
+                    embedded.setup().await
+                }),
+            )
+            .await?;
+        }
+        Self::refresh_worker_installation_dir(bootstrap);
+        let invoker = AsyncInvoker::new(bootstrap, env_vars);
         Box::pin(
             invoker.invoke(worker_operation::WorkerOperation::Start, async {
                 embedded.start().await
