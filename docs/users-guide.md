@@ -145,7 +145,7 @@ async fn test_async_database_operations() -> BootstrapResult<()> {
 
 Async clusters behave like the synchronous guard: the same accessors apply, and
 the environment overrides are restored on shutdown. `stop_async()` consumes the
-guard, so capture any connection details you need before calling it.
+guard, so capture any required connection details before calling it.
 
 **Important:** Always call `stop_async()` explicitly before the cluster goes
 out of scope. Unlike the synchronous API where `Drop` can reliably shut down
@@ -153,7 +153,7 @@ PostgreSQL using its internal runtime, async-created clusters cannot guarantee
 cleanup in `Drop` because `Drop` cannot be async. If you forget to call
 `stop_async()`, the library will attempt best-effort cleanup and log a warning;
 if no async runtime handle is available (for example, after the runtime has
-shut down), resources may leak and you may need to stop the process manually.
+shut down), resources may leak and the process may need to be stopped manually.
 
 The async API runs PostgreSQL lifecycle operations on the caller's runtime
 rather than creating a separate one, avoiding the nested-runtime panic whilst
