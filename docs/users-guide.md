@@ -189,9 +189,9 @@ normal informational lifecycle noise.
 fixture that constructs the RAII guard on demand. Import the fixture so it is
 in scope and declare a `test_cluster: TestCluster` parameter inside an
 `#[rstest]` function; the macro injects the running cluster automatically. The
-`test_cluster` and `shared_test_cluster` fixtures are synchronous and use
-`TestCluster::new()`, so avoid calling them inside async tests; use
-`TestCluster::start_async()` instead.
+`test_cluster` and `shared_test_cluster` fixtures are synchronous and
+constructed via `TestCluster::new()`, so they must not be used in async tests;
+`TestCluster::start_async()` should be used for async tests.
 
 ```rust,no_run
 use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
