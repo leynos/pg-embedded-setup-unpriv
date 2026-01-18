@@ -52,6 +52,10 @@ fn bootstrap_with_root(
     mut settings: Settings,
     cfg: &PgEnvCfg,
 ) -> BootstrapResult<PreparedBootstrap> {
+    // Worker subprocesses drop after each operation; keep the data dir so start can
+    // proceed after setup.
+    settings.temporary = false;
+
     let nobody_user = User::from_name("nobody")
         .context("failed to resolve user 'nobody'")?
         .ok_or_else(|| color_eyre::eyre::eyre!("user 'nobody' not found"))?;

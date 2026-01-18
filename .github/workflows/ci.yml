@@ -18,6 +18,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       BUILD_PROFILE: debug
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - name: Setup Rust
@@ -59,6 +60,7 @@ jobs:
               HOME="$HOME" \
               RUSTUP_HOME="$RUSTUP_HOME" \
               CARGO_HOME="$CARGO_HOME" \
+              GITHUB_TOKEN="$GITHUB_TOKEN" \
               PATH="$CARGO_HOME/bin:$PATH" \
               "$@"
           }
