@@ -4,6 +4,7 @@
 #![cfg(all(unix, feature = "privileged-tests"))]
 
 use std::io::Write;
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -12,7 +13,7 @@ use cap_std::fs::{OpenOptions, PermissionsExt};
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use diesel::prelude::*;
 use diesel::sql_types::{Bool, Int4, Text};
-use nix::unistd::geteuid;
+use nix::unistd::{User, fchown, geteuid};
 use pg_embedded_setup_unpriv::PgEnvCfg;
 use pg_embedded_setup_unpriv::worker_process_test_api::{
     WorkerOperation, WorkerRequest, WorkerRequestArgs, run as run_worker,
@@ -247,6 +248,11 @@ fn provision_password_file_for_nobody(
             cap_std::fs::Permissions::from_mode(0o600),
         )
         .context("set permissions on password file")?;
+    let user = User::from_name("nobody")
+        .context("resolve user 'nobody'")?
+        .ok_or_else(|| eyre!("user 'nobody' not found"))?;
+    fchown(pgpass.as_raw_fd(), Some(user.uid), Some(user.gid))
+        .context("chown password file to nobody")?;
     Ok(())
 }
 
