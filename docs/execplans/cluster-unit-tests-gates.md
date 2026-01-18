@@ -26,6 +26,8 @@ and run when the feature is explicitly enabled.
 - Follow repository quality gates: run `make check-fmt`, `make lint`, and
   `make test` (using `tee` logs) before committing.
 - Maintain en-GB-oxendict spelling in documentation edits.
+- Use repository-relative paths or generic placeholders when documenting
+  commands; avoid local absolute paths.
 
 ## Tolerances (Exception Triggers)
 
