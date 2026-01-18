@@ -152,7 +152,7 @@ type ConnectionWorldFixture = Result<RefCell<ConnectionWorld>>;
 fn borrow_world(world: &ConnectionWorldFixture) -> Result<&RefCell<ConnectionWorld>> {
     world
         .as_ref()
-        .map_err(|err| eyre!(format!("connection world failed to initialise: {err}")))
+        .map_err(|err| eyre!("connection world failed to initialise: {err}"))
 }
 
 #[fixture]

@@ -10,7 +10,7 @@ Status: COMPLETE
 
 Ensure `cargo check --all-targets` with no features enabled succeeds by
 preventing integration tests from importing
-`pg_embedded_setup_unpriv:: test_support` unless the `cluster-unit-tests`
+`pg_embedded_setup_unpriv::test_support` unless the `cluster-unit-tests`
 feature is enabled. The intended user-visible outcome is that default builds no
 longer fail with unresolved imports and missing `tracing-subscriber` when
 running checks without features, while the cluster-focused suites still compile
@@ -269,3 +269,4 @@ ordering discovery, and set status to COMPLETE with outcomes captured.
 2026-01-18: Replaced the local path with a repository-root description and
 centralised test gating in `Cargo.toml`. 2026-01-18: Updated fixture suite
 paths and deterministic skip handling after enabling the test target.
+2026-01-18: Corrected the `test_support` path typo in the Purpose section.

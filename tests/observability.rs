@@ -4,8 +4,8 @@
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 
-#[cfg(unix)]
 use color_eyre::eyre::{Context, Report, Result, ensure, eyre};
 use pg_embedded_setup_unpriv::test_support::capture_info_logs_with_spans;
 use pg_embedded_setup_unpriv::{BootstrapResult, TestCluster};
@@ -312,16 +312,11 @@ fn assert_worker_present(env_vars: &[(OsString, Option<OsString>)]) -> Result<()
         "worker binary {path} must exist for observability scenarios"
     );
     tracing::info!(worker = %path, "using worker binary for observability scenario");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let metadata =
-            std::fs::metadata(path.as_std_path()).with_context(|| format!("stat {path}"))?;
-        ensure!(
-            metadata.permissions().mode() & 0o111 != 0,
-            "worker binary {path} must be executable"
-        );
-    }
+    let metadata = std::fs::metadata(path.as_std_path()).with_context(|| format!("stat {path}"))?;
+    ensure!(
+        metadata.permissions().mode() & 0o111 != 0,
+        "worker binary {path} must be executable"
+    );
     Ok(())
 }
 
