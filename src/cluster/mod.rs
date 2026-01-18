@@ -71,8 +71,11 @@ use crate::env::ScopedEnv;
 use crate::error::BootstrapResult;
 use crate::observability::LOG_TARGET;
 use crate::{ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings};
+use color_eyre::eyre::eyre;
 use postgresql_embedded::{PostgreSQL, Settings};
 use std::fmt::Display;
+use std::path::Path;
+use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::time;
 use tracing::{info, info_span};
@@ -122,6 +125,9 @@ struct StartupOutcome {
     is_managed_via_worker: bool,
 }
 
+const POSTMASTER_PORT_ATTEMPTS: usize = 10;
+const POSTMASTER_PORT_DELAY: Duration = Duration::from_millis(100);
+
 impl TestCluster {
     /// Boots a `PostgreSQL` instance configured by [`bootstrap_for_tests`].
     ///
@@ -165,7 +171,6 @@ impl TestCluster {
         env_vars: &[(String, Option<String>)],
     ) -> BootstrapResult<StartupOutcome> {
         let privileges = bootstrap.privileges;
-        let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
         info!(
             target: LOG_TARGET,
             privileges = ?privileges,
@@ -173,11 +178,17 @@ impl TestCluster {
             "starting embedded postgres lifecycle"
         );
 
-        Self::invoke_lifecycle(runtime, &mut bootstrap, env_vars, &mut embedded)?;
-
-        let is_managed_via_worker = matches!(privileges, ExecutionPrivileges::Root);
-        let postgres =
-            Self::prepare_postgres_handle(is_managed_via_worker, &mut bootstrap, embedded);
+        let (is_managed_via_worker, postgres) = if privileges == ExecutionPrivileges::Root {
+            Self::invoke_lifecycle_root(runtime, &mut bootstrap, env_vars)?;
+            (true, None)
+        } else {
+            let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
+            Self::invoke_lifecycle(runtime, &mut bootstrap, env_vars, &mut embedded)?;
+            (
+                false,
+                Self::prepare_postgres_handle(false, &mut bootstrap, embedded),
+            )
+        };
 
         info!(
             target: LOG_TARGET,
@@ -205,6 +216,19 @@ impl TestCluster {
         }
     }
 
+    fn invoke_lifecycle_root(
+        runtime: &Runtime,
+        bootstrap: &mut TestBootstrapSettings,
+        env_vars: &[(String, Option<String>)],
+    ) -> BootstrapResult<()> {
+        let setup_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
+        setup_invoker.invoke_as_root(worker_operation::WorkerOperation::Setup)?;
+        Self::refresh_worker_installation_dir(bootstrap);
+        let start_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
+        start_invoker.invoke_as_root(worker_operation::WorkerOperation::Start)?;
+        Self::refresh_worker_port(bootstrap)
+    }
+
     fn invoke_lifecycle(
         runtime: &Runtime,
         bootstrap: &mut TestBootstrapSettings,
@@ -222,7 +246,8 @@ impl TestCluster {
         let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
         invoker.invoke(worker_operation::WorkerOperation::Start, async {
             embedded.start().await
-        })
+        })?;
+        Self::refresh_worker_port(bootstrap)
     }
 
     /// Refreshes the installation directory after worker setup for root runs.
@@ -237,6 +262,60 @@ impl TestCluster {
         if let Some(installed_dir) = Self::resolve_installed_dir(&bootstrap.settings) {
             bootstrap.settings.installation_dir = installed_dir;
         }
+    }
+
+    fn refresh_worker_port(bootstrap: &mut TestBootstrapSettings) -> BootstrapResult<()> {
+        if bootstrap.privileges != ExecutionPrivileges::Root {
+            return Ok(());
+        }
+
+        let pid_path = bootstrap.settings.data_dir.join("postmaster.pid");
+        for _ in 0..POSTMASTER_PORT_ATTEMPTS {
+            match Self::read_postmaster_port(&pid_path)? {
+                Some(port) => {
+                    bootstrap.settings.port = port;
+                    return Ok(());
+                }
+                None => {
+                    std::thread::sleep(POSTMASTER_PORT_DELAY);
+                }
+            }
+        }
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            path = %pid_path.display(),
+            "postmaster.pid missing after start; keeping configured port"
+        );
+        Ok(())
+    }
+
+    fn read_postmaster_port(pid_path: &Path) -> BootstrapResult<Option<u16>> {
+        let contents = match std::fs::read_to_string(pid_path) {
+            Ok(contents) => contents,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(None);
+            }
+            Err(err) => {
+                return Err(crate::error::BootstrapError::from(eyre!(
+                    "failed to read postmaster pid at {}: {err}",
+                    pid_path.display()
+                )));
+            }
+        };
+        let port_line = contents.lines().nth(3).ok_or_else(|| {
+            crate::error::BootstrapError::from(eyre!(
+                "postmaster.pid missing port line at {}",
+                pid_path.display()
+            ))
+        })?;
+        let port = port_line.trim().parse::<u16>().map_err(|err| {
+            crate::error::BootstrapError::from(eyre!(
+                "failed to parse postmaster port from {}: {err}",
+                pid_path.display()
+            ))
+        })?;
+        Ok(Some(port))
     }
 
     fn resolve_installed_dir(settings: &Settings) -> Option<std::path::PathBuf> {
@@ -330,19 +409,24 @@ impl TestCluster {
         env_vars: &[(String, Option<String>)],
     ) -> BootstrapResult<StartupOutcome> {
         let privileges = bootstrap.privileges;
-        let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
         Self::log_lifecycle_start(privileges, &bootstrap);
 
-        Box::pin(Self::invoke_lifecycle_async(
-            &mut bootstrap,
-            env_vars,
-            &mut embedded,
-        ))
-        .await?;
-
-        let is_managed_via_worker = matches!(privileges, ExecutionPrivileges::Root);
-        let postgres =
-            Self::prepare_postgres_handle(is_managed_via_worker, &mut bootstrap, embedded);
+        let (is_managed_via_worker, postgres) = if privileges == ExecutionPrivileges::Root {
+            Box::pin(Self::invoke_lifecycle_root_async(&mut bootstrap, env_vars)).await?;
+            (true, None)
+        } else {
+            let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
+            Box::pin(Self::invoke_lifecycle_async(
+                &mut bootstrap,
+                env_vars,
+                &mut embedded,
+            ))
+            .await?;
+            (
+                false,
+                Self::prepare_postgres_handle(false, &mut bootstrap, embedded),
+            )
+        };
 
         Self::log_lifecycle_complete(privileges, is_managed_via_worker);
         Ok(StartupOutcome {
@@ -392,13 +476,37 @@ impl TestCluster {
             .await?;
         }
         Self::refresh_worker_installation_dir(bootstrap);
-        let invoker = AsyncInvoker::new(bootstrap, env_vars);
+        let start_invoker = AsyncInvoker::new(bootstrap, env_vars);
         Box::pin(
-            invoker.invoke(worker_operation::WorkerOperation::Start, async {
+            start_invoker.invoke(worker_operation::WorkerOperation::Start, async {
                 embedded.start().await
             }),
         )
-        .await
+        .await?;
+        Self::refresh_worker_port(bootstrap)
+    }
+
+    #[cfg(feature = "async-api")]
+    async fn invoke_lifecycle_root_async(
+        bootstrap: &mut TestBootstrapSettings,
+        env_vars: &[(String, Option<String>)],
+    ) -> BootstrapResult<()> {
+        let setup_invoker = AsyncInvoker::new(bootstrap, env_vars);
+        Box::pin(
+            setup_invoker.invoke(worker_operation::WorkerOperation::Setup, async {
+                Ok::<(), postgresql_embedded::Error>(())
+            }),
+        )
+        .await?;
+        Self::refresh_worker_installation_dir(bootstrap);
+        let start_invoker = AsyncInvoker::new(bootstrap, env_vars);
+        Box::pin(
+            start_invoker.invoke(worker_operation::WorkerOperation::Start, async {
+                Ok::<(), postgresql_embedded::Error>(())
+            }),
+        )
+        .await?;
+        Self::refresh_worker_port(bootstrap)
     }
 
     /// Extends the cluster lifetime to cover additional scoped environment guards.
@@ -642,6 +750,7 @@ impl TestCluster {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
+    use std::fs;
 
     use super::*;
     use crate::ExecutionPrivileges;
@@ -670,6 +779,21 @@ mod tests {
                 "worker guard should unset the variable once the cluster drops"
             ),
         }
+    }
+
+    #[test]
+    fn refresh_worker_port_reads_postmaster_pid() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let pid_path = temp_dir.path().join("postmaster.pid");
+        let contents = format!("12345\n{}\n1700000000\n54321\n", temp_dir.path().display());
+        fs::write(&pid_path, contents).expect("write postmaster.pid");
+
+        let mut bootstrap = dummy_settings(ExecutionPrivileges::Root);
+        bootstrap.settings.data_dir = temp_dir.path().to_path_buf();
+        bootstrap.settings.port = 0;
+
+        TestCluster::refresh_worker_port(&mut bootstrap).expect("refresh worker port");
+        assert_eq!(bootstrap.settings.port, 54321);
     }
 
     fn dummy_cluster() -> TestCluster {

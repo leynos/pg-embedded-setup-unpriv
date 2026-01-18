@@ -101,23 +101,41 @@ fn run_worker(mut args: impl Iterator<Item = OsString>) -> Result<()> {
         .wrap_err("failed to build runtime for worker")?;
 
     apply_worker_environment(&payload.environment);
-    let mut pg = PostgreSQL::new(settings);
+    let mut pg = Some(PostgreSQL::new(settings));
 
     runtime.block_on(async {
         match op {
-            Operation::Setup => pg
-                .setup()
-                .await
-                .wrap_err("postgresql_embedded::setup() failed"),
-            Operation::Start => pg
-                .start()
-                .await
-                .wrap_err("postgresql_embedded::start() failed"),
-            Operation::Stop => match pg.stop().await {
-                Ok(()) => Ok(()),
-                Err(err) if stop_missing_pid_is_ok(&err) => Ok(()),
-                Err(err) => Err(err).wrap_err("postgresql_embedded::stop() failed"),
-            },
+            Operation::Setup => {
+                let pg_handle = pg
+                    .as_mut()
+                    .ok_or_else(|| Report::msg("pg handle missing during setup"))?;
+                pg_handle
+                    .setup()
+                    .await
+                    .wrap_err("postgresql_embedded::setup() failed")
+            }
+            Operation::Start => {
+                let mut handle = pg
+                    .take()
+                    .ok_or_else(|| Report::msg("pg handle missing during start"))?;
+                handle
+                    .start()
+                    .await
+                    .wrap_err("postgresql_embedded::start() failed")?;
+                // Prevent `Drop` from stopping the just-started server.
+                std::mem::forget(handle);
+                Ok(())
+            }
+            Operation::Stop => {
+                let pg_handle = pg
+                    .as_mut()
+                    .ok_or_else(|| Report::msg("pg handle missing during stop"))?;
+                match pg_handle.stop().await {
+                    Ok(()) => Ok(()),
+                    Err(err) if stop_missing_pid_is_ok(&err) => Ok(()),
+                    Err(err) => Err(err).wrap_err("postgresql_embedded::stop() failed"),
+                }
+            }
         }
     })?;
     Ok(())
@@ -147,10 +165,50 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use color_eyre::eyre::ensure;
+    use postgresql_embedded::{Settings, VersionReq};
+    use std::collections::HashMap;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
     use std::sync::{LazyLock, Mutex};
+    use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tempfile::{TempDir, tempdir};
 
     static ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+    const PG_CTL_STUB: &str = r#"#!/bin/sh
+set -eu
+data_dir=""
+expect_data=0
+for arg in "$@"; do
+  if [ "$expect_data" -eq 1 ]; then
+    data_dir="$arg"
+    break
+  fi
+  case "$arg" in
+    -D)
+      expect_data=1
+      ;;
+    -D*)
+      data_dir="${arg#-D}"
+      break
+      ;;
+    --pgdata)
+      expect_data=1
+      ;;
+    --pgdata=*)
+      data_dir="${arg#--pgdata=}"
+      break
+      ;;
+  esac
+done
+if [ -z "$data_dir" ]; then
+  echo "missing -D argument" >&2
+  exit 1
+fi
+mkdir -p "$data_dir"
+echo "12345" > "$data_dir/postmaster.pid"
+"#;
 
     #[test]
     fn rejects_extra_argument() {
@@ -206,5 +264,74 @@ mod tests {
             .expect("clock drift")
             .as_nanos();
         format!("{prefix}_{pid}_{nanos}", pid = std::process::id())
+    }
+
+    #[test]
+    fn start_operation_does_not_stop_postgres() -> Result<()> {
+        let temp_root = tempdir().wrap_err("create temp root")?;
+        let install_dir = temp_root.path().join("install");
+        let data_dir = temp_root.path().join("data");
+        write_pg_ctl_stub(&install_dir.join("bin"))?;
+        fs::create_dir_all(&data_dir).wrap_err("create data dir")?;
+
+        let settings = build_settings(&temp_root, install_dir, data_dir.clone())?;
+        let config_path = write_worker_config(&temp_root, &settings)?;
+
+        let args = vec![
+            OsString::from("pg_worker"),
+            OsString::from("start"),
+            config_path.into_os_string(),
+        ];
+        run_worker(args.into_iter()).wrap_err("run start operation")?;
+
+        let pid_path = data_dir.join("postmaster.pid");
+        ensure!(
+            pid_path.is_file(),
+            "expected pid file to persist at {pid_path:?}"
+        );
+
+        Ok(())
+    }
+
+    fn write_pg_ctl_stub(bin_dir: &Path) -> Result<()> {
+        fs::create_dir_all(bin_dir).wrap_err("create bin dir")?;
+        let pg_ctl_path = bin_dir.join("pg_ctl");
+        fs::write(&pg_ctl_path, PG_CTL_STUB).wrap_err("write pg_ctl stub")?;
+        let mut permissions = fs::metadata(&pg_ctl_path)
+            .wrap_err("read pg_ctl stub metadata")?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&pg_ctl_path, permissions).wrap_err("set pg_ctl stub permissions")?;
+        Ok(())
+    }
+
+    fn build_settings(
+        temp_root: &TempDir,
+        install_dir: PathBuf,
+        data_dir: PathBuf,
+    ) -> Result<Settings> {
+        Ok(Settings {
+            releases_url: "https://example.invalid/releases".into(),
+            version: VersionReq::parse("=16.4.0").wrap_err("parse version")?,
+            installation_dir: install_dir,
+            password_file: temp_root.path().join("pgpass"),
+            data_dir,
+            host: "127.0.0.1".into(),
+            port: 54_321,
+            username: "postgres".into(),
+            password: "postgres".into(),
+            temporary: false,
+            timeout: Some(Duration::from_secs(5)),
+            configuration: HashMap::new(),
+            trust_installation_dir: true,
+        })
+    }
+
+    fn write_worker_config(temp_root: &TempDir, settings: &Settings) -> Result<PathBuf> {
+        let payload = WorkerPayload::new(settings, Vec::new()).wrap_err("build payload")?;
+        let config_path = temp_root.path().join("config.json");
+        let config_bytes = serde_json::to_vec(&payload).wrap_err("serialize worker payload")?;
+        fs::write(&config_path, config_bytes).wrap_err("write worker config")?;
+        Ok(config_path)
     }
 }

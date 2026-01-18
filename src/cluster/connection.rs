@@ -1,7 +1,9 @@
 //! Connection helpers for `TestCluster`, including metadata accessors and optional Diesel support.
 
 use camino::{Utf8Path, Utf8PathBuf};
+#[cfg(feature = "diesel-support")]
 use color_eyre::eyre::WrapErr;
+use color_eyre::eyre::eyre;
 use postgres::{Client, NoTls};
 use postgresql_embedded::Settings;
 
@@ -21,9 +23,11 @@ pub(crate) fn escape_identifier(name: &str) -> String {
 /// This is a shared helper for admin database connections used by both
 /// `TestClusterConnection` and `TemporaryDatabase`.
 pub(crate) fn connect_admin(url: &str) -> BootstrapResult<Client> {
-    Client::connect(url, NoTls)
-        .wrap_err("failed to connect to admin database")
-        .map_err(crate::error::BootstrapError::from)
+    Client::connect(url, NoTls).map_err(|err| {
+        crate::error::BootstrapError::from(eyre!(
+            "failed to connect to admin database at {url}: {err:?}"
+        ))
+    })
 }
 
 /// Provides ergonomic accessors for connection-oriented cluster metadata.

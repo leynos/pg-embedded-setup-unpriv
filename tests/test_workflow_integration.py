@@ -1,10 +1,14 @@
+"""Black-box validation of GitHub Actions workflows via act."""
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
-EVENT = Path("tests/fixtures/pull_request.event.json")
+import pytest
+
+EVENT: Path = Path("tests/fixtures/pull_request.event.json")
 
 
 def run_act(
@@ -13,6 +17,8 @@ def run_act(
     *,
     artifact_dir: Path,
 ) -> tuple[int, Path, str]:
+    if shutil.which("act") is None:
+        pytest.skip("act CLI not installed")
     artifact_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         "act",
@@ -28,7 +34,19 @@ def run_act(
         "--json",
         "-b",
     ]
-    completed = subprocess.run(cmd, text=True, capture_output=True, check=False)
+    try:
+        completed = subprocess.run(
+            cmd,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired as err:
+        stdout = err.stdout or ""
+        stderr = err.stderr or ""
+        logs = f"{stdout}\n{stderr}"
+        return 124, artifact_dir, f"act timed out after 600s\n{logs}"
     logs = f"{completed.stdout}\n{completed.stderr}"
     return completed.returncode, artifact_dir, logs
 

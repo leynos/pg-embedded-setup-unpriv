@@ -1,9 +1,10 @@
 # Local validation of GitHub Actions with act and pytest (black-box)
 
-This guide focuses on **pre-CI smoke/integration testing** of a workflow using
-`act` and `pytest`, treating the workflow as a **black box**. The assertions
-target artefacts, workspace side effects, and structured logs. Host-side
-command interception is intentionally avoided; containers execute in isolation.
+This guide focuses on **pre-Continuous Integration (CI) smoke/integration
+testing** of a workflow using `act` and `pytest`, treating the workflow as a
+**black box**. The assertions target artefacts, workspace side effects, and
+structured logs. Host-side command interception is intentionally avoided;
+containers execute in isolation.
 
 ## TL;DR
 
@@ -12,7 +13,7 @@ command interception is intentionally avoided; containers execute in isolation.
 - Integration-test the **workflow** locally via `act`, from a `pytest` harness.
 - Assert on **artefacts**, **file outputs**, and **logs** (using `act --json`).
 - Treat results as pre-CI confidence; certify on GitHub runners for
-  permissions/OIDC parity.
+  permissions/OpenID Connect (OIDC) parity.
 
 ## Prerequisites
 
@@ -71,7 +72,7 @@ jobs:
           open("out/result.json", "w").write(json.dumps(data))
           PY
       - name: Upload artefact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: result
           path: out/result.json
@@ -162,8 +163,8 @@ def test_workflow_produces_expected_artefact_and_logs(tmp_path: Path) -> None:
 ## Record -> replay -> verify (closing the loop)
 
 `cmd-mox` complements this harness when a workflow drives helper scripts that
-shell out to external CLIs. The tooling follows a record, replay, and verify
-loop:
+shell out to external command-line interface (CLI) tools. The tooling follows a
+record, replay, and verify loop:
 
 1. **Record** a golden trace with passthrough spies.
 
