@@ -86,6 +86,10 @@ fn temp_root_dir() -> Result<Utf8PathBuf> {
     let root = base.join("pg-embedded-setup-unpriv-tmp");
     std::fs::create_dir_all(root.as_std_path())
         .with_context(|| format!("create temp root at {root}"))?;
+    if matches!(privileges, ExecutionPrivileges::Root) {
+        fs::set_permissions(&root, 0o777)
+            .with_context(|| format!("set temp root permissions for {root}"))?;
+    }
     Ok(root)
 }
 

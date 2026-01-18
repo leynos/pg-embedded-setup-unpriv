@@ -43,7 +43,9 @@ pub struct ScenarioLocalGuard {
 /// (such as process environment variables or singleton resources) execute
 /// serially, preventing cross-test interference. A cross-process file lock is
 /// also acquired so independent test binaries coordinate access to the shared
-/// `PostgreSQL` cache and installation directories.
+/// `PostgreSQL` cache and installation directories. On non-Unix platforms this
+/// lock is a no-op, so cross-process runs may still race when touching shared
+/// caches.
 ///
 /// # Behaviour
 ///

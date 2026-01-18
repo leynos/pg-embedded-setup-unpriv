@@ -251,6 +251,10 @@ impl TestSandbox {
     }
 }
 
+/// Selects base directory permissions based on privilege mode.
+///
+/// Root runs need world access so the `nobody` worker can traverse and write
+/// to sandbox directories; unprivileged runs can stay tighter.
 fn base_dir_mode() -> u32 {
     match detect_execution_privileges() {
         ExecutionPrivileges::Root => 0o777,
@@ -260,6 +264,8 @@ fn base_dir_mode() -> u32 {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for sandbox environment helpers.
+
     use super::*;
 
     use color_eyre::eyre::Result;

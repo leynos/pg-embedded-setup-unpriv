@@ -35,7 +35,6 @@ jobs:
       - name: Lint
         run: make lint
       - name: Install cargo-nextest
-        if: ${{ matrix.privilege == 'unprivileged' }}
         run: cargo binstall -y cargo-nextest@0.9.122
       - name: Test with all features (unprivileged)
         if: ${{ matrix.privilege == 'unprivileged' }}
@@ -64,7 +63,6 @@ jobs:
               PATH="$CARGO_HOME/bin:$PATH" \
               "$@"
           }
-          run_as_root cargo binstall -y cargo-nextest@0.9.122
           run_as_root make test
       - name: Upload coverage data to CodeScene
         env:
