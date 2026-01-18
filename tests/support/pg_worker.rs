@@ -113,10 +113,11 @@ fn run_worker(mut args: impl Iterator<Item = OsString>) -> Result<()> {
                 .start()
                 .await
                 .wrap_err("postgresql_embedded::start() failed"),
-            Operation::Stop => pg
-                .stop()
-                .await
-                .wrap_err("postgresql_embedded::stop() failed"),
+            Operation::Stop => match pg.stop().await {
+                Ok(()) => Ok(()),
+                Err(err) if stop_missing_pid_is_ok(&err) => Ok(()),
+                Err(err) => Err(err).wrap_err("postgresql_embedded::stop() failed"),
+            },
         }
     })?;
     Ok(())
@@ -136,6 +137,11 @@ fn apply_worker_environment(environment: &[(String, Option<PlainSecret>)]) {
             },
         }
     }
+}
+
+fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
+    let message = err.to_string();
+    message.contains("postmaster.pid") && message.contains("does not exist")
 }
 
 #[cfg(test)]
