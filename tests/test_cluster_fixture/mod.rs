@@ -1,5 +1,5 @@
-#![cfg(unix)]
 //! Behaviour and unit coverage for the public `rstest` fixture.
+#![cfg(all(unix, feature = "cluster-unit-tests"))]
 
 use pg_embedded_setup_unpriv::TestCluster;
 

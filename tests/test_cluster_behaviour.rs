@@ -1,5 +1,5 @@
 //! Behavioural coverage for the `TestCluster` lifecycle.
-#![cfg(unix)]
+#![cfg(all(unix, feature = "cluster-unit-tests"))]
 
 use std::{cell::RefCell, thread, time::Duration};
 

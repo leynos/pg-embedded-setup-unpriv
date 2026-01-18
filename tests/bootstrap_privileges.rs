@@ -1,5 +1,5 @@
 //! Behavioural tests covering privilege-aware bootstrap flows.
-#![cfg(unix)]
+#![cfg(all(unix, feature = "cluster-unit-tests"))]
 
 use std::cell::RefCell;
 use std::io::ErrorKind;

@@ -1,5 +1,5 @@
-#![cfg(unix)]
 //! Behavioural coverage for database lifecycle methods on `TestClusterConnection`.
+#![cfg(all(unix, feature = "cluster-unit-tests"))]
 
 use std::cell::RefCell;
 use std::sync::atomic::Ordering;

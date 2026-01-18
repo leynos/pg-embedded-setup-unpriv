@@ -1,5 +1,5 @@
 //! Behavioural coverage for observability instrumentation.
-#![cfg(unix)]
+#![cfg(all(unix, feature = "cluster-unit-tests"))]
 
 use std::cell::RefCell;
 use std::ffi::OsString;
