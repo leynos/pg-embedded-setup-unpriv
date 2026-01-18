@@ -80,7 +80,19 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<()> {
 
     let runtime = build_runtime()?;
     apply_worker_environment(&payload.environment);
-    runtime.block_on(run_operation(operation, settings))?;
+    let mut pg = Some(PostgreSQL::new(settings));
+    runtime.block_on(async {
+        match operation {
+            Operation::Setup => {
+                let pg_handle = pg
+                    .as_mut()
+                    .ok_or_else(|| Report::msg("pg handle missing during setup"))?;
+                execute_setup(pg_handle).await
+            }
+            Operation::Start => execute_start(&mut pg).await,
+            Operation::Stop => execute_stop(&mut pg).await,
+        }
+    })?;
     Ok(())
 }
 
@@ -115,37 +127,34 @@ fn build_runtime() -> Result<tokio::runtime::Runtime> {
         .wrap_err("failed to build runtime for worker")
 }
 
-async fn run_operation(
-    operation: Operation,
-    settings: postgresql_embedded::Settings,
-) -> Result<()> {
-    match operation {
-        Operation::Setup => setup_postgres(settings).await,
-        Operation::Start => start_postgres(settings).await,
-        Operation::Stop => stop_postgres(settings).await,
-    }
-}
-
-async fn setup_postgres(settings: postgresql_embedded::Settings) -> Result<()> {
-    let mut pg = PostgreSQL::new(settings);
+async fn execute_setup(pg: &mut PostgreSQL) -> Result<()> {
     pg.setup()
         .await
         .wrap_err("postgresql_embedded::setup() failed")
 }
 
-async fn start_postgres(settings: postgresql_embedded::Settings) -> Result<()> {
-    let mut pg = PostgreSQL::new(settings);
-    pg.start()
+async fn execute_start(pg: &mut Option<PostgreSQL>) -> Result<()> {
+    let mut handle = pg
+        .take()
+        .ok_or_else(|| Report::msg("pg handle missing during start"))?;
+    handle
+        .start()
         .await
         .wrap_err("postgresql_embedded::start() failed")?;
     // Prevent `Drop` from stopping the just-started server.
-    std::mem::forget(pg);
+    std::mem::forget(handle);
     Ok(())
 }
 
-async fn stop_postgres(settings: postgresql_embedded::Settings) -> Result<()> {
-    let pg = PostgreSQL::new(settings);
-    match pg.stop().await {
+async fn execute_stop(pg: &mut Option<PostgreSQL>) -> Result<()> {
+    let pg_handle = pg
+        .as_mut()
+        .ok_or_else(|| Report::msg("pg handle missing during stop"))?;
+    handle_stop_result(pg_handle.stop().await)
+}
+
+fn handle_stop_result(result: Result<(), postgresql_embedded::Error>) -> Result<()> {
+    match result {
         Ok(()) => Ok(()),
         Err(err) if stop_missing_pid_is_ok(&err) => Ok(()),
         Err(err) => Err(err).wrap_err("postgresql_embedded::stop() failed"),
