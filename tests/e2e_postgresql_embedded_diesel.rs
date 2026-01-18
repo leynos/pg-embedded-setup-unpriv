@@ -373,12 +373,26 @@ fn ensure_database_exists(
             .get_result(&mut connection)
             .wrap_err("check database existence")?;
     if !exists.exists {
-        let create_statement = format!("CREATE DATABASE {}", config.database_name);
+        let create_statement =
+            format!("CREATE DATABASE {}", quote_identifier(config.database_name));
         diesel::sql_query(create_statement)
             .execute(&mut connection)
             .wrap_err("create database")?;
     }
     Ok(())
+}
+
+fn quote_identifier(identifier: &str) -> String {
+    let mut quoted = String::with_capacity(identifier.len() + 2);
+    quoted.push('"');
+    for ch in identifier.chars() {
+        if ch == '"' {
+            quoted.push('"');
+        }
+        quoted.push(ch);
+    }
+    quoted.push('"');
+    quoted
 }
 
 fn worker_from_env() -> Result<Utf8PathBuf> {

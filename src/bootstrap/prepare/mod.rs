@@ -95,7 +95,8 @@ fn ensure_root_port(settings: &mut Settings) -> BootstrapResult<()> {
         return Ok(());
     }
 
-    let listener = TcpListener::bind(("127.0.0.1", 0))
+    let host = root_bind_host(settings);
+    let listener = TcpListener::bind((host, 0))
         .map_err(|err| BootstrapError::from(eyre!("failed to allocate port: {err}")))?;
     let port = listener
         .local_addr()
@@ -103,6 +104,16 @@ fn ensure_root_port(settings: &mut Settings) -> BootstrapResult<()> {
         .port();
     settings.port = port;
     Ok(())
+}
+
+#[cfg(unix)]
+fn root_bind_host(settings: &Settings) -> &str {
+    let host = settings.host.as_str();
+    if host.is_empty() || host.starts_with('/') {
+        "127.0.0.1"
+    } else {
+        host
+    }
 }
 
 fn bootstrap_unprivileged(

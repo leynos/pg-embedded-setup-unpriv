@@ -24,9 +24,7 @@ pub(crate) fn escape_identifier(name: &str) -> String {
 /// `TestClusterConnection` and `TemporaryDatabase`.
 pub(crate) fn connect_admin(url: &str) -> BootstrapResult<Client> {
     Client::connect(url, NoTls).map_err(|err| {
-        crate::error::BootstrapError::from(eyre!(
-            "failed to connect to admin database at {url}: {err:?}"
-        ))
+        crate::error::BootstrapError::from(eyre!("failed to connect to admin database: {err}"))
     })
 }
 

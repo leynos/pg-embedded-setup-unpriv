@@ -270,16 +270,9 @@ impl TestCluster {
         }
 
         let pid_path = bootstrap.settings.data_dir.join("postmaster.pid");
-        for _ in 0..POSTMASTER_PORT_ATTEMPTS {
-            match Self::read_postmaster_port(&pid_path)? {
-                Some(port) => {
-                    bootstrap.settings.port = port;
-                    return Ok(());
-                }
-                None => {
-                    std::thread::sleep(POSTMASTER_PORT_DELAY);
-                }
-            }
+        if let Some(port) = Self::read_postmaster_port_with_retry(&pid_path)? {
+            bootstrap.settings.port = port;
+            return Ok(());
         }
 
         tracing::debug!(
@@ -288,6 +281,51 @@ impl TestCluster {
             "postmaster.pid missing after start; keeping configured port"
         );
         Ok(())
+    }
+
+    #[cfg(feature = "async-api")]
+    async fn refresh_worker_port_async(
+        bootstrap: &mut TestBootstrapSettings,
+    ) -> BootstrapResult<()> {
+        if bootstrap.privileges != ExecutionPrivileges::Root {
+            return Ok(());
+        }
+
+        let pid_path = bootstrap.settings.data_dir.join("postmaster.pid");
+        if let Some(port) = Self::read_postmaster_port_with_retry_async(&pid_path).await? {
+            bootstrap.settings.port = port;
+            return Ok(());
+        }
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            path = %pid_path.display(),
+            "postmaster.pid missing after start; keeping configured port"
+        );
+        Ok(())
+    }
+
+    fn read_postmaster_port_with_retry(pid_path: &Path) -> BootstrapResult<Option<u16>> {
+        for _ in 0..POSTMASTER_PORT_ATTEMPTS {
+            if let Some(port) = Self::read_postmaster_port(pid_path)? {
+                return Ok(Some(port));
+            }
+            std::thread::sleep(POSTMASTER_PORT_DELAY);
+        }
+        Ok(None)
+    }
+
+    #[cfg(feature = "async-api")]
+    async fn read_postmaster_port_with_retry_async(
+        pid_path: &Path,
+    ) -> BootstrapResult<Option<u16>> {
+        for _ in 0..POSTMASTER_PORT_ATTEMPTS {
+            if let Some(port) = Self::read_postmaster_port(pid_path)? {
+                return Ok(Some(port));
+            }
+            tokio::time::sleep(POSTMASTER_PORT_DELAY).await;
+        }
+        Ok(None)
     }
 
     fn read_postmaster_port(pid_path: &Path) -> BootstrapResult<Option<u16>> {
@@ -483,7 +521,7 @@ impl TestCluster {
             }),
         )
         .await?;
-        Self::refresh_worker_port(bootstrap)
+        Self::refresh_worker_port_async(bootstrap).await
     }
 
     #[cfg(feature = "async-api")]
@@ -506,7 +544,7 @@ impl TestCluster {
             }),
         )
         .await?;
-        Self::refresh_worker_port(bootstrap)
+        Self::refresh_worker_port_async(bootstrap).await
     }
 
     /// Extends the cluster lifetime to cover additional scoped environment guards.

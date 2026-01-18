@@ -70,9 +70,23 @@ fn main() -> Result<()> {
     run_worker(env::args_os())
 }
 
-fn run_worker(mut args: impl Iterator<Item = OsString>) -> Result<()> {
+fn run_worker(args: impl Iterator<Item = OsString>) -> Result<()> {
+    let (operation, config_path) = parse_args(args)?;
+    let payload = load_payload(&config_path)?;
+    let settings = payload
+        .settings
+        .into_settings()
+        .wrap_err("failed to rebuild PostgreSQL settings from snapshot")?;
+
+    let runtime = build_runtime()?;
+    apply_worker_environment(&payload.environment);
+    runtime.block_on(run_operation(operation, settings))?;
+    Ok(())
+}
+
+fn parse_args(mut args: impl Iterator<Item = OsString>) -> Result<(Operation, PathBuf)> {
     let _program = args.next();
-    let op = args
+    let operation = args
         .next()
         .ok_or_else(|| Report::msg("missing operation argument"))
         .and_then(|arg| Operation::parse(&arg))?;
@@ -86,59 +100,56 @@ fn run_worker(mut args: impl Iterator<Item = OsString>) -> Result<()> {
             "unexpected extra argument: {extra_arg}; expected only operation and config path"
         )));
     }
+    Ok((operation, config_path))
+}
 
-    let config_bytes = fs::read(&config_path).wrap_err("failed to read worker config")?;
-    let payload: WorkerPayload =
-        serde_json::from_slice(&config_bytes).wrap_err("failed to parse worker config")?;
-    let settings = payload
-        .settings
-        .into_settings()
-        .wrap_err("failed to rebuild PostgreSQL settings from snapshot")?;
+fn load_payload(config_path: &PathBuf) -> Result<WorkerPayload> {
+    let config_bytes = fs::read(config_path).wrap_err("failed to read worker config")?;
+    serde_json::from_slice(&config_bytes).wrap_err("failed to parse worker config")
+}
 
-    let runtime = Builder::new_current_thread()
+fn build_runtime() -> Result<tokio::runtime::Runtime> {
+    Builder::new_current_thread()
         .enable_all()
         .build()
-        .wrap_err("failed to build runtime for worker")?;
+        .wrap_err("failed to build runtime for worker")
+}
 
-    apply_worker_environment(&payload.environment);
-    let mut pg = Some(PostgreSQL::new(settings));
+async fn run_operation(
+    operation: Operation,
+    settings: postgresql_embedded::Settings,
+) -> Result<()> {
+    match operation {
+        Operation::Setup => setup_postgres(settings).await,
+        Operation::Start => start_postgres(settings).await,
+        Operation::Stop => stop_postgres(settings).await,
+    }
+}
 
-    runtime.block_on(async {
-        match op {
-            Operation::Setup => {
-                let pg_handle = pg
-                    .as_mut()
-                    .ok_or_else(|| Report::msg("pg handle missing during setup"))?;
-                pg_handle
-                    .setup()
-                    .await
-                    .wrap_err("postgresql_embedded::setup() failed")
-            }
-            Operation::Start => {
-                let mut handle = pg
-                    .take()
-                    .ok_or_else(|| Report::msg("pg handle missing during start"))?;
-                handle
-                    .start()
-                    .await
-                    .wrap_err("postgresql_embedded::start() failed")?;
-                // Prevent `Drop` from stopping the just-started server.
-                std::mem::forget(handle);
-                Ok(())
-            }
-            Operation::Stop => {
-                let pg_handle = pg
-                    .as_mut()
-                    .ok_or_else(|| Report::msg("pg handle missing during stop"))?;
-                match pg_handle.stop().await {
-                    Ok(()) => Ok(()),
-                    Err(err) if stop_missing_pid_is_ok(&err) => Ok(()),
-                    Err(err) => Err(err).wrap_err("postgresql_embedded::stop() failed"),
-                }
-            }
-        }
-    })?;
+async fn setup_postgres(settings: postgresql_embedded::Settings) -> Result<()> {
+    let mut pg = PostgreSQL::new(settings);
+    pg.setup()
+        .await
+        .wrap_err("postgresql_embedded::setup() failed")
+}
+
+async fn start_postgres(settings: postgresql_embedded::Settings) -> Result<()> {
+    let mut pg = PostgreSQL::new(settings);
+    pg.start()
+        .await
+        .wrap_err("postgresql_embedded::start() failed")?;
+    // Prevent `Drop` from stopping the just-started server.
+    std::mem::forget(pg);
     Ok(())
+}
+
+async fn stop_postgres(settings: postgresql_embedded::Settings) -> Result<()> {
+    let pg = PostgreSQL::new(settings);
+    match pg.stop().await {
+        Ok(()) => Ok(()),
+        Err(err) if stop_missing_pid_is_ok(&err) => Ok(()),
+        Err(err) => Err(err).wrap_err("postgresql_embedded::stop() failed"),
+    }
 }
 
 /// Applies the worker environment overrides to the current process.
