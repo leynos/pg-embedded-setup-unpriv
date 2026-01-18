@@ -2128,7 +2128,7 @@ dependencies = [
 
 [[package]]
 name = "pg-embed-setup-unpriv"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "camino",
  "cap-std",
