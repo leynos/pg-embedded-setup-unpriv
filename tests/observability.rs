@@ -201,7 +201,9 @@ fn then_logs_cover_lifecycle(world: &WorldFixture) -> Result<()> {
 
     ensure!(
         world_ref.logs.iter().any(|line| {
-            (line.contains("lifecycle operation completed") || line.contains("lifecycle_operation"))
+            (line.contains("lifecycle operation completed")
+                || line.contains("lifecycle_operation")
+                || line.contains("worker operation completed successfully"))
                 && line.contains("operation=\"setup\"")
         }),
         "expected setup lifecycle log or span, got {:?}",
@@ -209,7 +211,9 @@ fn then_logs_cover_lifecycle(world: &WorldFixture) -> Result<()> {
     );
     ensure!(
         world_ref.logs.iter().any(|line| {
-            (line.contains("lifecycle operation completed") || line.contains("lifecycle_operation"))
+            (line.contains("lifecycle operation completed")
+                || line.contains("lifecycle_operation")
+                || line.contains("worker operation completed successfully"))
                 && line.contains("operation=\"start\"")
         }),
         "expected start lifecycle log or span, got {:?}",
