@@ -1,3 +1,5 @@
+//! Test cluster fixture utilities for managing test worlds.
+
 use std::{any::Any, cell::RefCell, ffi::OsString, fs};
 
 use camino::Utf8PathBuf;

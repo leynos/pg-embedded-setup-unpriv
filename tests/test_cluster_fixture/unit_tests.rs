@@ -1,3 +1,5 @@
+//! Test utilities and unit checks for cluster fixtures.
+
 use color_eyre::eyre::{Context, Result, ensure};
 use pg_embedded_setup_unpriv::{TestCluster, test_support::test_cluster};
 use rstest::rstest;

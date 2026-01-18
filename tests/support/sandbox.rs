@@ -217,8 +217,16 @@ impl TestSandbox {
     /// ```
     pub fn with_env<R>(&self, vars: ScopedEnvVars, body: impl FnOnce() -> R) -> R {
         debug_assert!(
-            vars.iter()
-                .any(|(key, value)| key == "PG_RUNTIME_DIR" && value.is_some()),
+            vars.iter().any(|(key, value)| {
+                if key != "PG_RUNTIME_DIR" {
+                    return false;
+                }
+                let Some(runtime_value) = value.as_deref().and_then(|runtime| runtime.to_str())
+                else {
+                    return false;
+                };
+                Utf8Path::new(runtime_value).starts_with(self.install_dir())
+            }),
             "sandbox environment missing PG_RUNTIME_DIR for {}",
             self.install_dir
         );

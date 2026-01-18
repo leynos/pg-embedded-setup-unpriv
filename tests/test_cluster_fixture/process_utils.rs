@@ -1,3 +1,5 @@
+//! Helpers for fixture process management in cluster tests.
+
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -88,6 +90,10 @@ impl WaitConfig {
     }
 
     fn scaled(mut self, multiplier: f64) -> Self {
+        if !multiplier.is_finite() {
+            warn!("Ignoring non-finite wait multiplier {multiplier}");
+            return self;
+        }
         let clamped = multiplier.clamp(0.1, 10.0);
         self.attempts = scale_attempts(self.attempts, clamped);
         self.initial_delay = self.initial_delay.mul_f64(clamped).min(self.max_delay);

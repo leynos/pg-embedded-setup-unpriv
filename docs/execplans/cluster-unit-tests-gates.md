@@ -124,7 +124,7 @@ compiled as separate crates, so they do not get `cfg(test)` and must enable
 `tests/` import `test_support` without feature gating, which causes
 `cargo check --all-targets` without features to fail. The repository already
 uses a crate-level gate in `tests/test_cluster.rs` and a Cargo
-`required- features` entry in `Cargo.toml` for that test.
+`required-features` entry in `Cargo.toml` for that test.
 
 Relevant files:
 

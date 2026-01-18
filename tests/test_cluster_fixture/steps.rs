@@ -1,3 +1,5 @@
+//! Test helpers and fixtures for cluster setup and teardown.
+
 use std::panic::AssertUnwindSafe;
 
 use color_eyre::eyre::{Result, ensure};
