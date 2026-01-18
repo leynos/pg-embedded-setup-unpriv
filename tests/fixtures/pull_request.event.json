@@ -1,0 +1,14 @@
+{
+  "pull_request": {
+    "number": 1,
+    "head": {
+      "ref": "local-test-branch"
+    }
+  },
+  "repository": {
+    "full_name": "leynos/pg-embedded-setup-unpriv"
+  },
+  "sender": {
+    "login": "local-tester"
+  }
+}

@@ -1,0 +1,36 @@
+name: workflow-selftest
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - name: Build artefact
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python - <<'PY'
+          import json, os, platform, sys
+          print("Hello from workflow")
+          data = {
+            "status": "ok",
+            "python": sys.version.split()[0],
+            "os": platform.platform(),
+            "env": {
+              "CI": os.getenv("CI", ""),
+              "GITHUB_REF": os.getenv("GITHUB_REF", ""),
+              "GITHUB_WORKFLOW": os.getenv("GITHUB_WORKFLOW", ""),
+            },
+          }
+          with open("out/result.json", "w") as handle:
+            json.dump(data, handle)
+          PY
+      - name: Upload artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: result
+          path: out/result.json
