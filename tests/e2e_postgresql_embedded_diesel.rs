@@ -197,6 +197,9 @@ fn bootstrap_postgres_environment(config: &TestConfig) -> Result<Option<Bootstra
             let mut settings = cfg
                 .to_settings()
                 .wrap_err("convert environment to settings")?;
+            if geteuid().is_root() {
+                settings.temporary = false;
+            }
             settings.timeout = Some(Duration::from_secs(60));
 
             let password_file = config.password_file();
