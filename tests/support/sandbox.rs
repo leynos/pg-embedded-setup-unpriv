@@ -225,7 +225,13 @@ impl TestSandbox {
                 else {
                     return false;
                 };
-                Utf8Path::new(runtime_value).starts_with(self.install_dir())
+                let runtime_path = Utf8Path::new(runtime_value);
+                let Ok(remainder) = runtime_path.strip_prefix(self.install_dir()) else {
+                    return false;
+                };
+                !remainder
+                    .components()
+                    .any(|component| matches!(component, camino::Utf8Component::ParentDir))
             }),
             "sandbox environment missing PG_RUNTIME_DIR for {}",
             self.install_dir

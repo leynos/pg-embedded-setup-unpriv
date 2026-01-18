@@ -63,7 +63,7 @@ and run when the feature is explicitly enabled.
   are gated.
 - [x] (2026-01-18 00:42Z) Ran validation commands and captured logs via `tee`.
 - [x] (2026-01-18 00:44Z) Committed the change with a descriptive message.
-- [x] (2026-01-18 01:12Z) Centralised test gating in `Cargo.toml` and removed
+- [x] (2026-01-18 01:12Z) Centralized test gating in `Cargo.toml` and removed
   repeated feature gates from test crates.
 - [x] (2026-01-18 02:05Z) Updated the `test_cluster_fixture` target to use
   shared support modules and made error expectations deterministic after the
@@ -98,7 +98,7 @@ and run when the feature is explicitly enabled.
   disabled. Date/Author: 2026-01-18 (Codex)
 - Decision: Move `cluster-unit-tests` gating for integration tests into
   `Cargo.toml` `required-features` entries while keeping `#![cfg(unix)]` in the
-  test crates. Rationale: Centralises configuration and reduces per-file
+  test crates. Rationale: Centralizes configuration and reduces per-file
   attribute repetition without changing platform guards. Date/Author:
   2026-01-18 (Codex)
 - Decision: Treat the read-only fixture scenario as a skip when the fixture
@@ -112,7 +112,7 @@ Completed: integration tests that depend on `test_support` are gated behind the
 `cluster-unit-tests` feature, and the `diesel-support` integration suite now
 requires the cluster feature too. `cargo check --all-targets` without features
 passes, and full `make check-fmt`, `make lint`, and `make test` runs succeed.
-Feature gating for these tests is now centralised in `Cargo.toml`
+Feature gating for these tests is now centralized in `Cargo.toml`
 `required-features` entries, including `test_cluster_fixture`. No follow-up
 actions required.
 
@@ -152,7 +152,7 @@ they import `test_support` or cap-fs helpers and confirm they are not already
 gated. Check `Cargo.toml` for existing `required-features` patterns and whether
 any tests already carry feature-specific attributes.
 
-Stage B: Centralise feature gates. Add `[[test]]` entries in `Cargo.toml` with
+Stage B: Centralize feature gates. Add `[[test]]` entries in `Cargo.toml` with
 `required-features = ["cluster-unit-tests"]` for each affected integration
 test, and use `["cluster-unit-tests", "diesel-support"]` for
 `tests/test_cluster_connection.rs`. Keep `#![cfg(unix)]` in those test crates
@@ -180,7 +180,10 @@ Run the following from the repository root (the directory containing
 1. Review each listed test file and confirm current attributes.
 
    - Example:
+
+     ```shell
      rg -n "test_support" tests
+     ```
 
 2. Add crate-level `cfg` attributes and update `tests/settings.rs` as described
    in Stage B and C. Use `rg` to confirm the new attributes are present.
@@ -188,26 +191,35 @@ Run the following from the repository root (the directory containing
 3. Validate no-feature build:
 
    - Command:
+
+     ```shell
      RUSTFLAGS="-D warnings" cargo check --all-targets 2>&1 | \
        tee /tmp/check-$(get-project)-$(git branch --show).out
+     ```
 
    - Expected: `Finished` with exit code 0 and no unresolved import errors.
 
 4. Run format and lint gates:
 
    - Commands:
+
+     ```shell
      make check-fmt 2>&1 | \
        tee /tmp/check-fmt-$(get-project)-$(git branch --show).out
      make lint 2>&1 | \
        tee /tmp/lint-$(get-project)-$(git branch --show).out
+     ```
 
    - Expected: both commands complete with exit code 0.
 
 5. Run tests:
 
    - Command:
+
+     ```shell
      make test 2>&1 | \
        tee /tmp/test-$(get-project)-$(git branch --show).out
+     ```
 
    - Expected: `nextest` reports all tests passed, including those that now
      require `cluster-unit-tests` under the all-features run.
@@ -269,6 +281,6 @@ feature gating of integration test crates and submodules.
 2026-01-18: Marked validations and commit steps complete, recorded the doc
 ordering discovery, and set status to COMPLETE with outcomes captured.
 2026-01-18: Replaced the local path with a repository-root description and
-centralised test gating in `Cargo.toml`. 2026-01-18: Updated fixture suite
+centralized test gating in `Cargo.toml`. 2026-01-18: Updated fixture suite
 paths and deterministic skip handling after enabling the test target.
 2026-01-18: Corrected the `test_support` path typo in the Purpose section.
