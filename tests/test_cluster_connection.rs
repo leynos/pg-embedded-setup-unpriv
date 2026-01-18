@@ -1,5 +1,5 @@
 //! Behavioural coverage for the connection helpers exposed by `TestCluster`.
-#![cfg(all(unix, feature = "diesel-support", feature = "cluster-unit-tests"))]
+#![cfg(unix)]
 
 use std::cell::RefCell;
 

@@ -1,17 +1,16 @@
 use std::{any::Any, cell::RefCell, ffi::OsString, fs};
 
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8PathBuf;
 use color_eyre::eyre::{Context, Result, eyre};
 use rstest::fixture;
 
 use super::{
-    cap_fs,
+    TestCluster, cap_fs,
     cluster_skip::cluster_skip_message,
     env::ScopedEnvVars,
     env_isolation::{override_env_os, override_env_path},
     process_utils::prepare_read_only_dir,
     sandbox::TestSandbox,
-    TestCluster,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
@@ -121,8 +120,6 @@ pub(super) fn env_for_profile(
         FixtureEnvProfile::Default => Ok(sandbox.env_without_timezone()),
         FixtureEnvProfile::MissingTimezone => {
             let missing_dir = sandbox.install_dir().join("missing-tz");
-            std::fs::create_dir_all(missing_dir.as_std_path())
-                .with_context(|| format!("create missing timezone directory at {missing_dir}"))?;
             Ok(sandbox.env_with_timezone_override(missing_dir.as_ref()))
         }
         FixtureEnvProfile::MissingWorkerBinary => {

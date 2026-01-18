@@ -1,5 +1,5 @@
 //! Validates configuration of the shutdown timeout environment variable.
-#![cfg(all(unix, feature = "cluster-unit-tests"))]
+#![cfg(unix)]
 
 use std::ffi::OsString;
 use std::time::Duration;

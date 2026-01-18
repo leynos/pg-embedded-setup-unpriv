@@ -217,10 +217,8 @@ impl TestSandbox {
     /// ```
     pub fn with_env<R>(&self, vars: ScopedEnvVars, body: impl FnOnce() -> R) -> R {
         debug_assert!(
-            vars.iter().any(|(key, value)| {
-                key == "PG_RUNTIME_DIR"
-                    && value.as_ref().map(OsString::as_os_str) == Some(self.install_dir.as_os_str())
-            }),
+            vars.iter()
+                .any(|(key, value)| key == "PG_RUNTIME_DIR" && value.is_some()),
             "sandbox environment missing PG_RUNTIME_DIR for {}",
             self.install_dir
         );

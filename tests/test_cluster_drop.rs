@@ -1,5 +1,5 @@
 //! Unit coverage for the `TestCluster` RAII guard.
-#![cfg(all(unix, feature = "cluster-unit-tests"))]
+#![cfg(unix)]
 
 use camino::Utf8PathBuf;
 use color_eyre::Report;

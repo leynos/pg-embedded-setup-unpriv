@@ -1,12 +1,14 @@
-use color_eyre::eyre::{ensure, Context, Result};
-use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
+use color_eyre::eyre::{Context, Result, ensure};
+use pg_embedded_setup_unpriv::{TestCluster, test_support::test_cluster};
 use rstest::rstest;
 
 use super::{
-    env_isolation::{EnvIsolationGuard, set_env_var},
-    process_utils::{read_postmaster_pid, sandbox_root_path, wait_for_pid_file_removal, wait_for_process_exit},
-    serial::ScenarioSerialGuard,
     TestSandbox,
+    env_isolation::{EnvIsolationGuard, set_env_var},
+    process_utils::{
+        read_postmaster_pid, sandbox_root_path, wait_for_pid_file_removal, wait_for_process_exit,
+    },
+    serial::{ScenarioSerialGuard, serial_guard},
 };
 
 pub(super) fn run_unit_fixture_test<F>(name: &str, test: F) -> Result<()>
@@ -52,9 +54,7 @@ pub(super) fn fixture_exposes_connection_metadata(
     reason = "rstest binds fixtures even when ignored in the body"
 )]
 #[rstest]
-pub(super) fn fixture_reuses_cluster_environment(
-    _serial_guard: ScenarioSerialGuard,
-) -> Result<()> {
+pub(super) fn fixture_reuses_cluster_environment(_serial_guard: ScenarioSerialGuard) -> Result<()> {
     run_unit_fixture_test("rstest-fixture-env", |test_cluster| {
         let env = test_cluster.environment();
         ensure!(
@@ -102,9 +102,7 @@ pub(super) fn fixture_environment_variable_isolation(
     reason = "rstest binds fixtures even when ignored in the body"
 )]
 #[rstest]
-pub(super) fn fixture_teardown_resource_cleanup(
-    _serial_guard: ScenarioSerialGuard,
-) -> Result<()> {
+pub(super) fn fixture_teardown_resource_cleanup(_serial_guard: ScenarioSerialGuard) -> Result<()> {
     let sandbox = TestSandbox::new("rstest-fixture-teardown")
         .context("create sandbox for teardown coverage")?;
     sandbox

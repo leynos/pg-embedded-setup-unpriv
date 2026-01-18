@@ -1,5 +1,5 @@
 //! Behavioural coverage for the `bootstrap_for_tests` helper.
-#![cfg(all(unix, feature = "cluster-unit-tests"))]
+#![cfg(unix)]
 
 use std::cell::RefCell;
 use std::ffi::OsStr;

@@ -1,5 +1,5 @@
 //! Exercises failure paths when the worker binary is misconfigured.
-#![cfg(all(unix, feature = "cluster-unit-tests"))]
+#![cfg(unix)]
 //!
 //! These checks ensure the bootstrapper validates helper paths eagerly so
 //! privileged orchestration does not defer errors to runtime.
