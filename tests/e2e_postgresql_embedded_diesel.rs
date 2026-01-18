@@ -4,15 +4,19 @@
 #![cfg(all(unix, feature = "privileged-tests"))]
 
 use std::io::Write;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use camino::Utf8PathBuf;
 use cap_std::fs::{OpenOptions, PermissionsExt};
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use diesel::prelude::*;
-use diesel::sql_types::{Int4, Text};
+use diesel::sql_types::{Bool, Int4, Text};
 use nix::unistd::geteuid;
 use pg_embedded_setup_unpriv::PgEnvCfg;
+use pg_embedded_setup_unpriv::worker_process_test_api::{
+    WorkerOperation, WorkerRequest, WorkerRequestArgs, run as run_worker,
+};
 use postgresql_embedded::PostgreSQL;
 use tokio::runtime::{Builder, Runtime};
 
@@ -30,6 +34,12 @@ struct GreetingRow {
     id: i32,
     #[diesel(sql_type = Text)]
     message: String,
+}
+
+#[derive(QueryableByName, Debug)]
+struct DatabaseExists {
+    #[diesel(sql_type = Bool)]
+    exists: bool,
 }
 
 #[derive(Debug)]
@@ -53,6 +63,19 @@ struct TestConfig {
     base_dir: Utf8PathBuf,
     install_dir: Utf8PathBuf,
     data_dir: Utf8PathBuf,
+}
+
+#[derive(Debug)]
+enum PostgresHandle {
+    InProcess(PostgreSQL),
+    Worker(WorkerHandle),
+}
+
+#[derive(Debug)]
+struct WorkerHandle {
+    worker: Utf8PathBuf,
+    settings: postgresql_embedded::Settings,
+    timeout: Duration,
 }
 
 impl TestConfig {
@@ -276,6 +299,7 @@ fn run_postgres_in_env(
     let runtime = build_runtime()?;
     let (postgresql, database_url) = start_postgres(&runtime, settings, config)?;
 
+    ensure_database_exists(settings, config)?;
     run_diesel_operations(&database_url, config)?;
 
     stop_postgres(&runtime, postgresql)?;
@@ -294,24 +318,92 @@ fn start_postgres(
     runtime: &Runtime,
     settings: &postgresql_embedded::Settings,
     config: &TestConfig,
-) -> Result<(PostgreSQL, String)> {
+) -> Result<(PostgresHandle, String)> {
+    if geteuid().is_root() {
+        let worker = worker_from_env()?;
+        let timeout = settings.timeout.unwrap_or(Duration::from_secs(60));
+        run_worker_operation(worker.as_path(), settings, timeout, WorkerOperation::Setup)?;
+        run_worker_operation(worker.as_path(), settings, timeout, WorkerOperation::Start)?;
+        let database_url = settings.url(config.database_name);
+        return Ok((
+            PostgresHandle::Worker(WorkerHandle {
+                worker,
+                settings: settings.clone(),
+                timeout,
+            }),
+            database_url,
+        ));
+    }
+
     runtime
         .block_on(async {
             let mut postgresql = PostgreSQL::new(settings.clone());
             postgresql.setup().await?;
             postgresql.start().await?;
-            postgresql.create_database(config.database_name).await?;
             let database_url = postgresql.settings().url(config.database_name);
-            Ok::<_, color_eyre::Report>((postgresql, database_url))
+            Ok::<_, color_eyre::Report>((PostgresHandle::InProcess(postgresql), database_url))
         })
         .wrap_err("start embedded postgres via diesel helper")
 }
 
-fn stop_postgres(runtime: &Runtime, postgresql: PostgreSQL) -> Result<()> {
-    runtime
-        .block_on(async {
-            let instance = postgresql;
-            instance.stop().await
-        })
-        .wrap_err("stop embedded postgres instance")
+fn stop_postgres(runtime: &Runtime, postgresql: PostgresHandle) -> Result<()> {
+    match postgresql {
+        PostgresHandle::InProcess(instance) => runtime
+            .block_on(async { instance.stop().await })
+            .wrap_err("stop embedded postgres instance"),
+        PostgresHandle::Worker(handle) => run_worker_operation(
+            handle.worker.as_path(),
+            &handle.settings,
+            handle.timeout,
+            WorkerOperation::Stop,
+        ),
+    }
+}
+
+fn ensure_database_exists(
+    settings: &postgresql_embedded::Settings,
+    config: &TestConfig,
+) -> Result<()> {
+    let admin_url = settings.url("postgres");
+    let mut connection =
+        PgConnection::establish(&admin_url).wrap_err("connect to admin database")?;
+    let exists: DatabaseExists =
+        diesel::sql_query("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1) AS exists")
+            .bind::<Text, _>(config.database_name)
+            .get_result(&mut connection)
+            .wrap_err("check database existence")?;
+    if !exists.exists {
+        let create_statement = format!("CREATE DATABASE {}", config.database_name);
+        diesel::sql_query(create_statement)
+            .execute(&mut connection)
+            .wrap_err("create database")?;
+    }
+    Ok(())
+}
+
+fn worker_from_env() -> Result<Utf8PathBuf> {
+    let worker = std::env::var_os("PG_EMBEDDED_WORKER")
+        .ok_or_else(|| eyre!("PG_EMBEDDED_WORKER must be set for worker runs"))?;
+    let path = PathBuf::from(worker);
+    Utf8PathBuf::from_path_buf(path).map_err(|_| eyre!("PG_EMBEDDED_WORKER must be UTF-8"))
+}
+
+fn run_worker_operation(
+    worker: &camino::Utf8Path,
+    settings: &postgresql_embedded::Settings,
+    timeout: Duration,
+    operation: WorkerOperation,
+) -> Result<()> {
+    let env_vars = Vec::new();
+    let args = WorkerRequestArgs {
+        worker,
+        settings,
+        env_vars: &env_vars,
+        operation,
+        timeout,
+    };
+    let request = WorkerRequest::new(args);
+    run_worker(&request)
+        .map_err(|err| eyre!(err))
+        .wrap_err(format!("worker operation {} failed", operation.as_str()))
 }
