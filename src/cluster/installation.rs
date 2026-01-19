@@ -1,4 +1,4 @@
-//! Resolves installation directories for worker-managed PostgreSQL setups.
+//! Resolves installation directories for worker-managed `PostgreSQL` setups.
 
 use crate::{ExecutionPrivileges, TestBootstrapSettings};
 use postgresql_embedded::Settings;
@@ -86,7 +86,7 @@ fn extract_version_string(name: &str) -> Option<String> {
         return None;
     }
 
-    Some(raw.to_string())
+    Some(raw.to_owned())
 }
 
 fn normalise_version(raw: &str) -> Option<String> {
@@ -106,10 +106,10 @@ fn normalise_version(raw: &str) -> Option<String> {
         return None;
     }
 
-    let normalised = match parts.len() {
-        1 => format!("{}.0.0", parts[0]),
-        2 => format!("{}.{}.0", parts[0], parts[1]),
-        3 => parts.join("."),
+    let normalised = match parts.as_slice() {
+        [major] => format!("{major}.0.0"),
+        [major, minor] => format!("{major}.{minor}.0"),
+        [major, minor, patch] => format!("{major}.{minor}.{patch}"),
         _ => return None,
     };
 
@@ -130,9 +130,11 @@ mod tests {
         std::fs::create_dir_all(&older).expect("create older bin");
         std::fs::create_dir_all(&newer).expect("create newer bin");
 
-        let mut settings = Settings::default();
-        settings.installation_dir = install_dir.to_path_buf();
-        settings.trust_installation_dir = false;
+        let settings = Settings {
+            installation_dir: install_dir.to_path_buf(),
+            trust_installation_dir: false,
+            ..Settings::default()
+        };
 
         let selected = resolve_installed_dir(&settings).expect("resolve installed dir");
         assert_eq!(

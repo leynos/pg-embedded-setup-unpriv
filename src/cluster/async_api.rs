@@ -9,11 +9,11 @@ use postgresql_embedded::PostgreSQL;
 use tokio::time;
 use tracing::{info, info_span};
 
-use super::{refresh_worker_installation_dir, refresh_worker_port_async};
 use super::runtime::build_runtime;
 use super::worker_invoker::AsyncInvoker;
 use super::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use super::worker_operation;
+use super::{refresh_worker_installation_dir, refresh_worker_port_async};
 
 impl TestCluster {
     /// Boots a `PostgreSQL` instance asynchronously for use in `#[tokio::test]` contexts.

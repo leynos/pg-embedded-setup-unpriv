@@ -65,19 +65,19 @@ mod worker_operation;
 mod tests;
 
 pub use self::connection::{ConnectionMetadata, TestClusterConnection};
+pub(crate) use self::installation::refresh_worker_installation_dir;
 pub use self::lifecycle::DatabaseName;
+pub(crate) use self::port_refresh::refresh_worker_port;
+#[cfg(feature = "async-api")]
+pub(crate) use self::port_refresh::refresh_worker_port_async;
 pub use self::temporary_database::TemporaryDatabase;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use self::worker_invoker::WorkerInvoker;
 #[doc(hidden)]
 pub use self::worker_operation::WorkerOperation;
-pub(crate) use self::installation::refresh_worker_installation_dir;
-pub(crate) use self::port_refresh::refresh_worker_port;
-#[cfg(feature = "async-api")]
-pub(crate) use self::port_refresh::refresh_worker_port_async;
 
-use crate::env::ScopedEnv;
 use crate::TestBootstrapSettings;
+use crate::env::ScopedEnv;
 use postgresql_embedded::PostgreSQL;
 use tokio::runtime::Runtime;
 

@@ -9,10 +9,10 @@ use postgresql_embedded::PostgreSQL;
 use tokio::runtime::Runtime;
 use tracing::{info, info_span};
 
-use super::{refresh_worker_installation_dir, refresh_worker_port};
 use super::runtime::build_runtime;
 use super::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use super::worker_operation;
+use super::{refresh_worker_installation_dir, refresh_worker_port};
 
 impl TestCluster {
     /// Boots a `PostgreSQL` instance configured by [`bootstrap_for_tests`].

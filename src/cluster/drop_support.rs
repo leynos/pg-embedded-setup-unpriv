@@ -1,8 +1,8 @@
 //! Drop and shutdown handling for `TestCluster`.
 
 use super::{ClusterRuntime, TestCluster};
-use crate::observability::LOG_TARGET;
 use crate::TestBootstrapSettings;
+use crate::observability::LOG_TARGET;
 use postgresql_embedded::PostgreSQL;
 use std::fmt::Display;
 use tokio::time;
