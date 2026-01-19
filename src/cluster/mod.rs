@@ -264,13 +264,20 @@ impl TestCluster {
         }
     }
 
-    fn refresh_worker_port(bootstrap: &mut TestBootstrapSettings) -> BootstrapResult<()> {
+    fn refresh_worker_port_impl<F, R>(
+        bootstrap: &mut TestBootstrapSettings,
+        retry_fn: F,
+    ) -> BootstrapResult<()>
+    where
+        F: FnOnce(&Path) -> R,
+        R: Into<BootstrapResult<Option<u16>>>,
+    {
         if bootstrap.privileges != ExecutionPrivileges::Root {
             return Ok(());
         }
 
         let pid_path = bootstrap.settings.data_dir.join("postmaster.pid");
-        if let Some(port) = Self::read_postmaster_port_with_retry(&pid_path)? {
+        if let Some(port) = retry_fn(&pid_path).into()? {
             bootstrap.settings.port = port;
             return Ok(());
         }
@@ -283,26 +290,17 @@ impl TestCluster {
         Ok(())
     }
 
+    fn refresh_worker_port(bootstrap: &mut TestBootstrapSettings) -> BootstrapResult<()> {
+        Self::refresh_worker_port_impl(bootstrap, Self::read_postmaster_port_with_retry)
+    }
+
     #[cfg(feature = "async-api")]
     async fn refresh_worker_port_async(
         bootstrap: &mut TestBootstrapSettings,
     ) -> BootstrapResult<()> {
-        if bootstrap.privileges != ExecutionPrivileges::Root {
-            return Ok(());
-        }
-
         let pid_path = bootstrap.settings.data_dir.join("postmaster.pid");
-        if let Some(port) = Self::read_postmaster_port_with_retry_async(&pid_path).await? {
-            bootstrap.settings.port = port;
-            return Ok(());
-        }
-
-        tracing::debug!(
-            target: LOG_TARGET,
-            path = %pid_path.display(),
-            "postmaster.pid missing after start; keeping configured port"
-        );
-        Ok(())
+        let result = Self::read_postmaster_port_with_retry_async(&pid_path).await;
+        Self::refresh_worker_port_impl(bootstrap, |_| result)
     }
 
     fn read_postmaster_port_with_retry(pid_path: &Path) -> BootstrapResult<Option<u16>> {
