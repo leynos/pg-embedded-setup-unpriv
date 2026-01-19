@@ -218,8 +218,20 @@ impl TestSandbox {
     pub fn with_env<R>(&self, vars: ScopedEnvVars, body: impl FnOnce() -> R) -> R {
         debug_assert!(
             vars.iter().any(|(key, value)| {
-                key == "PG_RUNTIME_DIR"
-                    && value.as_ref().map(OsString::as_os_str) == Some(self.install_dir.as_os_str())
+                if key != "PG_RUNTIME_DIR" {
+                    return false;
+                }
+                let Some(runtime_value) = value.as_deref().and_then(|runtime| runtime.to_str())
+                else {
+                    return false;
+                };
+                let runtime_path = Utf8Path::new(runtime_value);
+                let Ok(remainder) = runtime_path.strip_prefix(self.install_dir()) else {
+                    return false;
+                };
+                !remainder
+                    .components()
+                    .any(|component| matches!(component, camino::Utf8Component::ParentDir))
             }),
             "sandbox environment missing PG_RUNTIME_DIR for {}",
             self.install_dir

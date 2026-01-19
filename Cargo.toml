@@ -33,6 +33,56 @@ path = "tests/test_cluster.rs"
 required-features = ["cluster-unit-tests"]
 
 [[test]]
+name = "bootstrap_for_tests"
+path = "tests/bootstrap_for_tests.rs"
+required-features = ["cluster-unit-tests"]
+
+[[test]]
+name = "bootstrap_privileges"
+path = "tests/bootstrap_privileges.rs"
+required-features = ["cluster-unit-tests"]
+
+[[test]]
+name = "bootstrap_worker_binary"
+path = "tests/bootstrap_worker_binary.rs"
+required-features = ["cluster-unit-tests"]
+
+[[test]]
+name = "database_lifecycle"
+path = "tests/database_lifecycle.rs"
+required-features = ["cluster-unit-tests"]
+
+[[test]]
+name = "observability"
+path = "tests/observability.rs"
+required-features = ["cluster-unit-tests"]
+
+[[test]]
+name = "shutdown_timeout"
+path = "tests/shutdown_timeout.rs"
+required-features = ["cluster-unit-tests"]
+
+[[test]]
+name = "test_cluster_behaviour"
+path = "tests/test_cluster_behaviour.rs"
+required-features = ["cluster-unit-tests"]
+
+[[test]]
+name = "test_cluster_connection"
+path = "tests/test_cluster_connection.rs"
+required-features = ["cluster-unit-tests", "diesel-support"]
+
+[[test]]
+name = "test_cluster_drop"
+path = "tests/test_cluster_drop.rs"
+required-features = ["cluster-unit-tests"]
+
+[[test]]
+name = "test_cluster_fixture"
+path = "tests/test_cluster_fixture/mod.rs"
+required-features = ["cluster-unit-tests"]
+
+[[test]]
 name = "test_cluster_async"
 path = "tests/test_cluster_async.rs"
 required-features = ["async-api"]

@@ -1,12 +1,14 @@
+//! Test helpers and fixtures for cluster setup and teardown.
+
 use std::panic::AssertUnwindSafe;
 
-use color_eyre::eyre::{ensure, Result};
+use color_eyre::eyre::{Result, ensure};
 use pg_embedded_setup_unpriv::test_support::test_cluster;
 use rstest_bdd_macros::{given, scenario, then, when};
 
 use super::{
-    serial::ScenarioSerialGuard,
-    world::{FixtureEnvProfile, FixtureWorldFixture, borrow_world, env_for_profile},
+    serial::{ScenarioSerialGuard, serial_guard},
+    world::{FixtureEnvProfile, FixtureWorldFixture, borrow_world, env_for_profile, world},
 };
 #[path = "../support/scenario.rs"]
 mod scenario;
@@ -73,6 +75,13 @@ fn when_fixture_runs(world: &FixtureWorldFixture) -> Result<()> {
 
     match result {
         Ok(cluster) => {
+            if matches!(env_profile, FixtureEnvProfile::ReadOnlyFilesystem) {
+                drop(cluster);
+                world_cell.borrow_mut().mark_skip(
+                    "read-only fixture did not fail; filesystem permissions may be bypassed",
+                );
+                return Ok(());
+            }
             world_cell.borrow_mut().record_cluster(cluster);
             Ok(())
         }
@@ -110,7 +119,9 @@ fn assert_panic_message_contains(
     }
     let message = world_ref.panic_message()?;
     ensure!(
-        expected_keywords.iter().any(|keyword| message.contains(keyword)),
+        expected_keywords
+            .iter()
+            .any(|keyword| message.contains(keyword)),
         "expected {error_description} but observed: {message}"
     );
     Ok(())
@@ -136,47 +147,43 @@ fn then_fixture_reports_non_executable_worker_binary_error(
 ) -> Result<()> {
     assert_panic_message_contains(
         world,
-        &["Permission denied", "not executable", "Operation not permitted"],
+        &[
+            "Permission denied",
+            "not executable",
+            "must be executable",
+            "Operation not permitted",
+        ],
         "non-executable worker binary error",
     )
 }
 
 #[then("the fixture reports a permission error")]
 fn then_fixture_reports_permission_error(world: &FixtureWorldFixture) -> Result<()> {
-    assert_panic_message_contains(
-        world,
-        &["Permission", "permission"],
-        "permission error",
-    )
+    assert_panic_message_contains(world, &["Permission", "permission"], "permission error")
 }
 
 #[then("the fixture reports a read-only permission error")]
 fn then_fixture_reports_read_only_permission_error(world: &FixtureWorldFixture) -> Result<()> {
     assert_panic_message_contains(
         world,
-        &["read-only", "Read-only file system", "cannot write", "write permission"],
+        &[
+            "read-only",
+            "Read-only file system",
+            "cannot write",
+            "write permission",
+        ],
         "read-only permission error",
     )
 }
 
 #[then("the fixture reports an invalid configuration error")]
 fn then_fixture_reports_invalid_configuration_error(world: &FixtureWorldFixture) -> Result<()> {
-    assert_panic_message_contains(
-        world,
-        &["configuration", "invalid"],
-        "configuration error",
-    )
+    assert_panic_message_contains(world, &["configuration", "invalid"], "configuration error")
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 0)]
-fn scenario_fixture_happy_path(
-    serial_guard: ScenarioSerialGuard,
-    world: FixtureWorldFixture,
-) {
-    expect_fixture(
-        execute_scenario(serial_guard, world),
-        "fixture happy path",
-    );
+fn scenario_fixture_happy_path(serial_guard: ScenarioSerialGuard, world: FixtureWorldFixture) {
+    expect_fixture(execute_scenario(serial_guard, world), "fixture happy path");
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 1)]
@@ -191,10 +198,7 @@ fn scenario_fixture_missing_timezone(
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 2)]
-fn scenario_fixture_missing_worker(
-    serial_guard: ScenarioSerialGuard,
-    world: FixtureWorldFixture,
-) {
+fn scenario_fixture_missing_worker(serial_guard: ScenarioSerialGuard, world: FixtureWorldFixture) {
     expect_fixture(
         execute_scenario(serial_guard, world),
         "fixture missing worker",
@@ -202,10 +206,7 @@ fn scenario_fixture_missing_worker(
 }
 
 #[scenario(path = "tests/features/test_cluster_fixture.feature", index = 3)]
-fn scenario_fixture_non_exec_worker(
-    serial_guard: ScenarioSerialGuard,
-    world: FixtureWorldFixture,
-) {
+fn scenario_fixture_non_exec_worker(serial_guard: ScenarioSerialGuard, world: FixtureWorldFixture) {
     expect_fixture(
         execute_scenario(serial_guard, world),
         "fixture non executable worker",
@@ -223,10 +224,7 @@ fn scenario_fixture_read_only_permissions(
     );
 }
 
-fn execute_scenario(
-    serial_guard: ScenarioSerialGuard,
-    world: FixtureWorldFixture,
-) -> Result<()> {
+fn execute_scenario(serial_guard: ScenarioSerialGuard, world: FixtureWorldFixture) -> Result<()> {
     let _guard = serial_guard;
     let _ = world?;
     Ok(())

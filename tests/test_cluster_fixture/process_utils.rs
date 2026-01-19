@@ -1,11 +1,13 @@
+//! Helpers for fixture process management in cluster tests.
+
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Context, Result, eyre};
-use tracing::warn;
 use libc::pid_t;
+use tracing::warn;
 
 use super::{cap_fs, sandbox::TestSandbox};
 
@@ -88,12 +90,13 @@ impl WaitConfig {
     }
 
     fn scaled(mut self, multiplier: f64) -> Self {
+        if !multiplier.is_finite() {
+            warn!("Ignoring non-finite wait multiplier {multiplier}");
+            return self;
+        }
         let clamped = multiplier.clamp(0.1, 10.0);
-        self.attempts = ((self.attempts as f64) * clamped).ceil() as u32;
-        self.initial_delay = self
-            .initial_delay
-            .mul_f64(clamped)
-            .min(self.max_delay);
+        self.attempts = scale_attempts(self.attempts, clamped);
+        self.initial_delay = self.initial_delay.mul_f64(clamped).min(self.max_delay);
         self
     }
 
@@ -121,6 +124,38 @@ impl Default for WaitConfig {
             max_delay: Duration::from_millis(250),
         }
     }
+}
+
+fn scale_attempts(attempts: u32, multiplier: f64) -> u32 {
+    let Some((ratio_numerator, ratio_denominator)) = decimal_ratio(multiplier) else {
+        return attempts;
+    };
+    let scaled_numerator = u128::from(attempts) * u128::from(ratio_numerator);
+    let scaled_denominator = u128::from(ratio_denominator);
+    let scaled = scaled_numerator.div_ceil(scaled_denominator);
+    u32::try_from(scaled).unwrap_or(u32::MAX)
+}
+
+fn decimal_ratio(multiplier: f64) -> Option<(u64, u64)> {
+    let raw = format!("{multiplier:.3}");
+    let mut parts = raw.trim().splitn(2, '.');
+    let whole = parts.next().unwrap_or("0");
+    let frac = parts.next().unwrap_or("");
+    let whole_value = if whole.is_empty() {
+        0
+    } else {
+        whole.parse::<u64>().ok()?
+    };
+    if frac.is_empty() {
+        return Some((whole_value, 1));
+    }
+    if !frac.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let exponent = u32::try_from(frac.len()).ok()?;
+    let denominator = 10_u64.pow(exponent);
+    let fraction_value = frac.parse::<u64>().ok()?;
+    Some((whole_value * denominator + fraction_value, denominator))
 }
 
 fn process_is_running(pid: pid_t) -> bool {

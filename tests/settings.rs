@@ -7,10 +7,14 @@ use std::path::Path;
 use nix::unistd::geteuid;
 #[cfg(feature = "privileged-tests")]
 use pg_embedded_setup_unpriv::Error as PgEmbeddedError;
-use pg_embedded_setup_unpriv::{
-    ExecutionPrivileges, PgEnvCfg, detect_execution_privileges, make_data_dir_private,
-    make_dir_accessible, nobody_uid,
-};
+#[cfg(any(
+    feature = "privileged-tests",
+    all(unix, feature = "cluster-unit-tests")
+))]
+use pg_embedded_setup_unpriv::nobody_uid;
+use pg_embedded_setup_unpriv::{ExecutionPrivileges, PgEnvCfg, detect_execution_privileges};
+#[cfg(all(unix, feature = "cluster-unit-tests"))]
+use pg_embedded_setup_unpriv::{make_data_dir_private, make_dir_accessible};
 use postgresql_embedded::VersionReq;
 use rstest::rstest;
 
@@ -127,11 +131,11 @@ fn with_temp_euid_changes_uid() -> color_eyre::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "cluster-unit-tests"))]
 #[path = "support/cap_fs_settings.rs"]
 mod cap_fs;
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "cluster-unit-tests"))]
 mod dir_accessible_tests {
     use super::*;
     use cap_std::fs::{MetadataExt, PermissionsExt};

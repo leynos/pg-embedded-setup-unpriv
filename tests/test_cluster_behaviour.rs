@@ -140,7 +140,7 @@ type ClusterWorldFixture = Result<RefCell<ClusterWorld>>;
 fn borrow_world(world: &ClusterWorldFixture) -> Result<&RefCell<ClusterWorld>> {
     world
         .as_ref()
-        .map_err(|err| eyre!(format!("cluster fixture construction failed: {err}")))
+        .map_err(|err| eyre!("cluster fixture construction failed: {err}"))
 }
 
 #[fixture]
