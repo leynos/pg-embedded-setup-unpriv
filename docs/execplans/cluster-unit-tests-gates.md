@@ -6,7 +6,7 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 
 Status: COMPLETE
 
-## Purpose / Big Picture
+## Purpose / big picture
 
 Ensure `cargo check --all-targets` with no features enabled succeeds by
 preventing integration tests from importing
@@ -29,7 +29,7 @@ and run when the feature is explicitly enabled.
 - Use repository-relative paths or generic placeholders when documenting
   commands; avoid local absolute paths.
 
-## Tolerances (Exception Triggers)
+## Tolerances (exception triggers)
 
 - Scope: if the change requires editing more than 12 files or exceeds 250 net
   lines of code, stop and escalate.
@@ -69,7 +69,7 @@ and run when the feature is explicitly enabled.
   shared support modules and made error expectations deterministic after the
   suite was enabled.
 
-## Surprises & Discoveries
+## Surprises & discoveries
 
 - Observation: Crate-level `#![cfg(...)]` placed before `//!` triggered
   `missing_docs` and unused-import warnings during `cargo check --all-targets`
@@ -84,7 +84,7 @@ and run when the feature is explicitly enabled.
   `../support`, fixture functions are imported, and read-only runs skip when
   permissions are effectively bypassed.
 
-## Decision Log
+## Decision log
 
 - Decision: Use crate-level `#![cfg(all(unix, feature = "cluster-unit-tests"))]`
   attributes on the affected integration tests, plus a combined gate for
@@ -106,7 +106,7 @@ and run when the feature is explicitly enabled.
   that defeat the read-only setup; skipping keeps the suite deterministic.
   Date/Author: 2026-01-18 (Codex)
 
-## Outcomes & Retrospective
+## Outcomes & retrospective
 
 Completed: integration tests that depend on `test_support` are gated behind the
 `cluster-unit-tests` feature, and the `diesel-support` integration suite now
@@ -116,7 +116,7 @@ Feature gating for these tests is now centralized in `Cargo.toml`
 `required-features` entries, including `test_cluster_fixture`. No follow-up
 actions required.
 
-## Context and Orientation
+## Context and orientation
 
 The `pg_embedded_setup_unpriv::test_support` module is re-exported only when
 `cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))` is
@@ -145,7 +145,7 @@ Relevant files:
   - `tests/test_cluster_connection.rs` (also needs `diesel-support`)
 - `tests/settings.rs` for cap-fs settings tests that import `test_support`.
 
-## Plan of Work
+## Plan of work
 
 Stage A: Confirm scope and current gating. Read the listed test files to verify
 they import `test_support` or cap-fs helpers and confirm they are not already
@@ -171,7 +171,7 @@ Stage E: Commit. Create a single atomic commit that captures the gating
 changes. Include a clear commit message with a short subject and a brief body
 explaining why the gating aligns with the test-support feature design.
 
-## Concrete Steps
+## Concrete steps
 
 Run the following from the repository root (the directory containing
 `Cargo.toml`). Use `tee` log files with the recommended naming pattern. Replace
@@ -232,7 +232,7 @@ Run the following from the repository root (the directory containing
      - Body: explain that integration tests rely on `test_support` and should
        only compile when `cluster-unit-tests` is enabled.
 
-## Validation and Acceptance
+## Validation and acceptance
 
 Quality criteria:
 
@@ -249,13 +249,13 @@ Acceptance behaviour:
 - Running `make test` continues to exercise cluster integration tests under
   `--all-features`.
 
-## Idempotence and Recovery
+## Idempotence and recovery
 
 All commands in this plan are re-runnable. If a command fails, fix the
 underlying issue and re-run the same command. Use `git status` and `git diff`
 to verify only the intended changes are present before committing.
 
-## Artifacts and Notes
+## Artifacts and notes
 
 Expected files to change (no new files):
 
@@ -271,7 +271,7 @@ Expected files to change (no new files):
 - `tests/test_cluster_connection.rs`
 - `tests/settings.rs`
 
-## Interfaces and Dependencies
+## Interfaces and dependencies
 
 No new dependencies. No public API changes. The change is strictly compile-time
 feature gating of integration test crates and submodules.
