@@ -13,3 +13,8 @@ Feature: Runtime privilege detection
     When the bootstrap runs twice as root
     Then the sandbox directories are owned by the target uid
     And the detected privileges were root
+
+  Scenario: Root bootstrap requires a worker binary
+    Given a fresh bootstrap sandbox
+    When the bootstrap runs as root without a worker
+    Then the bootstrap reports the missing worker

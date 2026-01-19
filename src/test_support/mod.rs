@@ -17,6 +17,7 @@ mod hook;
 #[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod logging;
 mod scoped_env;
+mod worker_env;
 
 #[cfg(doc)]
 mod fixtures_docs;
@@ -27,7 +28,9 @@ pub use errors::{bootstrap_error, privilege_error};
 pub use filesystem::{
     CapabilityTempDir, ambient_dir_and_path, ensure_dir_exists, metadata, set_permissions,
 };
-pub use fixtures::{dummy_environment, dummy_settings, shared_cluster, test_runtime};
+pub use fixtures::{
+    dummy_environment, dummy_settings, ensure_worker_env, shared_cluster, test_runtime,
+};
 #[cfg(not(doc))]
 pub use fixtures::{shared_test_cluster, test_cluster};
 #[cfg(doc)]
@@ -43,3 +46,4 @@ pub use logging::{
     capture_debug_logs, capture_info_logs, capture_info_logs_with_spans, capture_warn_logs,
 };
 pub use scoped_env::scoped_env;
+pub use worker_env::worker_binary_for_tests;

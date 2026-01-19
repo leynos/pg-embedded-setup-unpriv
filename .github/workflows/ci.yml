@@ -7,16 +7,22 @@ name: CI
 
 jobs:
   build-test:
+    name: Build and Test (${{ matrix.privilege }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        privilege: [unprivileged, root]
     permissions:
       contents: read
     env:
       CARGO_TERM_COLOR: always
       BUILD_PROFILE: debug
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - name: Setup Rust
-        uses: leynos/shared-actions/.github/actions/setup-rust@f9f1c863c8a5bef64aa6779caa746e1a4a6c1ad4
+        uses: leynos/shared-actions/.github/actions/setup-rust@fb861087e1ddbbe32c3f44d7896f1d2364dd7711
       - name: Format
         run: make check-fmt
       - name: Markdown lint
@@ -28,18 +34,43 @@ jobs:
             !**/dist/**
       - name: Lint
         run: make lint
-      - name: Test and Measure Coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@f9f1c863c8a5bef64aa6779caa746e1a4a6c1ad4
+      - name: Install cargo-nextest
+        run: cargo binstall -y cargo-nextest@0.9.122
+      - name: Test with all features (unprivileged)
+        if: ${{ matrix.privilege == 'unprivileged' }}
+        run: >-
+          RUSTFLAGS="-D warnings"
+          cargo nextest run --all-targets --all-features
+      - name: Test and Measure Coverage (unprivileged)
+        if: ${{ matrix.privilege == 'unprivileged' }}
+        uses: leynos/shared-actions/.github/actions/generate-coverage@fb861087e1ddbbe32c3f44d7896f1d2364dd7711
         with:
           output-path: lcov.info
           format: lcov
           features: dev-worker
           with-default-features: "false"
+      - name: Install cargo-nextest and test (root)
+        if: ${{ matrix.privilege == 'root' }}
+        run: |
+          export PG_EMBEDDED_WORKER="$PWD/target/debug/pg_worker"
+          run_as_root() {
+            : "${RUSTUP_HOME:=$HOME/.rustup}"
+            : "${CARGO_HOME:=$HOME/.cargo}"
+            sudo -E env \
+              HOME="$HOME" \
+              RUSTUP_HOME="$RUSTUP_HOME" \
+              CARGO_HOME="$CARGO_HOME" \
+              GITHUB_TOKEN="$GITHUB_TOKEN" \
+              PG_EMBEDDED_WORKER="$PG_EMBEDDED_WORKER" \
+              PATH="$CARGO_HOME/bin:$PATH" \
+              "$@"
+          }
+          run_as_root make test
       - name: Upload coverage data to CodeScene
         env:
           CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}
-        if: ${{ env.CS_ACCESS_TOKEN }}
-        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@f9f1c863c8a5bef64aa6779caa746e1a4a6c1ad4
+        if: ${{ env.CS_ACCESS_TOKEN && matrix.privilege == 'unprivileged' }}
+        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@fb861087e1ddbbe32c3f44d7896f1d2364dd7711
         with:
           format: lcov
           access-token: ${{ env.CS_ACCESS_TOKEN }}

@@ -12,11 +12,16 @@ consumer-facing guidance.
   `TestCluster` teardown, demonstrating that no orphaned processes remain.
 - Behavioural tests driven by `rstest-bdd` exercise both privilege branches to
   guard against regressions in ownership or permission handling.
+- Behavioural suites coordinate via a shared lock file, so concurrent test
+  binaries do not contend over PostgreSQL setup or cache directories.
 
 ## Feature coverage in CI
 
 The default feature set keeps Diesel optional for consumers, while `make test`
-enables `--all-features` so the Diesel helpers are exercised by smoke tests.
+enables `--all-features` so the Diesel helpers are exercised by smoke tests. CI
+also runs a Linux matrix for unprivileged and root execution. The root variant
+invokes the test suite under `sudo` so root-only privilege paths execute, while
+the unprivileged variant continues to collect coverage.
 
 ## Loom concurrency tests
 

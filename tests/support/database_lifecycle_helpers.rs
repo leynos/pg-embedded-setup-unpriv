@@ -130,10 +130,21 @@ impl DatabaseWorld {
     /// Returns an error if the scenario is skipped or no cluster was created.
     pub fn cluster(&self) -> Result<&TestCluster> {
         self.ensure_not_skipped()?;
-        self.cluster
-            .as_ref()
-            .ok_or_else(|| eyre!("TestCluster was not created"))
+        self.cluster.as_ref().map_or_else(
+            || {
+                let message = format_cluster_not_created_error(self.bootstrap_error.as_deref());
+                Err(eyre!(message))
+            },
+            Ok,
+        )
     }
+}
+
+fn format_cluster_not_created_error(bootstrap_error: Option<&str>) -> String {
+    bootstrap_error.map_or_else(
+        || "TestCluster was not created".to_owned(),
+        |err| format!("TestCluster was not created: {err}"),
+    )
 }
 
 /// Type alias for the world fixture result.
@@ -354,3 +365,7 @@ fn override_env_value(vars: &mut ScopedEnvVars, key: &str, value: &str) {
         vars.push((key_ref.to_os_string(), value_os));
     }
 }
+
+#[cfg(test)]
+#[path = "database_lifecycle_helpers/tests.rs"]
+mod tests;

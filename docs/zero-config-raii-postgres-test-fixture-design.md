@@ -307,6 +307,38 @@ essentially one line in the test setup.
   is present for both successful and failing bootstraps and that sensitive
   values remain redacted even when preparation errors occur.
 
+### Implementation update (2026-01-12)
+
+- Introduced the optional `loom` dependency and `loom-tests` feature; runtime
+  code keeps `ENV_LOCK` as a `std::sync::Mutex`, while Loom tests use a
+  Loom-specific lock and thread state via a private state accessor hook.
+- Added Loom-backed concurrency tests for `ScopedEnv` under `loom-tests`; the
+  Loom tests are marked `#[ignore]` so `make test` does not run the
+  model-checking suite.
+- Documented the Loom test command in the developer guide; there are no
+  user-facing behaviour changes.
+- Behavioural tests (rstest-bdd) are not applicable because this change only
+  affects internal test instrumentation rather than observable runtime
+  behaviour.
+- Refactored `ScopedEnv` and `ThreadState` into generic cores parameterized by
+  pluggable lock and thread-state backends. The `EnvLockOps` trait abstracts
+  mutex operations, while `ThreadStateCore<L>` is a generic type parameterized
+  by the lock backend. Production builds use `StdEnvLock` (wrapping
+  `std::sync::Mutex`), while Loom tests supply `LoomEnvLock` (wrapping
+  `loom::sync::Mutex`). This enables swapping synchronization implementations
+  for model checking without altering runtime code paths.
+
+### Implementation update (2026-01-13)
+
+- Continuous Integration (CI) now runs a Linux matrix that exercises both
+  unprivileged and root execution paths, using a privileged test run to
+  validate the worker-based bootstrap flow.
+- The root CI variant runs the same quality gates but executes tests via
+  `sudo` so the effective UID is `0`, ensuring the privilege-aware logic is
+  exercised in automated runs.
+- Behavioural suites now coordinate across binaries with a shared lock file,
+  so concurrent PostgreSQL setup or download tasks do not race in CI.
+
 #### Class diagram (2025-12-10)
 
 The worker payload and snapshot types are organized as follows.
@@ -390,27 +422,6 @@ classDiagram
 ```
 
 *Figure: Worker payload serialization and redaction flow.*
-
-### Implementation update (2026-01-12)
-
-- Introduced the optional `loom` dependency and `loom-tests` feature; runtime
-  code keeps `ENV_LOCK` as a `std::sync::Mutex`, while Loom tests use a
-  Loom-specific lock and thread state via a private state accessor hook.
-- Added Loom-backed concurrency tests for `ScopedEnv` under `loom-tests`; the
-  Loom tests are marked `#[ignore]` so `make test` does not run the
-  model-checking suite.
-- Documented the Loom test command in the developer guide; there are no
-  user-facing behaviour changes.
-- Behavioural tests (rstest-bdd) are not applicable because this change only
-  affects internal test instrumentation rather than observable runtime
-  behaviour.
-- Refactored `ScopedEnv` and `ThreadState` into generic cores parameterized by
-  pluggable lock and thread-state backends. The `EnvLockOps` trait abstracts
-  mutex operations, while `ThreadStateCore<L>` is a generic type parameterized
-  by the lock backend. Production builds use `StdEnvLock` (wrapping
-  `std::sync::Mutex`), while Loom tests supply `LoomEnvLock` (wrapping
-  `loom::sync::Mutex`). This enables swapping synchronization implementations
-  for model checking without altering runtime code paths.
 
 ### Implementation update (2026-01-15): Async API
 

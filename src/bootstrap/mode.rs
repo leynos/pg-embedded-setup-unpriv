@@ -84,3 +84,57 @@ pub(super) fn determine_execution_mode(
         Ok(ExecutionMode::InProcess)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for execution mode determination.
+
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn determine_execution_mode_requires_worker_when_root() {
+        let err = determine_execution_mode(ExecutionPrivileges::Root, None)
+            .expect_err("root execution without worker must error");
+        let message = err.to_string();
+        assert!(
+            message.contains("PG_EMBEDDED_WORKER must be set"),
+            "unexpected error message: {message}",
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn determine_execution_mode_allows_subprocess_with_worker() {
+        let worker = Utf8PathBuf::from("/tmp/pg_worker");
+        let mode = determine_execution_mode(ExecutionPrivileges::Root, Some(&worker))
+            .expect("root execution with worker should succeed");
+        assert_eq!(mode, ExecutionMode::Subprocess);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn determine_execution_mode_in_process_when_unprivileged() {
+        let mode = determine_execution_mode(ExecutionPrivileges::Unprivileged, None)
+            .expect("unprivileged execution should succeed");
+        assert_eq!(mode, ExecutionMode::InProcess);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn determine_execution_mode_ignores_worker_when_unprivileged() {
+        let worker = Utf8PathBuf::from("/tmp/pg_worker");
+        let mode = determine_execution_mode(ExecutionPrivileges::Unprivileged, Some(&worker))
+            .expect("unprivileged execution should succeed with worker configured");
+        assert_eq!(mode, ExecutionMode::InProcess);
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn determine_execution_mode_defaults_to_in_process() {
+        let worker = Utf8PathBuf::from("/tmp/pg_worker");
+        let mode = determine_execution_mode(ExecutionPrivileges::Root, Some(&worker))
+            .expect("non-unix execution should succeed");
+        assert_eq!(mode, ExecutionMode::InProcess);
+    }
+}
