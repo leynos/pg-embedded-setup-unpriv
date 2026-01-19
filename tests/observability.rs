@@ -5,7 +5,6 @@ use std::cell::RefCell;
 use std::ffi::OsString;
 use std::fs;
 
-#[cfg(unix)]
 use color_eyre::eyre::{Context, Report, Result, ensure, eyre};
 use pg_embedded_setup_unpriv::test_support::capture_info_logs_with_spans;
 use pg_embedded_setup_unpriv::{BootstrapResult, TestCluster};
