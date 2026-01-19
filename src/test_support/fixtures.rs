@@ -6,10 +6,10 @@ use color_eyre::eyre::{Result, eyre};
 #[cfg(not(doc))]
 use rstest::fixture;
 use std::ffi::OsString;
-use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
 
+use super::worker_env;
 use crate::error::BootstrapResult;
 use crate::{
     ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
@@ -98,11 +98,25 @@ pub fn test_cluster() -> TestCluster {
     cluster.with_worker_guard(worker_guard)
 }
 
-fn ensure_worker_env() -> Option<ScopedEnv> {
+/// Ensures `PG_EMBEDDED_WORKER` is set when privileged test runs require it.
+///
+/// Returns `Some(ScopedEnv)` when the helper configures the environment, and
+/// `None` when no changes are needed (for example, when already unprivileged
+/// or when `PG_EMBEDDED_WORKER` is present).
+///
+/// # Examples
+///
+/// ```no_run
+/// use pg_embedded_setup_unpriv::test_support::ensure_worker_env;
+///
+/// let guard = ensure_worker_env();
+/// drop(guard); // Restores the previous environment values.
+/// ```
+pub fn ensure_worker_env() -> Option<ScopedEnv> {
     let worker_path = resolve_worker_path(
         detect_execution_privileges(),
         std::env::var_os("PG_EMBEDDED_WORKER").is_some(),
-        worker_binary,
+        worker_env::worker_binary,
     )?;
 
     Some(scoped_env(vec![(
@@ -143,22 +157,7 @@ fn resolve_worker_path(
     Some(worker)
 }
 
-fn worker_binary() -> Option<OsString> {
-    static WORKER_PATH: OnceLock<Option<OsString>> = OnceLock::new();
-    WORKER_PATH
-        .get_or_init(|| std::env::var_os("CARGO_BIN_EXE_pg_worker").or_else(locate_worker_binary))
-        .clone()
-}
-
-fn locate_worker_binary() -> Option<OsString> {
-    let exe = std::env::current_exe().ok()?;
-    let deps_dir = exe.parent()?;
-    let target_dir = deps_dir.parent()?;
-    let worker_path = target_dir.join("pg_worker");
-    worker_path.exists().then(|| worker_path.into_os_string())
-}
-
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 /// Global state for the shared cluster singleton.
 ///

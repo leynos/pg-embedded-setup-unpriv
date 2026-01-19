@@ -2,7 +2,7 @@
 
 use camino::{Utf8Path, Utf8PathBuf};
 #[cfg(unix)]
-use color_eyre::eyre::Context;
+use color_eyre::eyre::{Context, eyre};
 use postgresql_embedded::Settings;
 
 use crate::{
@@ -20,6 +20,8 @@ use crate::privileges::{
 };
 #[cfg(unix)]
 use nix::unistd::{Uid, User, fchown, geteuid};
+#[cfg(unix)]
+use std::net::TcpListener;
 use tracing::debug;
 
 pub(super) fn prepare_bootstrap(
@@ -52,6 +54,11 @@ fn bootstrap_with_root(
     mut settings: Settings,
     cfg: &PgEnvCfg,
 ) -> BootstrapResult<PreparedBootstrap> {
+    // Worker subprocesses drop after each operation; keep the data dir so start can
+    // proceed after setup.
+    settings.temporary = false;
+    ensure_root_port(&mut settings)?;
+
     let nobody_user = User::from_name("nobody")
         .context("failed to resolve user 'nobody'")?
         .ok_or_else(|| color_eyre::eyre::eyre!("user 'nobody' not found"))?;
@@ -80,6 +87,33 @@ fn bootstrap_with_root(
         settings,
         environment,
     })
+}
+
+#[cfg(unix)]
+fn ensure_root_port(settings: &mut Settings) -> BootstrapResult<()> {
+    if settings.port > 0 {
+        return Ok(());
+    }
+
+    let host = root_bind_host(settings);
+    let listener = TcpListener::bind((host, 0))
+        .map_err(|err| BootstrapError::from(eyre!("failed to allocate port: {err}")))?;
+    let port = listener
+        .local_addr()
+        .map_err(|err| BootstrapError::from(eyre!("failed to read allocated port: {err}")))?
+        .port();
+    settings.port = port;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn root_bind_host(settings: &Settings) -> &str {
+    let host = settings.host.as_str();
+    if host.is_empty() || host.starts_with('/') {
+        "127.0.0.1"
+    } else {
+        host
+    }
 }
 
 fn bootstrap_unprivileged(
