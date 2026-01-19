@@ -11,7 +11,7 @@ use cap_std::{
 };
 use color_eyre::eyre::{Context, Report, Result};
 
-use crate::fs;
+use crate::{ExecutionPrivileges, detect_execution_privileges, fs};
 
 /// Opens the ambient directory containing `path` and returns its relative component.
 ///
@@ -76,6 +76,70 @@ pub fn metadata(path: &Utf8Path) -> std::io::Result<Metadata> {
     }
 }
 
+fn temp_root_dir() -> Result<Utf8PathBuf> {
+    let privileges = detect_execution_privileges();
+    let base = match env_temp_base(privileges)? {
+        Some(path) => path,
+        None => default_temp_base(privileges)?,
+    };
+
+    let root = base.join("pg-embedded-setup-unpriv-tmp");
+    std::fs::create_dir_all(root.as_std_path())
+        .with_context(|| format!("create temp root at {root}"))?;
+    if matches!(privileges, ExecutionPrivileges::Root) {
+        fs::set_permissions(&root, 0o777)
+            .with_context(|| format!("set temp root permissions for {root}"))?;
+    }
+    Ok(root)
+}
+
+fn env_temp_base(privileges: ExecutionPrivileges) -> Result<Option<Utf8PathBuf>> {
+    let vars: &[&str] = match privileges {
+        ExecutionPrivileges::Root => &["PG_EMBEDDED_TEST_TMPDIR"],
+        ExecutionPrivileges::Unprivileged => &["PG_EMBEDDED_TEST_TMPDIR", "CARGO_TARGET_DIR"],
+    };
+
+    for var in vars {
+        if let Some(path) = resolve_env_path(var)? {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+fn resolve_env_path(var: &str) -> Result<Option<Utf8PathBuf>> {
+    std::env::var_os(var)
+        .map(|path| {
+            Utf8PathBuf::try_from(std::path::PathBuf::from(path))
+                .map_err(|_| Report::msg(format!("{var} is not valid UTF-8")))
+        })
+        .transpose()
+}
+
+fn default_temp_base(privileges: ExecutionPrivileges) -> Result<Utf8PathBuf> {
+    match privileges {
+        ExecutionPrivileges::Root => {
+            #[cfg(unix)]
+            {
+                Ok(Utf8PathBuf::from("/var/tmp"))
+            }
+
+            #[cfg(not(unix))]
+            {
+                target_temp_base()
+            }
+        }
+        ExecutionPrivileges::Unprivileged => target_temp_base(),
+    }
+}
+
+fn target_temp_base() -> Result<Utf8PathBuf> {
+    let cwd_path = std::env::current_dir().context("resolve current directory")?;
+    let cwd = Utf8PathBuf::try_from(cwd_path)
+        .map_err(|_| Report::msg("current directory is not valid UTF-8"))?;
+    Ok(cwd.join("target"))
+}
+
 /// Capability-aware temporary directory that exposes both a [`Dir`] handle and the UTF-8 path.
 #[derive(Debug)]
 pub struct CapabilityTempDir {
@@ -84,14 +148,17 @@ pub struct CapabilityTempDir {
 }
 
 impl CapabilityTempDir {
-    /// Creates a new temporary directory rooted under the system temporary location.
+    /// Creates a new temporary directory rooted under the test temp location.
+    ///
+    /// Uses `PG_EMBEDDED_TEST_TMPDIR` when set. Unprivileged tests prefer
+    /// `CARGO_TARGET_DIR` (or `./target`) to avoid exhausting shared `/tmp`
+    /// space; privileged tests default to `/var/tmp` so the unprivileged worker
+    /// can access the directory tree.
     pub fn new(prefix: &str) -> Result<Self> {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-        let system_tmp_dir = std::env::temp_dir();
-        let system_tmp_path = Utf8PathBuf::try_from(system_tmp_dir)
-            .map_err(|_| Report::msg("system temp dir is not valid UTF-8"))?;
-        let ambient = Dir::open_ambient_dir(system_tmp_path.as_std_path(), ambient_authority())
+        let temp_root = temp_root_dir()?;
+        let ambient = Dir::open_ambient_dir(temp_root.as_std_path(), ambient_authority())
             .context("open ambient temp directory")?;
 
         let pid = std::process::id();
@@ -106,7 +173,7 @@ impl CapabilityTempDir {
             match ambient.create_dir(&name) {
                 Ok(()) => {
                     let dir = ambient.open_dir(&name).context("open capability tempdir")?;
-                    let path = system_tmp_path.join(&name);
+                    let path = temp_root.join(&name);
                     return Ok(Self {
                         dir: Some(dir),
                         path,

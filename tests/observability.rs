@@ -35,7 +35,7 @@ use cluster_skip::cluster_skip_message;
 use env_isolation::override_env_path;
 use sandbox::TestSandbox;
 use scenario::expect_fixture;
-use serial::{ScenarioSerialGuard, serial_guard};
+use serial::{ScenarioLocalGuard, local_serial_guard};
 
 struct ObservabilityWorld {
     sandbox: TestSandbox,
@@ -175,54 +175,15 @@ fn then_logs_cover_lifecycle(world: &WorldFixture) -> Result<()> {
         return Err(eyre!("cluster bootstrap failed unexpectedly: {err}"));
     }
 
-    ensure!(
-        world_ref
-            .logs
-            .iter()
-            .any(|line| line.contains("applied scoped environment variables")),
-        "expected environment application log, got {:?}",
-        world_ref.logs
-    );
-    ensure!(
-        world_ref.logs.iter().any(|line| line.contains("HOME=set")),
-        "expected environment summary, got {:?}",
-        world_ref.logs
-    );
+    assert_env_application_logged(&world_ref.logs)?;
+    assert_env_summary_logged(&world_ref.logs)?;
 
     let install = world_ref.sandbox.install_dir().to_string();
-    ensure!(
-        world_ref
-            .logs
-            .iter()
-            .any(|line| { line.contains("ensured directory exists") && line.contains(&install) }),
-        "expected directory mutation log for install dir, got {:?}",
-        world_ref.logs
-    );
+    assert_directory_mutation_logged(&world_ref.logs, &install)?;
 
-    ensure!(
-        world_ref.logs.iter().any(|line| {
-            (line.contains("lifecycle operation completed") || line.contains("lifecycle_operation"))
-                && line.contains("operation=\"setup\"")
-        }),
-        "expected setup lifecycle log or span, got {:?}",
-        world_ref.logs
-    );
-    ensure!(
-        world_ref.logs.iter().any(|line| {
-            (line.contains("lifecycle operation completed") || line.contains("lifecycle_operation"))
-                && line.contains("operation=\"start\"")
-        }),
-        "expected start lifecycle log or span, got {:?}",
-        world_ref.logs
-    );
-    ensure!(
-        world_ref
-            .logs
-            .iter()
-            .any(|line| line.contains("stopping embedded postgres cluster")),
-        "expected stop log, got {:?}",
-        world_ref.logs
-    );
+    assert_lifecycle_operation_logged(&world_ref.logs, "setup")?;
+    assert_lifecycle_operation_logged(&world_ref.logs, "start")?;
+    assert_stop_logged(&world_ref.logs)?;
     Ok(())
 }
 
@@ -263,6 +224,78 @@ fn then_logs_capture_failure(world: &WorldFixture) -> Result<()> {
             world_ref.logs
         );
     }
+    Ok(())
+}
+
+fn matches_lifecycle_operation(line: &str, operation: &str) -> bool {
+    let operation_marker = format!("operation=\"{operation}\"");
+    (line.contains("lifecycle operation completed")
+        || line.contains("lifecycle_operation")
+        || line.contains("worker operation completed successfully"))
+        && line.contains(&operation_marker)
+}
+
+fn assert_env_application_logged(logs: &[String]) -> Result<()> {
+    ensure!(
+        logs.iter()
+            .any(|line| line.contains("applied scoped environment variables")),
+        "expected environment application log, got {:?}",
+        logs
+    );
+    Ok(())
+}
+
+fn assert_env_summary_logged(logs: &[String]) -> Result<()> {
+    ensure!(
+        logs.iter().any(|line| line.contains("HOME=set")),
+        "expected environment summary, got {:?}",
+        logs
+    );
+    Ok(())
+}
+
+fn assert_directory_mutation_logged(logs: &[String], install_dir: &str) -> Result<()> {
+    ensure!(
+        logs.iter().any(|line| {
+            line.contains("ensured directory exists") && line.contains(install_dir)
+        }),
+        "expected directory mutation log for install dir, got {:?}",
+        logs
+    );
+    Ok(())
+}
+
+fn assert_lifecycle_operation_logged(logs: &[String], operation: &str) -> Result<()> {
+    match operation {
+        "setup" => ensure!(
+            logs.iter()
+                .any(|line| matches_lifecycle_operation(line, operation)),
+            "expected setup lifecycle log or span, got {:?}",
+            logs
+        ),
+        "start" => ensure!(
+            logs.iter()
+                .any(|line| matches_lifecycle_operation(line, operation)),
+            "expected start lifecycle log or span, got {:?}",
+            logs
+        ),
+        _ => ensure!(
+            logs.iter()
+                .any(|line| matches_lifecycle_operation(line, operation)),
+            "expected lifecycle log or span, got {:?}",
+            logs
+        ),
+    }
+    Ok(())
+}
+
+fn assert_stop_logged(logs: &[String]) -> Result<()> {
+    ensure!(
+        logs.iter()
+            .any(|line| line.contains("stopping embedded postgres cluster")),
+        "expected stop log, got {:?}",
+        logs
+    );
     Ok(())
 }
 
@@ -321,13 +354,13 @@ fn assert_worker_present(env_vars: &[(OsString, Option<OsString>)]) -> Result<()
 }
 
 #[scenario(path = "tests/features/observability.feature", index = 0)]
-fn scenario_observability_success(serial_guard: ScenarioSerialGuard, world: WorldFixture) {
-    let _guard = serial_guard;
+fn scenario_observability_success(local_serial_guard: ScenarioLocalGuard, world: WorldFixture) {
+    let _guard = local_serial_guard;
     let _ = expect_fixture(world, "observability success world");
 }
 
 #[scenario(path = "tests/features/observability.feature", index = 1)]
-fn scenario_observability_failure(serial_guard: ScenarioSerialGuard, world: WorldFixture) {
-    let _guard = serial_guard;
+fn scenario_observability_failure(local_serial_guard: ScenarioLocalGuard, world: WorldFixture) {
+    let _guard = local_serial_guard;
     let _ = expect_fixture(world, "observability failure world");
 }

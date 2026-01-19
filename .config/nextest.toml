@@ -11,3 +11,18 @@ global-timeout = "10m"
 [[profile.default.overrides]]
 filter = "binary(=settings)"
 slow-timeout = { period = "30s", terminate-after = 1, grace-period = "5s" }
+
+[test-groups]
+serial = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = """
+  binary(=bootstrap_privileges)
+  | binary(=database_lifecycle)
+  | binary(=observability)
+  | binary(=settings_logging)
+  | binary(=test_cluster_behaviour)
+  | binary(=test_cluster_connection)
+  | binary(=test_cluster_drop)
+"""
+test-group = "serial"

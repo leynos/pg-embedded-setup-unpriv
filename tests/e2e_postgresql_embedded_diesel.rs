@@ -4,6 +4,7 @@
 #![cfg(all(unix, feature = "privileged-tests"))]
 
 use std::io::Write;
+use std::os::fd::AsRawFd;
 use std::time::Duration;
 
 use camino::Utf8PathBuf;
@@ -11,17 +12,23 @@ use cap_std::fs::{OpenOptions, PermissionsExt};
 use color_eyre::eyre::{Context, Result, ensure, eyre};
 use diesel::prelude::*;
 use diesel::sql_types::{Int4, Text};
-use nix::unistd::geteuid;
+use nix::unistd::{User, fchown, geteuid};
 use pg_embedded_setup_unpriv::PgEnvCfg;
+use pg_embedded_setup_unpriv::worker_process_test_api::WorkerOperation;
 use postgresql_embedded::PostgreSQL;
 use tokio::runtime::{Builder, Runtime};
 
 #[path = "support/cap_fs_privileged.rs"]
 mod cap_fs;
+#[path = "support/diesel_e2e_helpers.rs"]
+mod diesel_e2e_helpers;
 #[path = "support/env.rs"]
 mod env;
 
 use cap_fs::{ensure_dir, open_dir, remove_tree};
+use diesel_e2e_helpers::{
+    PostgresHandle, WorkerHandle, ensure_database_exists, run_worker_operation, worker_from_env,
+};
 use env::{ScopedEnvVars, build_env, with_scoped_env};
 
 #[derive(QueryableByName, Debug, PartialEq, Eq)]
@@ -173,6 +180,9 @@ fn bootstrap_postgres_environment(config: &TestConfig) -> Result<Option<Bootstra
             let mut settings = cfg
                 .to_settings()
                 .wrap_err("convert environment to settings")?;
+            if geteuid().is_root() {
+                settings.temporary = false;
+            }
             settings.timeout = Some(Duration::from_secs(60));
 
             let password_file = config.password_file();
@@ -224,6 +234,11 @@ fn provision_password_file_for_nobody(
             cap_std::fs::Permissions::from_mode(0o600),
         )
         .context("set permissions on password file")?;
+    let user = User::from_name("nobody")
+        .context("resolve user 'nobody'")?
+        .ok_or_else(|| eyre!("user 'nobody' not found"))?;
+    fchown(pgpass.as_raw_fd(), Some(user.uid), Some(user.gid))
+        .context("chown password file to nobody")?;
     Ok(())
 }
 
@@ -276,11 +291,14 @@ fn run_postgres_in_env(
     let runtime = build_runtime()?;
     let (postgresql, database_url) = start_postgres(&runtime, settings, config)?;
 
-    run_diesel_operations(&database_url, config)?;
+    let run_result = (|| {
+        ensure_database_exists(settings, config.database_name)?;
+        run_diesel_operations(&database_url, config)?;
+        Ok(())
+    })();
 
-    stop_postgres(&runtime, postgresql)?;
-
-    Ok(())
+    let stop_result = stop_postgres(&runtime, postgresql);
+    run_result.and(stop_result)
 }
 
 fn build_runtime() -> Result<Runtime> {
@@ -294,24 +312,44 @@ fn start_postgres(
     runtime: &Runtime,
     settings: &postgresql_embedded::Settings,
     config: &TestConfig,
-) -> Result<(PostgreSQL, String)> {
+) -> Result<(PostgresHandle, String)> {
+    if geteuid().is_root() {
+        let worker = worker_from_env()?;
+        let timeout = settings.timeout.unwrap_or(Duration::from_secs(60));
+        run_worker_operation(worker.as_path(), settings, timeout, WorkerOperation::Setup)?;
+        run_worker_operation(worker.as_path(), settings, timeout, WorkerOperation::Start)?;
+        let database_url = settings.url(config.database_name);
+        return Ok((
+            PostgresHandle::Worker(WorkerHandle {
+                worker,
+                settings: settings.clone(),
+                timeout,
+            }),
+            database_url,
+        ));
+    }
+
     runtime
         .block_on(async {
             let mut postgresql = PostgreSQL::new(settings.clone());
             postgresql.setup().await?;
             postgresql.start().await?;
-            postgresql.create_database(config.database_name).await?;
             let database_url = postgresql.settings().url(config.database_name);
-            Ok::<_, color_eyre::Report>((postgresql, database_url))
+            Ok::<_, color_eyre::Report>((PostgresHandle::InProcess(postgresql), database_url))
         })
         .wrap_err("start embedded postgres via diesel helper")
 }
 
-fn stop_postgres(runtime: &Runtime, postgresql: PostgreSQL) -> Result<()> {
-    runtime
-        .block_on(async {
-            let instance = postgresql;
-            instance.stop().await
-        })
-        .wrap_err("stop embedded postgres instance")
+fn stop_postgres(runtime: &Runtime, postgresql: PostgresHandle) -> Result<()> {
+    match postgresql {
+        PostgresHandle::InProcess(instance) => runtime
+            .block_on(async { instance.stop().await })
+            .wrap_err("stop embedded postgres instance"),
+        PostgresHandle::Worker(handle) => run_worker_operation(
+            handle.worker.as_path(),
+            &handle.settings,
+            handle.timeout,
+            WorkerOperation::Stop,
+        ),
+    }
 }
