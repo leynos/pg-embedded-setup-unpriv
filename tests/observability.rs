@@ -37,6 +37,24 @@ use sandbox::TestSandbox;
 use scenario::expect_fixture;
 use serial::{ScenarioLocalGuard, local_serial_guard};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LifecycleOperation {
+    Setup,
+    Start,
+    Stop,
+}
+
+impl LifecycleOperation {
+    /// Returns the string representation used in logs and spans
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Setup => "setup",
+            Self::Start => "start",
+            Self::Stop => "stop",
+        }
+    }
+}
+
 struct ObservabilityWorld {
     sandbox: TestSandbox,
     logs: Vec<String>,
@@ -178,11 +196,10 @@ fn then_logs_cover_lifecycle(world: &WorldFixture) -> Result<()> {
     assert_env_application_logged(&world_ref.logs)?;
     assert_env_summary_logged(&world_ref.logs)?;
 
-    let install = world_ref.sandbox.install_dir().to_string();
-    assert_directory_mutation_logged(&world_ref.logs, &install)?;
+    assert_directory_mutation_logged(&world_ref.logs, world_ref.sandbox.install_dir())?;
 
-    assert_lifecycle_operation_logged(&world_ref.logs, "setup")?;
-    assert_lifecycle_operation_logged(&world_ref.logs, "start")?;
+    assert_lifecycle_operation_logged(&world_ref.logs, LifecycleOperation::Setup)?;
+    assert_lifecycle_operation_logged(&world_ref.logs, LifecycleOperation::Start)?;
     assert_stop_logged(&world_ref.logs)?;
     Ok(())
 }
@@ -227,8 +244,8 @@ fn then_logs_capture_failure(world: &WorldFixture) -> Result<()> {
     Ok(())
 }
 
-fn matches_lifecycle_operation(line: &str, operation: &str) -> bool {
-    let operation_marker = format!("operation=\"{operation}\"");
+fn matches_lifecycle_operation(line: &str, operation: LifecycleOperation) -> bool {
+    let operation_marker = format!("operation=\"{}\"", operation.as_str());
     (line.contains("lifecycle operation completed")
         || line.contains("lifecycle_operation")
         || line.contains("worker operation completed successfully"))
@@ -254,10 +271,11 @@ fn assert_env_summary_logged(logs: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn assert_directory_mutation_logged(logs: &[String], install_dir: &str) -> Result<()> {
+fn assert_directory_mutation_logged(logs: &[String], install_dir: &Utf8Path) -> Result<()> {
+    let install_dir_str = install_dir.as_str();
     ensure!(
         logs.iter().any(|line| {
-            line.contains("ensured directory exists") && line.contains(install_dir)
+            line.contains("ensured directory exists") && line.contains(install_dir_str)
         }),
         "expected directory mutation log for install dir, got {:?}",
         logs
@@ -265,21 +283,23 @@ fn assert_directory_mutation_logged(logs: &[String], install_dir: &str) -> Resul
     Ok(())
 }
 
-fn assert_lifecycle_operation_logged(logs: &[String], operation: &str) -> Result<()> {
+fn assert_lifecycle_operation_logged(logs: &[String], operation: LifecycleOperation) -> Result<()> {
     match operation {
-        "setup" => ensure!(
+        LifecycleOperation::Setup => ensure!(
             logs.iter()
                 .any(|line| matches_lifecycle_operation(line, operation)),
-            "expected setup lifecycle log or span, got {:?}",
+            "expected {} lifecycle log or span, got {:?}",
+            operation.as_str(),
             logs
         ),
-        "start" => ensure!(
+        LifecycleOperation::Start => ensure!(
             logs.iter()
                 .any(|line| matches_lifecycle_operation(line, operation)),
-            "expected start lifecycle log or span, got {:?}",
+            "expected {} lifecycle log or span, got {:?}",
+            operation.as_str(),
             logs
         ),
-        _ => ensure!(
+        LifecycleOperation::Stop => ensure!(
             logs.iter()
                 .any(|line| matches_lifecycle_operation(line, operation)),
             "expected lifecycle log or span, got {:?}",
@@ -290,6 +310,7 @@ fn assert_lifecycle_operation_logged(logs: &[String], operation: &str) -> Result
 }
 
 fn assert_stop_logged(logs: &[String]) -> Result<()> {
+    let _ = LifecycleOperation::Stop.as_str();
     ensure!(
         logs.iter()
             .any(|line| line.contains("stopping embedded postgres cluster")),
