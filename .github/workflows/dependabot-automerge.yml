@@ -1,14 +1,23 @@
-name: Dependabot automerge
+name: dependabot-automerge
 
-'on':
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, labeled, ready_for_review]
   workflow_dispatch:
+    inputs:
+      pull-request-number:
+        type: number
+        required: true
 
 jobs:
-  dependabot-automerge:
-    uses: leynos/shared-actions/.github/workflows/dependabot-automerge.yml@235d2d07b9a321364a742310873f6732d7228e72
-    secrets: inherit
+  automerge:
     permissions:
       contents: write
       pull-requests: write
+      checks: read
+      statuses: read
+    if: ${{ github.event_name == 'workflow_dispatch' || github.actor == 'dependabot[bot]' }}
+    uses: leynos/shared-actions/.github/workflows/dependabot-automerge.yml@235d2d07b9a321364a742310873f6732d7228e72
+    with:
+      pull-request-number: ${{ inputs.pull-request-number || github.event.pull_request.number }}
