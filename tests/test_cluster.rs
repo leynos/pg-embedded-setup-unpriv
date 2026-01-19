@@ -1,24 +1,34 @@
-#![cfg(all(unix, feature = "cluster-unit-tests"))]
 //! Unit tests covering `TestCluster` privilege dispatch behaviour.
+#![cfg(unix)]
 
 use std::sync::{
     Arc, Mutex, OnceLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+#[cfg(feature = "privileged-tests")]
 use std::time::Duration;
 
+#[cfg(not(feature = "cluster-unit-tests"))]
+use crate as cluster_crate;
 #[cfg(feature = "privileged-tests")]
 use camino::Utf8Path;
-use camino::Utf8PathBuf;
-use color_eyre::eyre::{Context, Result, ensure, eyre};
 #[cfg(feature = "privileged-tests")]
-use nix::unistd::geteuid;
-use pg_embedded_setup_unpriv::BootstrapError;
-use pg_embedded_setup_unpriv::test_support::{
-    RunRootOperationHookInstallError, capture_warn_logs, drain_hook_install_logs, dummy_settings,
+use camino::Utf8PathBuf;
+use cluster_crate::BootstrapError;
+#[cfg(feature = "privileged-tests")]
+use cluster_crate::test_support::capture_warn_logs;
+use cluster_crate::test_support::{
+    RunRootOperationHookInstallError, drain_hook_install_logs, dummy_settings,
     install_run_root_operation_hook, test_runtime,
 };
-use pg_embedded_setup_unpriv::{ExecutionPrivileges, WorkerInvoker, WorkerOperation};
+use cluster_crate::{ExecutionPrivileges, WorkerInvoker, WorkerOperation};
+#[cfg(feature = "privileged-tests")]
+use color_eyre::eyre::Context;
+use color_eyre::eyre::{Result, ensure, eyre};
+#[cfg(feature = "privileged-tests")]
+use nix::unistd::geteuid;
+#[cfg(feature = "cluster-unit-tests")]
+use pg_embedded_setup_unpriv as cluster_crate;
 #[cfg(feature = "privileged-tests")]
 use std::fs;
 #[cfg(feature = "privileged-tests")]

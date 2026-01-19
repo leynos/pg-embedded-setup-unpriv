@@ -797,4 +797,4 @@ mod drop_logging_tests {
 
 #[cfg(all(test, not(feature = "cluster-unit-tests")))]
 #[path = "../../tests/test_cluster.rs"]
-mod tests;
+mod test_cluster_tests;
