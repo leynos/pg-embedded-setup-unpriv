@@ -284,33 +284,18 @@ fn assert_directory_mutation_logged(logs: &[String], install_dir: &Utf8Path) -> 
 }
 
 fn assert_lifecycle_operation_logged(logs: &[String], operation: LifecycleOperation) -> Result<()> {
-    match operation {
-        LifecycleOperation::Setup => ensure!(
-            logs.iter()
-                .any(|line| matches_lifecycle_operation(line, operation)),
-            "expected {} lifecycle log or span, got {:?}",
-            operation.as_str(),
-            logs
-        ),
-        LifecycleOperation::Start => ensure!(
-            logs.iter()
-                .any(|line| matches_lifecycle_operation(line, operation)),
-            "expected {} lifecycle log or span, got {:?}",
-            operation.as_str(),
-            logs
-        ),
-        LifecycleOperation::Stop => ensure!(
-            logs.iter()
-                .any(|line| matches_lifecycle_operation(line, operation)),
-            "expected lifecycle log or span, got {:?}",
-            logs
-        ),
-    }
+    ensure!(
+        logs.iter()
+            .any(|line| matches_lifecycle_operation(line, operation)),
+        "expected {} lifecycle log or span, got {:?}",
+        operation.as_str(),
+        logs
+    );
     Ok(())
 }
 
 fn assert_stop_logged(logs: &[String]) -> Result<()> {
-    let _ = LifecycleOperation::Stop.as_str();
+    assert_lifecycle_operation_logged(logs, LifecycleOperation::Stop)?;
     ensure!(
         logs.iter()
             .any(|line| line.contains("stopping embedded postgres cluster")),
