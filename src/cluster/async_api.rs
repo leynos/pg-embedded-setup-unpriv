@@ -9,6 +9,7 @@ use postgresql_embedded::PostgreSQL;
 use tokio::time;
 use tracing::{info, info_span};
 
+use super::drop_support::StopContext;
 use super::runtime::build_runtime;
 use super::worker_invoker::AsyncInvoker;
 use super::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
@@ -203,7 +204,7 @@ impl TestCluster {
     /// }
     /// ```
     pub async fn stop_async(mut self) -> crate::error::BootstrapResult<()> {
-        let context = Self::stop_context(&self.bootstrap.settings);
+        let context = StopContext::new(Self::stop_context(&self.bootstrap.settings));
         Self::log_async_stop(&context, self.is_managed_via_worker);
 
         if self.is_managed_via_worker {
@@ -215,7 +216,7 @@ impl TestCluster {
         }
     }
 
-    fn log_async_stop(context: &str, is_managed_via_worker: bool) {
+    fn log_async_stop(context: &StopContext, is_managed_via_worker: bool) {
         info!(
             target: LOG_TARGET,
             context = %context,
@@ -228,11 +229,11 @@ impl TestCluster {
     async fn stop_worker_managed_async(
         bootstrap: &TestBootstrapSettings,
         env_vars: &[(String, Option<String>)],
-        context: &str,
+        context: &StopContext,
     ) -> crate::error::BootstrapResult<()> {
         let owned_bootstrap = bootstrap.clone();
         let owned_env_vars = env_vars.to_vec();
-        let owned_context = context.to_owned();
+        let owned_context = context.clone();
         tokio::task::spawn_blocking(move || {
             Self::stop_via_worker_sync(&owned_bootstrap, &owned_env_vars, &owned_context)
         })
@@ -247,7 +248,7 @@ impl TestCluster {
     async fn stop_in_process_async(
         postgres: PostgreSQL,
         timeout: std::time::Duration,
-        context: &str,
+        context: &StopContext,
     ) -> crate::error::BootstrapResult<()> {
         match time::timeout(timeout, postgres.stop()).await {
             Ok(Ok(())) => Ok(()),
@@ -271,7 +272,7 @@ impl TestCluster {
     fn stop_via_worker_sync(
         bootstrap: &TestBootstrapSettings,
         env_vars: &[(String, Option<String>)],
-        context: &str,
+        context: &StopContext,
     ) -> crate::error::BootstrapResult<()> {
         let runtime = build_runtime()?;
         let invoker = ClusterWorkerInvoker::new(&runtime, bootstrap, env_vars);

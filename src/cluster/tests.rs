@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 use std::fs;
 
+use super::drop_support::StopContext;
 use super::*;
 use crate::ExecutionPrivileges;
 use crate::env::ScopedEnv;
@@ -76,7 +77,8 @@ mod drop_logging_tests {
 
     #[test]
     fn warn_stop_timeout_emits_warning() {
-        let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_timeout(5, "ctx"));
+        let context = StopContext::new("ctx");
+        let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_timeout(5, &context));
         assert!(
             logs.iter()
                 .any(|line| line.contains("stop() timed out after 5s (ctx)")),
@@ -86,7 +88,8 @@ mod drop_logging_tests {
 
     #[test]
     fn warn_stop_failure_emits_warning() {
-        let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_failure("ctx", &"boom"));
+        let context = StopContext::new("ctx");
+        let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_failure(&context, &"boom"));
         assert!(
             logs.iter()
                 .any(|line| line.contains("failed to stop embedded postgres instance")),
