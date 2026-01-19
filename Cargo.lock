@@ -2151,6 +2151,7 @@ dependencies = [
  "rstest-bdd",
  "rstest-bdd-macros",
  "secrecy",
+ "semver",
  "serde",
  "serde_json",
  "serde_with",

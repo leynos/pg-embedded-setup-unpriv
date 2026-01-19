@@ -110,6 +110,7 @@ cap-std = "3.4.4"
 camino = { version = "1.2", features = ["serde1"] }
 thiserror = "1"
 serde_json = "1"
+semver = "1.0"
 secrecy = { version = "0.10", features = ["serde"] }
 tempfile = "3"
 libc = "0.2"

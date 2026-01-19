@@ -266,26 +266,13 @@ fn assert_directory_mutation_logged(logs: &[String], install_dir: &str) -> Resul
 }
 
 fn assert_lifecycle_operation_logged(logs: &[String], operation: &str) -> Result<()> {
-    match operation {
-        "setup" => ensure!(
-            logs.iter()
-                .any(|line| matches_lifecycle_operation(line, operation)),
-            "expected setup lifecycle log or span, got {:?}",
-            logs
-        ),
-        "start" => ensure!(
-            logs.iter()
-                .any(|line| matches_lifecycle_operation(line, operation)),
-            "expected start lifecycle log or span, got {:?}",
-            logs
-        ),
-        _ => ensure!(
-            logs.iter()
-                .any(|line| matches_lifecycle_operation(line, operation)),
-            "expected lifecycle log or span, got {:?}",
-            logs
-        ),
-    }
+    ensure!(
+        logs.iter()
+            .any(|line| matches_lifecycle_operation(line, operation)),
+        "expected {operation} lifecycle log or span, got {:?}",
+        logs,
+        operation = operation
+    );
     Ok(())
 }
 
