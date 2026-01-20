@@ -108,67 +108,53 @@ fn resolve_from_home() -> Option<Utf8PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temp_env::with_vars;
+    use crate::test_support::scoped_env;
+    use rstest::rstest;
+    use std::ffi::OsString;
 
-    #[test]
-    fn resolve_cache_dir_respects_explicit_env_var() {
-        let expected = "/custom/cache/path";
-        let result = with_vars(
-            [
-                ("PG_BINARY_CACHE_DIR", Some(expected)),
-                ("XDG_CACHE_HOME", None::<&str>),
-            ],
-            resolve_cache_dir,
-        );
+    /// Consolidated test for `resolve_cache_dir` with various environment configurations.
+    #[rstest]
+    #[case::explicit_env_var(Some("/custom/cache/path"), None, "/custom/cache/path")]
+    #[case::xdg_fallback(
+        None,
+        Some("/home/testuser/.cache"),
+        &format!("/home/testuser/.cache/{CACHE_SUBDIR}")
+    )]
+    #[case::empty_env_var_uses_xdg(
+        Some(""),
+        Some("/home/testuser/.cache"),
+        &format!("/home/testuser/.cache/{CACHE_SUBDIR}")
+    )]
+    #[case::whitespace_only_uses_xdg(
+        Some("   "),
+        Some("/home/testuser/.cache"),
+        &format!("/home/testuser/.cache/{CACHE_SUBDIR}")
+    )]
+    fn resolve_cache_dir_respects_env_priority(
+        #[case] pg_cache_dir: Option<&str>,
+        #[case] xdg_cache_home: Option<&str>,
+        #[case] expected: &str,
+    ) {
+        let mut env_vars: Vec<(OsString, Option<OsString>)> = vec![];
+
+        match pg_cache_dir {
+            Some(val) => env_vars.push((
+                OsString::from("PG_BINARY_CACHE_DIR"),
+                Some(OsString::from(val)),
+            )),
+            None => env_vars.push((OsString::from("PG_BINARY_CACHE_DIR"), None)),
+        }
+
+        match xdg_cache_home {
+            Some(val) => {
+                env_vars.push((OsString::from("XDG_CACHE_HOME"), Some(OsString::from(val))));
+            }
+            None => env_vars.push((OsString::from("XDG_CACHE_HOME"), None)),
+        }
+
+        let _guard = scoped_env(env_vars);
+        let result = resolve_cache_dir();
         assert_eq!(result.as_str(), expected);
-    }
-
-    #[test]
-    fn resolve_cache_dir_uses_xdg_cache_home_when_env_var_unset() {
-        let xdg_cache = "/home/testuser/.cache";
-        let result = with_vars(
-            [
-                ("PG_BINARY_CACHE_DIR", None::<&str>),
-                ("XDG_CACHE_HOME", Some(xdg_cache)),
-            ],
-            resolve_cache_dir,
-        );
-        assert_eq!(
-            result.as_str(),
-            format!("{xdg_cache}/{CACHE_SUBDIR}").as_str()
-        );
-    }
-
-    #[test]
-    fn resolve_cache_dir_ignores_empty_env_var() {
-        let xdg_cache = "/home/testuser/.cache";
-        let result = with_vars(
-            [
-                ("PG_BINARY_CACHE_DIR", Some("")),
-                ("XDG_CACHE_HOME", Some(xdg_cache)),
-            ],
-            resolve_cache_dir,
-        );
-        assert_eq!(
-            result.as_str(),
-            format!("{xdg_cache}/{CACHE_SUBDIR}").as_str()
-        );
-    }
-
-    #[test]
-    fn resolve_cache_dir_ignores_whitespace_only_env_var() {
-        let xdg_cache = "/home/testuser/.cache";
-        let result = with_vars(
-            [
-                ("PG_BINARY_CACHE_DIR", Some("   ")),
-                ("XDG_CACHE_HOME", Some(xdg_cache)),
-            ],
-            resolve_cache_dir,
-        );
-        assert_eq!(
-            result.as_str(),
-            format!("{xdg_cache}/{CACHE_SUBDIR}").as_str()
-        );
     }
 
     #[test]
