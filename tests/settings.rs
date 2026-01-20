@@ -81,6 +81,15 @@ fn to_settings_roundtrip() -> color_eyre::Result<()> {
             .is_some_and(|value| value == "UTF8"),
         "encoding should be recorded in the configuration map",
     );
+
+    // Verify that binary_cache_dir is preserved in PgEnvCfg when set
+    let mut cfg_with_cache = cfg.clone();
+    cfg_with_cache.binary_cache_dir = Some(Utf8PathBuf::from("/custom/cache"));
+    ensure!(
+        cfg_with_cache.binary_cache_dir == Some(Utf8PathBuf::from("/custom/cache")),
+        "binary_cache_dir should be preserved in PgEnvCfg"
+    );
+
     Ok(())
 }
 

@@ -201,8 +201,12 @@ pub(super) fn try_populate_binary_cache(config: &BinaryCacheConfig, settings: &S
 /// Extracts the version string from an installation directory path.
 ///
 /// Expects paths like `/path/to/install/17.4.0/` and extracts `17.4.0`.
+/// Returns `None` if the directory name is not a valid semver version,
+/// ensuring consistency with cache lookup which parses directory names as versions.
 fn extract_version_from_path(path: &std::path::Path) -> Option<String> {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(String::from)
+    let name = path.file_name()?.to_str()?;
+    // Validate that the name parses as a semver version to ensure
+    // consistency with find_matching_cached_version which uses Version::parse.
+    postgresql_embedded::Version::parse(name).ok()?;
+    Some(name.to_owned())
 }

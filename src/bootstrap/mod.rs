@@ -47,6 +47,11 @@ pub struct TestBootstrapSettings {
     pub start_timeout: Duration,
     /// Grace period granted to `PostgreSQL` during drop before teardown proceeds regardless.
     pub shutdown_timeout: Duration,
+    /// Optional override for the binary cache directory.
+    ///
+    /// When set, `TestCluster` uses this directory instead of the default
+    /// resolved from environment variables.
+    pub binary_cache_dir: Option<camino::Utf8PathBuf>,
 }
 
 /// Bootstraps an embedded `PostgreSQL` instance, branching between root and unprivileged flows.
@@ -129,6 +134,7 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
         setup_timeout: DEFAULT_SETUP_TIMEOUT,
         start_timeout: DEFAULT_START_TIMEOUT,
         shutdown_timeout,
+        binary_cache_dir: cfg.binary_cache_dir,
     })
 }
 

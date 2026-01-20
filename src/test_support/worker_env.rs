@@ -95,13 +95,13 @@ fn try_stage_worker_binary(original: &OsString) -> io::Result<OsString> {
 /// Finds the staging directory for the worker binary.
 ///
 /// Returns a tuple of:
-/// - The staging directory in `/tmp/pg-worker-{profile}-{hash}/`
+/// - The staging directory in `{temp_dir}/pg-worker-{profile}-{hash}/`
 /// - The target profile directory (if found) for writing the pointer file
 #[cfg(unix)]
 fn find_staging_directory(source: &std::path::Path) -> (PathBuf, Option<PathBuf>) {
     let path_hash = compute_path_hash(source);
     let (profile_name, target_profile_dir) = find_profile_directory(source);
-    let staged_dir = PathBuf::from(format!("/tmp/pg-worker-{profile_name}-{path_hash}"));
+    let staged_dir = std::env::temp_dir().join(format!("pg-worker-{profile_name}-{path_hash}"));
     (staged_dir, target_profile_dir)
 }
 
@@ -262,7 +262,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn staged_worker_is_world_executable_and_in_tmp() {
+    fn staged_worker_is_world_executable_and_in_temp_dir() {
         let dir = tempfile::tempdir().expect("tempdir");
         // Create a fake target/debug structure so the staging logic finds a profile
         let debug_dir = dir.path().join("target").join("debug");
@@ -276,14 +276,16 @@ mod tests {
         let staged = try_stage_worker_binary(&source.into_os_string()).expect("stage worker");
         let staged_path = PathBuf::from(&staged);
 
-        // Verify staged path is in /tmp
+        // Verify staged path is in the system temp directory
+        let temp_dir = std::env::temp_dir();
         assert!(
-            staged_path.starts_with("/tmp"),
-            "staged worker should be in /tmp, got: {}",
+            staged_path.starts_with(&temp_dir),
+            "staged worker should be in temp dir {}, got: {}",
+            temp_dir.display(),
             staged_path.display()
         );
 
-        // Verify path follows expected pattern /tmp/pg-worker-{profile}-{hash}/
+        // Verify path follows expected pattern {temp_dir}/pg-worker-{profile}-{hash}/
         let parent = staged_path.parent().expect("parent dir");
         let parent_name = parent.file_name().and_then(|n| n.to_str()).unwrap_or("");
         assert!(
@@ -301,11 +303,18 @@ mod tests {
             "staged worker should be executable by others"
         );
 
-        // Verify nobody can access /tmp (inherent property of /tmp)
-        // /tmp is world-accessible with sticky bit, so nobody can traverse to our staged binary
-        assert!(
-            std::path::Path::new("/tmp").exists(),
-            "/tmp must exist for staging to work"
+        // Verify the temp directory has the expected permissions: world-writable with sticky bit.
+        // The sticky bit restricts deletion/renaming of files by other users, but does
+        // not prevent read or execute access to the directory itself.
+        let tmp_meta = fs::metadata(&temp_dir).expect("temp dir must exist for staging to work");
+        assert!(tmp_meta.is_dir(), "temp dir must be a directory");
+        let tmp_mode = tmp_meta.permissions().mode();
+
+        // World-executable (anyone can traverse the directory)
+        assert_ne!(
+            tmp_mode & 0o001,
+            0,
+            "temp dir must be world-executable for nobody to access staged binary"
         );
 
         // Clean up the staged directory
@@ -320,11 +329,21 @@ mod tests {
         let path = PathBuf::from("/project/target/debug/deps/pg_worker-abc123");
         let (staged_dir, target_dir) = find_staging_directory(&path);
 
-        // Staged dir should be in /tmp with debug profile
-        let staged_str = staged_dir.to_str().expect("staged dir is UTF-8");
+        // Staged dir should be in temp dir with debug profile
+        let temp_dir = std::env::temp_dir();
         assert!(
-            staged_str.starts_with("/tmp/pg-worker-debug-"),
-            "staged dir should be in /tmp with debug profile, got: {staged_str}"
+            staged_dir.starts_with(&temp_dir),
+            "staged dir should be in temp dir {}, got: {}",
+            temp_dir.display(),
+            staged_dir.display()
+        );
+        let staged_name = staged_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        assert!(
+            staged_name.starts_with("pg-worker-debug-"),
+            "staged dir should match pg-worker-debug-*, got: {staged_name}"
         );
 
         // Target profile dir should be the debug directory
@@ -337,11 +356,21 @@ mod tests {
         let path = PathBuf::from("/project/target/release/pg_worker");
         let (staged_dir, target_dir) = find_staging_directory(&path);
 
-        // Staged dir should be in /tmp with release profile
-        let staged_str = staged_dir.to_str().expect("staged dir is UTF-8");
+        // Staged dir should be in temp dir with release profile
+        let temp_dir = std::env::temp_dir();
         assert!(
-            staged_str.starts_with("/tmp/pg-worker-release-"),
-            "staged dir should be in /tmp with release profile, got: {staged_str}"
+            staged_dir.starts_with(&temp_dir),
+            "staged dir should be in temp dir {}, got: {}",
+            temp_dir.display(),
+            staged_dir.display()
+        );
+        let staged_name = staged_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        assert!(
+            staged_name.starts_with("pg-worker-release-"),
+            "staged dir should match pg-worker-release-*, got: {staged_name}"
         );
 
         // Target profile dir should be the release directory

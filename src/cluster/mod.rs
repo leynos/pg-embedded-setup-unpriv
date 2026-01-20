@@ -137,10 +137,10 @@ impl TestCluster {
         let span = info_span!(target: LOG_TARGET, "test_cluster");
         // Resolve cache directory BEFORE applying test environment.
         // Otherwise, the test sandbox's XDG_CACHE_HOME would be used.
-        let cache_config = BinaryCacheConfig::new();
         let (runtime, env_vars, env_guard, outcome) = {
             let _entered = span.enter();
             let initial_bootstrap = bootstrap_for_tests()?;
+            let cache_config = Self::cache_config_from_bootstrap(&initial_bootstrap);
             let runtime = build_runtime()?;
             let env_vars = initial_bootstrap.environment.to_env();
             let env_guard = ScopedEnv::apply(&env_vars);
@@ -159,6 +159,19 @@ impl TestCluster {
             _env_guard: env_guard,
             _cluster_span: span,
         })
+    }
+
+    /// Creates a `BinaryCacheConfig` from bootstrap settings.
+    ///
+    /// Uses the explicitly configured `binary_cache_dir` if set, otherwise
+    /// falls back to the default resolution from environment variables.
+    fn cache_config_from_bootstrap(bootstrap: &TestBootstrapSettings) -> BinaryCacheConfig {
+        bootstrap
+            .binary_cache_dir
+            .as_ref()
+            .map_or_else(BinaryCacheConfig::new, |dir| {
+                BinaryCacheConfig::with_dir(dir.clone())
+            })
     }
 
     #[expect(
@@ -295,12 +308,11 @@ impl TestCluster {
 
         let span = info_span!(target: LOG_TARGET, "test_cluster", async_mode = true);
 
+        // Sync bootstrap preparation (no await needed).
         // Resolve cache directory BEFORE applying test environment.
         // Otherwise, the test sandbox's XDG_CACHE_HOME would be used.
-        let cache_config = BinaryCacheConfig::new();
-
-        // Sync bootstrap preparation (no await needed).
         let initial_bootstrap = bootstrap_for_tests()?;
+        let cache_config = Self::cache_config_from_bootstrap(&initial_bootstrap);
         let env_vars = initial_bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
 

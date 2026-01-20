@@ -114,7 +114,16 @@ impl CacheLock {
     fn acquire(_cache_dir: &Utf8Path, version: &str, _lock_type: LockType) -> io::Result<Self> {
         // Cross-process locking not supported; return a dummy lock.
         // Concurrent tests may race on non-Unix platforms.
-        let file = tempfile::tempfile()?;
+        // Create a temporary file without external dependencies.
+        let temp_path = std::env::temp_dir().join(format!("pg-cache-lock-{}.tmp", version));
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&temp_path)?;
+        // Attempt cleanup; ignore errors as temp files are ephemeral.
+        drop(std::fs::remove_file(&temp_path));
         Ok(Self {
             _file: file,
             version: version.to_owned(),

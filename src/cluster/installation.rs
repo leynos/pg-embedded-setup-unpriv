@@ -31,21 +31,14 @@ pub(super) fn refresh_worker_installation_dir(bootstrap: &mut TestBootstrapSetti
     }
 }
 
-/// Implementation for refreshing worker port with a generic retry function.
-pub(super) fn refresh_worker_port_impl<F, R>(
-    bootstrap: &mut TestBootstrapSettings,
-    retry_fn: F,
-) -> BootstrapResult<()>
-where
-    F: FnOnce(&Path) -> R,
-    R: Into<BootstrapResult<Option<u16>>>,
-{
+/// Refreshes the worker port (synchronous variant).
+pub(super) fn refresh_worker_port(bootstrap: &mut TestBootstrapSettings) -> BootstrapResult<()> {
     if bootstrap.privileges != ExecutionPrivileges::Root {
         return Ok(());
     }
 
     let pid_path = bootstrap.settings.data_dir.join("postmaster.pid");
-    if let Some(port) = retry_fn(&pid_path).into()? {
+    if let Some(port) = read_postmaster_port_with_retry(&pid_path)? {
         bootstrap.settings.port = port;
         return Ok(());
     }
@@ -58,48 +51,50 @@ where
     Ok(())
 }
 
-/// Refreshes the worker port (synchronous variant).
-pub(super) fn refresh_worker_port(bootstrap: &mut TestBootstrapSettings) -> BootstrapResult<()> {
-    refresh_worker_port_impl(bootstrap, read_postmaster_port_with_retry)
-}
-
 /// Refreshes the worker port (async variant).
 #[cfg(feature = "async-api")]
 pub(super) async fn refresh_worker_port_async(
     bootstrap: &mut TestBootstrapSettings,
 ) -> BootstrapResult<()> {
-    let pid_path = bootstrap.settings.data_dir.join("postmaster.pid");
-    let result = read_postmaster_port_with_retry_async(&pid_path).await;
-    refresh_worker_port_impl(bootstrap, |_| result)
-}
+    if bootstrap.privileges != ExecutionPrivileges::Root {
+        return Ok(());
+    }
 
-/// Implements the retry loop for reading the postmaster port.
-///
-/// This macro unifies the sync and async retry logic, accepting either
-/// `std::thread::sleep()` or `tokio::time::sleep().await` as the sleep expression.
-macro_rules! read_postmaster_port_with_retry_impl {
-    ($pid_path:expr, $sleep:expr) => {{
-        for _ in 0..POSTMASTER_PORT_ATTEMPTS {
-            if let Some(port) = read_postmaster_port($pid_path)? {
-                return Ok(Some(port));
-            }
-            $sleep;
-        }
-        Ok(None)
-    }};
+    let pid_path = bootstrap.settings.data_dir.join("postmaster.pid");
+    if let Some(port) = read_postmaster_port_with_retry_async(&pid_path).await? {
+        bootstrap.settings.port = port;
+        return Ok(());
+    }
+
+    tracing::debug!(
+        target: LOG_TARGET,
+        path = %pid_path.display(),
+        "postmaster.pid missing after start; keeping configured port"
+    );
+    Ok(())
 }
 
 /// Reads the postmaster port with retry (synchronous).
-pub(super) fn read_postmaster_port_with_retry(pid_path: &Path) -> BootstrapResult<Option<u16>> {
-    read_postmaster_port_with_retry_impl!(pid_path, std::thread::sleep(POSTMASTER_PORT_DELAY))
+fn read_postmaster_port_with_retry(pid_path: &Path) -> BootstrapResult<Option<u16>> {
+    for _ in 0..POSTMASTER_PORT_ATTEMPTS {
+        if let Some(port) = read_postmaster_port(pid_path)? {
+            return Ok(Some(port));
+        }
+        std::thread::sleep(POSTMASTER_PORT_DELAY);
+    }
+    Ok(None)
 }
 
 /// Reads the postmaster port with retry (async).
 #[cfg(feature = "async-api")]
-pub(super) async fn read_postmaster_port_with_retry_async(
-    pid_path: &Path,
-) -> BootstrapResult<Option<u16>> {
-    read_postmaster_port_with_retry_impl!(pid_path, tokio::time::sleep(POSTMASTER_PORT_DELAY).await)
+async fn read_postmaster_port_with_retry_async(pid_path: &Path) -> BootstrapResult<Option<u16>> {
+    for _ in 0..POSTMASTER_PORT_ATTEMPTS {
+        if let Some(port) = read_postmaster_port(pid_path)? {
+            return Ok(Some(port));
+        }
+        tokio::time::sleep(POSTMASTER_PORT_DELAY).await;
+    }
+    Ok(None)
 }
 
 /// Reads the port from a postmaster.pid file.

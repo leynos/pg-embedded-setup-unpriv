@@ -82,6 +82,7 @@ pub fn dummy_settings(privileges: ExecutionPrivileges) -> TestBootstrapSettings 
         setup_timeout: Duration::from_secs(180),
         start_timeout: Duration::from_secs(60),
         shutdown_timeout: Duration::from_secs(15),
+        binary_cache_dir: None,
     }
 }
 
