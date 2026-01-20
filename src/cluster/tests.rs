@@ -71,14 +71,12 @@ fn dummy_cluster() -> TestCluster {
 
 #[cfg(feature = "cluster-unit-tests")]
 mod drop_logging_tests {
-    use super::drop_handling::DropContext;
     use super::*;
     use crate::test_support::capture_warn_logs;
 
     #[test]
     fn warn_stop_timeout_emits_warning() {
-        let context = DropContext::new("ctx");
-        let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_timeout(5, &context));
+        let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_timeout(5, "ctx"));
         assert!(
             logs.iter()
                 .any(|line| line.contains("stop() timed out after 5s (ctx)")),
@@ -88,8 +86,7 @@ mod drop_logging_tests {
 
     #[test]
     fn warn_stop_failure_emits_warning() {
-        let context = DropContext::new("ctx");
-        let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_failure(&context, &"boom"));
+        let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_failure("ctx", &"boom"));
         assert!(
             logs.iter()
                 .any(|line| line.contains("failed to stop embedded postgres instance")),
