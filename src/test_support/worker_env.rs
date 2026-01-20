@@ -99,39 +99,71 @@ fn try_stage_worker_binary(original: &OsString) -> io::Result<OsString> {
 /// - The target profile directory (if found) for writing the pointer file
 #[cfg(unix)]
 fn find_staging_directory(source: &std::path::Path) -> (PathBuf, Option<PathBuf>) {
-    // Compute hash of source path for uniqueness
     let path_hash = compute_path_hash(source);
+    let (profile_name, target_profile_dir) = find_profile_directory(source);
+    let staged_dir = PathBuf::from(format!("/tmp/pg-worker-{profile_name}-{path_hash}"));
+    (staged_dir, target_profile_dir)
+}
 
-    // Walk up from source to find the profile directory (debug/release)
+/// Walks up from source to find the Cargo profile directory (debug/release).
+///
+/// Returns the profile name and the profile directory path if found.
+#[cfg(unix)]
+fn find_profile_directory(source: &std::path::Path) -> (&'static str, Option<PathBuf>) {
     let mut current = source.parent();
-    let mut profile_name = "unknown";
-    let mut target_profile_dir = None;
 
     while let Some(dir) = current {
-        let dir_name = dir.file_name().and_then(|n| n.to_str());
-        // Look for "debug" or "release" profile directories
-        if matches!(dir_name, Some("debug" | "release")) {
-            profile_name = dir_name.unwrap_or("unknown");
-            target_profile_dir = Some(dir.to_path_buf());
-            break;
-        }
-        // Also check for "deps" directory (one level up is the profile dir)
-        if dir_name == Some("deps") {
-            if let Some(profile_dir) = dir.parent() {
-                profile_name = profile_dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
-                target_profile_dir = Some(profile_dir.to_path_buf());
-                break;
-            }
+        if let Some(result) = check_directory_for_profile(dir) {
+            return result;
         }
         current = dir.parent();
     }
 
-    // Staging directory in /tmp with profile and hash for uniqueness
-    let staged_dir = PathBuf::from(format!("/tmp/pg-worker-{profile_name}-{path_hash}"));
-    (staged_dir, target_profile_dir)
+    ("unknown", None)
+}
+
+/// Checks if a directory is a profile directory or contains profile information.
+///
+/// Returns `Some((profile_name, profile_dir))` if the directory is a profile dir
+/// (debug/release) or a deps directory whose parent is a profile dir.
+#[cfg(unix)]
+fn check_directory_for_profile(dir: &std::path::Path) -> Option<(&'static str, Option<PathBuf>)> {
+    let dir_name = dir.file_name().and_then(|n| n.to_str())?;
+
+    match dir_name {
+        "debug" => Some(("debug", Some(dir.to_path_buf()))),
+        "release" => Some(("release", Some(dir.to_path_buf()))),
+        "deps" => check_deps_parent_for_profile(dir),
+        _ => None,
+    }
+}
+
+/// Checks if the parent of a deps directory is a profile directory.
+#[cfg(unix)]
+fn check_deps_parent_for_profile(
+    deps_dir: &std::path::Path,
+) -> Option<(&'static str, Option<PathBuf>)> {
+    let profile_dir = deps_dir.parent()?;
+    let profile_name = profile_dir.file_name().and_then(|n| n.to_str())?;
+
+    match profile_name {
+        "debug" => Some(("debug", Some(profile_dir.to_path_buf()))),
+        "release" => Some(("release", Some(profile_dir.to_path_buf()))),
+        _ => Some((
+            profile_name_to_static(profile_name),
+            Some(profile_dir.to_path_buf()),
+        )),
+    }
+}
+
+/// Converts a profile name to a static string for common profiles, or "unknown".
+#[cfg(unix)]
+fn profile_name_to_static(name: &str) -> &'static str {
+    match name {
+        "debug" => "debug",
+        "release" => "release",
+        _ => "unknown",
+    }
 }
 
 /// Computes a short hash of the source path for staging directory uniqueness.

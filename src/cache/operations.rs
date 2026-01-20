@@ -459,6 +459,14 @@ mod tests {
         fs::write(bin_dir.join("pg_ctl"), "mock pg_ctl binary").expect("write mock binary");
     }
 
+    /// Creates a complete cache entry with binaries and completion marker.
+    fn create_complete_cache_entry(cache_dir: &Utf8Path, version: &str) -> Utf8PathBuf {
+        let version_dir = cache_dir.join(version);
+        create_mock_binaries(&version_dir);
+        fs::write(version_dir.join(COMPLETION_MARKER), "").expect("write marker");
+        version_dir
+    }
+
     #[test]
     fn check_cache_returns_miss_for_empty_directory() {
         let temp = tempdir().expect("tempdir");
@@ -495,9 +503,7 @@ mod tests {
     fn check_cache_returns_hit_with_marker_and_bin() {
         let temp = tempdir().expect("tempdir");
         let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
-        let version_dir = cache_dir.join("17.4.0");
-        create_mock_binaries(&version_dir);
-        fs::write(version_dir.join(COMPLETION_MARKER), "").expect("write marker");
+        let version_dir = create_complete_cache_entry(cache_dir, "17.4.0");
 
         let result = check_cache(cache_dir, "17.4.0");
         match result {
@@ -581,11 +587,7 @@ mod tests {
     fn find_matching_cached_version_finds_exact_match() {
         let temp = tempdir().expect("tempdir");
         let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
-
-        // Create a valid cache entry for 17.4.0
-        let version_dir = cache_dir.join("17.4.0");
-        create_mock_binaries(&version_dir);
-        fs::write(version_dir.join(COMPLETION_MARKER), "").expect("write marker");
+        create_complete_cache_entry(cache_dir, "17.4.0");
 
         let version_req = VersionReq::parse("=17.4.0").expect("parse version req");
         let result = find_matching_cached_version(cache_dir, &version_req);
@@ -599,13 +601,8 @@ mod tests {
     fn find_matching_cached_version_matches_caret_requirement() {
         let temp = tempdir().expect("tempdir");
         let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
+        create_complete_cache_entry(cache_dir, "17.4.0");
 
-        // Create a valid cache entry for 17.4.0
-        let version_dir = cache_dir.join("17.4.0");
-        create_mock_binaries(&version_dir);
-        fs::write(version_dir.join(COMPLETION_MARKER), "").expect("write marker");
-
-        // ^17 should match 17.4.0
         let version_req = VersionReq::parse("^17").expect("parse version req");
         let result = find_matching_cached_version(cache_dir, &version_req);
 
@@ -617,15 +614,10 @@ mod tests {
     fn find_matching_cached_version_returns_highest_matching() {
         let temp = tempdir().expect("tempdir");
         let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
-
-        // Create cache entries for 17.2.0 and 17.4.0
         for version in ["17.2.0", "17.4.0"] {
-            let version_dir = cache_dir.join(version);
-            create_mock_binaries(&version_dir);
-            fs::write(version_dir.join(COMPLETION_MARKER), "").expect("write marker");
+            create_complete_cache_entry(cache_dir, version);
         }
 
-        // ^17 should match highest (17.4.0)
         let version_req = VersionReq::parse("^17").expect("parse version req");
         let result = find_matching_cached_version(cache_dir, &version_req);
 
@@ -637,13 +629,8 @@ mod tests {
     fn find_matching_cached_version_ignores_non_matching() {
         let temp = tempdir().expect("tempdir");
         let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
+        create_complete_cache_entry(cache_dir, "16.0.0");
 
-        // Create a valid cache entry for 16.0.0 only
-        let version_dir = cache_dir.join("16.0.0");
-        create_mock_binaries(&version_dir);
-        fs::write(version_dir.join(COMPLETION_MARKER), "").expect("write marker");
-
-        // ^17 should not match 16.0.0
         let version_req = VersionReq::parse("^17").expect("parse version req");
         let result = find_matching_cached_version(cache_dir, &version_req);
 
@@ -658,7 +645,6 @@ mod tests {
         // Create an incomplete cache entry (no marker)
         let version_dir = cache_dir.join("17.4.0");
         create_mock_binaries(&version_dir);
-        // Deliberately not writing completion marker
 
         let version_req = VersionReq::parse("^17").expect("parse version req");
         let result = find_matching_cached_version(cache_dir, &version_req);
