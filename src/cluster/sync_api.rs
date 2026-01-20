@@ -66,7 +66,7 @@ impl TestCluster {
             Self::invoke_lifecycle(runtime, &mut bootstrap, env_vars, &mut embedded)?;
             (
                 false,
-                Self::prepare_postgres_handle(false, &mut bootstrap, embedded),
+                Some(Self::prepare_in_process_handle(&mut bootstrap, embedded)),
             )
         };
 
@@ -78,17 +78,16 @@ impl TestCluster {
         })
     }
 
-    pub(super) fn prepare_postgres_handle(
-        is_managed_via_worker: bool,
+    /// Prepares the `PostgreSQL` handle for in-process (non-worker) clusters.
+    ///
+    /// Updates the bootstrap settings with the embedded instance's resolved settings
+    /// and returns the handle for lifecycle management.
+    pub(super) fn prepare_in_process_handle(
         bootstrap: &mut TestBootstrapSettings,
         embedded: PostgreSQL,
-    ) -> Option<PostgreSQL> {
-        if is_managed_via_worker {
-            None
-        } else {
-            bootstrap.settings = embedded.settings().clone();
-            Some(embedded)
-        }
+    ) -> PostgreSQL {
+        bootstrap.settings = embedded.settings().clone();
+        embedded
     }
 
     fn invoke_lifecycle_root(

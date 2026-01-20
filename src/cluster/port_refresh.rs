@@ -42,6 +42,10 @@ pub(crate) fn refresh_worker_port(bootstrap: &mut TestBootstrapSettings) -> Boot
     refresh_worker_port_impl(bootstrap, read_postmaster_port_with_retry)
 }
 
+/// Async variant of port refresh for worker-managed clusters.
+///
+/// Duplicates the logic from [`refresh_worker_port_impl`] because Rust's async closures
+/// cannot easily be passed to the generic impl without boxing or lifetime gymnastics.
 #[cfg(feature = "async-api")]
 pub(crate) async fn refresh_worker_port_async(
     bootstrap: &mut TestBootstrapSettings,

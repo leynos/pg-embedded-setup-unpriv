@@ -79,7 +79,7 @@ mod drop_logging_tests {
         let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_timeout(5, "ctx"));
         assert!(
             logs.iter()
-                .any(|line| line.contains("stop() timed out after 5s (ctx)")),
+                .any(|line| line.contains("stop() timed out") && line.contains("context")),
             "expected timeout warning, got {logs:?}"
         );
     }
@@ -88,13 +88,17 @@ mod drop_logging_tests {
     fn warn_stop_failure_emits_warning() {
         let (logs, ()) = capture_warn_logs(|| TestCluster::warn_stop_failure("ctx", &"boom"));
         assert!(
-            logs.iter()
-                .any(|line| line.contains("failed to stop embedded postgres instance")),
+            logs.iter().any(|line| {
+                line.contains("failed to stop embedded postgres instance") && line.contains("error")
+            }),
             "expected failure warning, got {logs:?}"
         );
     }
 }
 
+// When `cluster-unit-tests` is disabled, include the integration tests from `tests/test_cluster.rs`
+// as a submodule. This allows the integration tests to access `pub(crate)` items that would
+// otherwise be inaccessible from the `tests/` directory.
 #[cfg(not(feature = "cluster-unit-tests"))]
 #[path = "../../tests/test_cluster.rs"]
 mod test_cluster_tests;

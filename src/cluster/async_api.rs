@@ -96,7 +96,7 @@ impl TestCluster {
             .await?;
             (
                 false,
-                Self::prepare_postgres_handle(false, &mut bootstrap, embedded),
+                Some(Self::prepare_in_process_handle(&mut bootstrap, embedded)),
             )
         };
 
@@ -135,6 +135,11 @@ impl TestCluster {
         refresh_worker_port_async(bootstrap).await
     }
 
+    /// Invokes the lifecycle for root-privileged clusters via the worker subprocess.
+    ///
+    /// The no-op async blocks serve as placeholders: for root-privileged clusters, the actual
+    /// setup/start work is delegated to the worker subprocess via the invoker, so no in-process
+    /// `PostgreSQL` operations are performed.
     async fn invoke_lifecycle_root_async(
         bootstrap: &mut TestBootstrapSettings,
         env_vars: &[(String, Option<String>)],
@@ -250,6 +255,9 @@ impl TestCluster {
     }
 
     /// Synchronous worker stop for use with `spawn_blocking`.
+    ///
+    /// Creates a new Tokio runtime because `spawn_blocking` runs on a blocking thread pool
+    /// without access to the caller's async runtime.
     fn stop_via_worker_sync(
         bootstrap: &TestBootstrapSettings,
         env_vars: &[(String, Option<String>)],

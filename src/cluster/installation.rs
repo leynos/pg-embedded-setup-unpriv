@@ -28,7 +28,7 @@ pub(crate) fn resolve_installed_dir(settings: &Settings) -> Option<PathBuf> {
         return Some(install_dir.clone());
     }
 
-    let candidates = std::fs::read_dir(install_dir)
+    let mut candidates = std::fs::read_dir(install_dir)
         .ok()?
         .filter_map(|dir_entry| {
             let entry = dir_entry.ok()?;
@@ -41,17 +41,24 @@ pub(crate) fn resolve_installed_dir(settings: &Settings) -> Option<PathBuf> {
         .collect::<Vec<_>>();
 
     let mut versioned_candidates = candidates
-        .into_iter()
+        .iter()
         .filter_map(|path| {
-            let version = parse_installation_version(&path)?;
-            Some((version, path))
+            let version = parse_installation_version(path)?;
+            Some((version, path.clone()))
         })
         .collect::<Vec<_>>();
-    versioned_candidates.sort_by(|(left, _), (right, _)| right.cmp(left));
-    versioned_candidates
-        .into_iter()
-        .map(|(_, path)| path)
-        .next()
+
+    if versioned_candidates.is_empty() {
+        // Fall back to lexicographic ordering for non-semver directory names
+        candidates.sort();
+        candidates.into_iter().next_back()
+    } else {
+        versioned_candidates.sort_by(|(left, _), (right, _)| right.cmp(left));
+        versioned_candidates
+            .into_iter()
+            .map(|(_, path)| path)
+            .next()
+    }
 }
 
 fn parse_installation_version(path: &Path) -> Option<Version> {
@@ -94,8 +101,13 @@ fn normalise_version_string(raw: &str) -> Option<String> {
         .map(|part| part.parse::<u64>().ok())
         .collect::<Option<Vec<_>>>()?;
 
-    if components.is_empty() || components.len() > 3 {
+    if components.is_empty() {
         return None;
+    }
+
+    // Truncate to three components for semver compatibility (e.g. 15.4.1.2 → 15.4.1)
+    if components.len() > 3 {
+        components.truncate(3);
     }
 
     while components.len() < 3 {

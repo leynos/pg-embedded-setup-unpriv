@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use color_eyre::eyre::{Context, Report, Result, ensure, eyre};
 use pg_embedded_setup_unpriv::test_support::capture_info_logs_with_spans;
-use pg_embedded_setup_unpriv::{BootstrapResult, TestCluster};
+use pg_embedded_setup_unpriv::{BootstrapResult, TestCluster, WorkerOperation};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
 
@@ -36,24 +36,6 @@ use env_isolation::override_env_path;
 use sandbox::TestSandbox;
 use scenario::expect_fixture;
 use serial::{ScenarioLocalGuard, local_serial_guard};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LifecycleOperation {
-    Setup,
-    Start,
-    Stop,
-}
-
-impl LifecycleOperation {
-    /// Returns the string representation used in logs and spans
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Setup => "setup",
-            Self::Start => "start",
-            Self::Stop => "stop",
-        }
-    }
-}
 
 struct ObservabilityWorld {
     sandbox: TestSandbox,
@@ -198,8 +180,8 @@ fn then_logs_cover_lifecycle(world: &WorldFixture) -> Result<()> {
 
     assert_directory_mutation_logged(&world_ref.logs, world_ref.sandbox.install_dir())?;
 
-    assert_lifecycle_operation_logged(&world_ref.logs, LifecycleOperation::Setup)?;
-    assert_lifecycle_operation_logged(&world_ref.logs, LifecycleOperation::Start)?;
+    assert_lifecycle_operation_logged(&world_ref.logs, WorkerOperation::Setup)?;
+    assert_lifecycle_operation_logged(&world_ref.logs, WorkerOperation::Start)?;
     assert_stop_logged(&world_ref.logs)?;
     Ok(())
 }
@@ -244,7 +226,7 @@ fn then_logs_capture_failure(world: &WorldFixture) -> Result<()> {
     Ok(())
 }
 
-fn matches_lifecycle_operation(line: &str, operation: LifecycleOperation) -> bool {
+fn matches_lifecycle_operation(line: &str, operation: WorkerOperation) -> bool {
     let operation_marker = format!("operation=\"{}\"", operation.as_str());
     (line.contains("lifecycle operation completed")
         || line.contains("lifecycle_operation")
@@ -283,22 +265,21 @@ fn assert_directory_mutation_logged(logs: &[String], install_dir: &Utf8Path) -> 
     Ok(())
 }
 
-fn assert_lifecycle_operation_logged(logs: &[String], operation: LifecycleOperation) -> Result<()> {
+fn assert_lifecycle_operation_logged(logs: &[String], operation: WorkerOperation) -> Result<()> {
     let has_operation = logs
         .iter()
         .any(|line| matches_lifecycle_operation(line, operation));
-    let message = if matches!(operation, LifecycleOperation::Stop) {
+    let message = if matches!(operation, WorkerOperation::Stop) {
         format!("expected lifecycle log or span, got {logs:?}")
     } else {
         let operation_label = operation.as_str();
         format!("expected {operation_label} lifecycle log or span, got {logs:?}")
     };
-    ensure!(has_operation, "{message}", message = message);
+    ensure!(has_operation, "{message}");
     Ok(())
 }
 
 fn assert_stop_logged(logs: &[String]) -> Result<()> {
-    let _ = LifecycleOperation::Stop;
     ensure!(
         logs.iter()
             .any(|line| line.contains("stopping embedded postgres cluster")),

@@ -72,15 +72,19 @@ impl TestCluster {
 
     pub(super) fn warn_stop_failure(context: &str, err: &impl Display) {
         tracing::warn!(
-            "SKIP-TEST-CLUSTER: failed to stop embedded postgres instance ({}): {}",
-            context,
-            err
+            target: LOG_TARGET,
+            context = %context,
+            error = %err,
+            "failed to stop embedded postgres instance"
         );
     }
 
     pub(super) fn warn_stop_timeout(timeout_secs: u64, context: &str) {
         tracing::warn!(
-            "SKIP-TEST-CLUSTER: stop() timed out after {timeout_secs}s ({context}); proceeding with drop"
+            target: LOG_TARGET,
+            context = %context,
+            timeout_secs = timeout_secs,
+            "stop() timed out; proceeding with drop"
         );
     }
 
@@ -153,7 +157,7 @@ fn spawn_async_cleanup(
 /// blocking the current async context.
 #[expect(
     clippy::cognitive_complexity,
-    reason = "complexity is from spawn_blocking + error! macro expansion, not logic"
+    reason = "reported complexity stems from tracing::error! macro expansion, not control flow"
 )]
 async fn spawn_worker_stop_task(
     bootstrap: TestBootstrapSettings,

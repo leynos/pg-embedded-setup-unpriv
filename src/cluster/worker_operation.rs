@@ -6,7 +6,7 @@ use crate::TestBootstrapSettings;
 
 /// Identifies worker lifecycle operations executed via the helper binary.
 #[doc(hidden)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkerOperation {
     Setup,
     Start,
