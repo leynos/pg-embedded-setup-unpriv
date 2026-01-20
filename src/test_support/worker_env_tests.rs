@@ -93,13 +93,16 @@ fn staged_worker_is_world_executable_and_in_temp_dir(debug_target_dir: tempfile:
     );
 }
 
+/// Asserts that `find_staging_directory` produces the expected results for a given profile.
 #[cfg(unix)]
-#[rstest]
-fn find_staging_directory_detects_debug_profile() {
-    let path = PathBuf::from("/project/target/debug/deps/pg_worker-abc123");
+fn assert_staging_directory_for_profile(
+    input_path: &str,
+    expected_profile: &str,
+    expected_target_dir: &str,
+) {
+    let path = PathBuf::from(input_path);
     let (staged_dir, target_dir) = find_staging_directory(&path);
 
-    // Staged dir should be in temp dir with debug profile
     let temp_dir = std::env::temp_dir();
     assert!(
         staged_dir.starts_with(&temp_dir),
@@ -107,44 +110,42 @@ fn find_staging_directory_detects_debug_profile() {
         temp_dir.display(),
         staged_dir.display()
     );
+
     let staged_name = staged_dir
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("");
+    let expected_prefix = format!("pg-worker-{expected_profile}-");
     assert!(
-        staged_name.starts_with("pg-worker-debug-"),
-        "staged dir should match pg-worker-debug-*, got: {staged_name}"
+        staged_name.starts_with(&expected_prefix),
+        "staged dir should match {expected_prefix}*, got: {staged_name}"
     );
 
-    // Target profile dir should be the debug directory
-    assert_eq!(target_dir, Some(PathBuf::from("/project/target/debug")));
+    assert_eq!(
+        target_dir,
+        Some(PathBuf::from(expected_target_dir)),
+        "target dir should match expected path"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+fn find_staging_directory_detects_debug_profile() {
+    assert_staging_directory_for_profile(
+        "/project/target/debug/deps/pg_worker-abc123",
+        "debug",
+        "/project/target/debug",
+    );
 }
 
 #[cfg(unix)]
 #[rstest]
 fn find_staging_directory_detects_release_profile() {
-    let path = PathBuf::from("/project/target/release/pg_worker");
-    let (staged_dir, target_dir) = find_staging_directory(&path);
-
-    // Staged dir should be in temp dir with release profile
-    let temp_dir = std::env::temp_dir();
-    assert!(
-        staged_dir.starts_with(&temp_dir),
-        "staged dir should be in temp dir {}, got: {}",
-        temp_dir.display(),
-        staged_dir.display()
+    assert_staging_directory_for_profile(
+        "/project/target/release/pg_worker",
+        "release",
+        "/project/target/release",
     );
-    let staged_name = staged_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
-    assert!(
-        staged_name.starts_with("pg-worker-release-"),
-        "staged dir should match pg-worker-release-*, got: {staged_name}"
-    );
-
-    // Target profile dir should be the release directory
-    assert_eq!(target_dir, Some(PathBuf::from("/project/target/release")));
 }
 
 #[cfg(unix)]
