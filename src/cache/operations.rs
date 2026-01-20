@@ -467,6 +467,30 @@ mod tests {
         version_dir
     }
 
+    /// Asserts that a cache lookup with the given versions and requirement returns the expected result.
+    fn assert_cached_match(versions: &[&str], req: &str, expected: Option<&str>) {
+        let temp = tempdir().expect("tempdir");
+        let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
+
+        for version in versions {
+            create_complete_cache_entry(cache_dir, version);
+        }
+
+        let version_req = VersionReq::parse(req).expect("parse version req");
+        let result = find_matching_cached_version(cache_dir, &version_req);
+
+        match expected {
+            Some(ver) => {
+                let (version, path) = result.expect("should find cached version");
+                assert_eq!(version, ver);
+                assert!(path.ends_with(ver));
+            }
+            None => {
+                assert!(result.is_none());
+            }
+        }
+    }
+
     #[test]
     fn check_cache_returns_miss_for_empty_directory() {
         let temp = tempdir().expect("tempdir");
@@ -585,44 +609,17 @@ mod tests {
 
     #[test]
     fn find_matching_cached_version_finds_exact_match() {
-        let temp = tempdir().expect("tempdir");
-        let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
-        create_complete_cache_entry(cache_dir, "17.4.0");
-
-        let version_req = VersionReq::parse("=17.4.0").expect("parse version req");
-        let result = find_matching_cached_version(cache_dir, &version_req);
-
-        let (version, path) = result.expect("should find cached version");
-        assert_eq!(version, "17.4.0");
-        assert!(path.ends_with("17.4.0"));
+        assert_cached_match(&["17.4.0"], "=17.4.0", Some("17.4.0"));
     }
 
     #[test]
     fn find_matching_cached_version_matches_caret_requirement() {
-        let temp = tempdir().expect("tempdir");
-        let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
-        create_complete_cache_entry(cache_dir, "17.4.0");
-
-        let version_req = VersionReq::parse("^17").expect("parse version req");
-        let result = find_matching_cached_version(cache_dir, &version_req);
-
-        let (version, _) = result.expect("^17 should match 17.4.0");
-        assert_eq!(version, "17.4.0");
+        assert_cached_match(&["17.4.0"], "^17", Some("17.4.0"));
     }
 
     #[test]
     fn find_matching_cached_version_returns_highest_matching() {
-        let temp = tempdir().expect("tempdir");
-        let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
-        for version in ["17.2.0", "17.4.0"] {
-            create_complete_cache_entry(cache_dir, version);
-        }
-
-        let version_req = VersionReq::parse("^17").expect("parse version req");
-        let result = find_matching_cached_version(cache_dir, &version_req);
-
-        let (version, _) = result.expect("should find highest matching version");
-        assert_eq!(version, "17.4.0");
+        assert_cached_match(&["17.2.0", "17.4.0"], "^17", Some("17.4.0"));
     }
 
     #[test]
