@@ -135,48 +135,58 @@ enum LockType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use rstest::{fixture, rstest};
+    use tempfile::TempDir;
 
-    #[test]
-    fn acquire_exclusive_creates_lock_file() {
-        let temp = tempdir().expect("tempdir");
-        let cache_dir = camino::Utf8Path::from_path(temp.path()).expect("utf8 path");
-        let _lock = CacheLock::acquire_exclusive(cache_dir, "17.4.0").expect("acquire lock");
+    /// Fixture providing a temporary cache directory as a UTF-8 path.
+    #[fixture]
+    fn cache_fixture() -> (TempDir, camino::Utf8PathBuf) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cache_dir =
+            camino::Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 path");
+        (temp, cache_dir)
+    }
 
-        let lock_path = temp.path().join(LOCKS_SUBDIR).join("17.4.0.lock");
+    #[rstest]
+    #[case::exclusive("17.4.0", true)]
+    #[case::shared("16.3.0", false)]
+    fn acquire_lock_creates_lock_file(
+        cache_fixture: (TempDir, camino::Utf8PathBuf),
+        #[case] version: &str,
+        #[case] exclusive: bool,
+    ) {
+        let (temp, cache_dir) = cache_fixture;
+        let _lock = if exclusive {
+            CacheLock::acquire_exclusive(&cache_dir, version).expect("acquire lock")
+        } else {
+            CacheLock::acquire_shared(&cache_dir, version).expect("acquire lock")
+        };
+
+        let lock_path = temp
+            .path()
+            .join(LOCKS_SUBDIR)
+            .join(format!("{version}.lock"));
         assert!(lock_path.exists(), "lock file should be created");
     }
 
-    #[test]
-    fn acquire_shared_creates_lock_file() {
-        let temp = tempdir().expect("tempdir");
-        let cache_dir = camino::Utf8Path::from_path(temp.path()).expect("utf8 path");
-        let _lock = CacheLock::acquire_shared(cache_dir, "16.3.0").expect("acquire lock");
+    #[rstest]
+    fn multiple_shared_locks_can_coexist(cache_fixture: (TempDir, camino::Utf8PathBuf)) {
+        let (_temp, cache_dir) = cache_fixture;
 
-        let lock_path = temp.path().join(LOCKS_SUBDIR).join("16.3.0.lock");
-        assert!(lock_path.exists(), "lock file should be created");
-    }
-
-    #[test]
-    fn multiple_shared_locks_can_coexist() {
-        let temp = tempdir().expect("tempdir");
-        let cache_dir = camino::Utf8Path::from_path(temp.path()).expect("utf8 path");
-
-        let lock1 = CacheLock::acquire_shared(cache_dir, "17.4.0").expect("acquire lock 1");
-        let lock2 = CacheLock::acquire_shared(cache_dir, "17.4.0").expect("acquire lock 2");
+        let lock1 = CacheLock::acquire_shared(&cache_dir, "17.4.0").expect("acquire lock 1");
+        let lock2 = CacheLock::acquire_shared(&cache_dir, "17.4.0").expect("acquire lock 2");
 
         // Both locks should be held successfully
         drop(lock1);
         drop(lock2);
     }
 
-    #[test]
-    fn different_versions_have_separate_locks() {
-        let temp = tempdir().expect("tempdir");
-        let cache_dir = camino::Utf8Path::from_path(temp.path()).expect("utf8 path");
+    #[rstest]
+    fn different_versions_have_separate_locks(cache_fixture: (TempDir, camino::Utf8PathBuf)) {
+        let (_temp, cache_dir) = cache_fixture;
 
-        let lock1 = CacheLock::acquire_exclusive(cache_dir, "17.4.0").expect("acquire lock 1");
-        let lock2 = CacheLock::acquire_exclusive(cache_dir, "16.3.0").expect("acquire lock 2");
+        let lock1 = CacheLock::acquire_exclusive(&cache_dir, "17.4.0").expect("acquire lock 1");
+        let lock2 = CacheLock::acquire_exclusive(&cache_dir, "16.3.0").expect("acquire lock 2");
 
         // Different versions should not block each other
         drop(lock1);

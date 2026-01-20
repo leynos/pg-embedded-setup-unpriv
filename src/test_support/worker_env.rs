@@ -225,14 +225,13 @@ fn check_deps_parent_for_profile(
     }
 }
 
-/// Converts a profile name to a static string for common profiles, or "unknown".
+/// Returns "unknown" for non-standard profile names.
+///
+/// This function is only called from `check_deps_parent_for_profile` after
+/// "debug" and "release" have already been handled, so it always returns "unknown".
 #[cfg(unix)]
-fn profile_name_to_static(name: &str) -> &'static str {
-    match name {
-        "debug" => "debug",
-        "release" => "release",
-        _ => "unknown",
-    }
+const fn profile_name_to_static(_name: &str) -> &'static str {
+    "unknown"
 }
 
 /// Computes a short hash of the source path for staging directory uniqueness.
@@ -241,14 +240,11 @@ fn compute_path_hash(source: &std::path::Path) -> String {
     let mut hasher = Sha256::new();
     hasher.update(source.as_os_str().as_bytes());
     let result = hasher.finalize();
-    // Use first 8 hex chars for brevity. SHA256 always produces 32 bytes.
-    let bytes: &[u8] = result.as_slice();
+    // Use first 8 hex chars for brevity. SHA-256 always produces 32 bytes.
+    let bytes: [u8; 32] = result.into();
     format!(
         "{:02x}{:02x}{:02x}{:02x}",
-        bytes.first().copied().unwrap_or(0),
-        bytes.get(1).copied().unwrap_or(0),
-        bytes.get(2).copied().unwrap_or(0),
-        bytes.get(3).copied().unwrap_or(0)
+        bytes[0], bytes[1], bytes[2], bytes[3]
     )
 }
 

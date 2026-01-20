@@ -1,17 +1,46 @@
 //! Tests for worker binary staging logic.
 
 use super::*;
+use rstest::{fixture, rstest};
 
 #[cfg(unix)]
 use std::path::PathBuf;
 
+/// Guard that cleans up a staged directory when dropped.
 #[cfg(unix)]
-#[test]
-fn staged_worker_is_world_executable_and_in_temp_dir() {
+struct StagedDirCleanup(Option<PathBuf>);
+
+#[cfg(unix)]
+impl StagedDirCleanup {
+    /// Creates a new cleanup guard for the staged path's parent directory.
+    fn new(staged_path: &std::path::Path) -> Self {
+        Self(staged_path.parent().map(std::path::Path::to_path_buf))
+    }
+}
+
+#[cfg(unix)]
+impl Drop for StagedDirCleanup {
+    fn drop(&mut self) {
+        if let Some(ref staged_dir) = self.0 {
+            drop(fs::remove_dir_all(staged_dir));
+        }
+    }
+}
+
+/// Creates a temporary directory with a fake target/debug structure for testing.
+#[cfg(unix)]
+#[fixture]
+fn debug_target_dir() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
-    // Create a fake target/debug structure so the staging logic finds a profile
     let debug_dir = dir.path().join("target").join("debug");
     fs::create_dir_all(&debug_dir).expect("create debug dir");
+    dir
+}
+
+#[cfg(unix)]
+#[rstest]
+fn staged_worker_is_world_executable_and_in_temp_dir(debug_target_dir: tempfile::TempDir) {
+    let debug_dir = debug_target_dir.path().join("target").join("debug");
     let source = debug_dir.join("pg_worker");
     fs::write(&source, b"#!/bin/sh\nexit 0\n").expect("write worker");
     let mut perms = fs::metadata(&source).expect("metadata").permissions();
@@ -20,6 +49,7 @@ fn staged_worker_is_world_executable_and_in_temp_dir() {
 
     let staged = try_stage_worker_binary(&source.into_os_string()).expect("stage worker");
     let staged_path = PathBuf::from(&staged);
+    let _cleanup = StagedDirCleanup::new(&staged_path);
 
     // Verify staged path is in the system temp directory
     let temp_dir = std::env::temp_dir();
@@ -61,15 +91,10 @@ fn staged_worker_is_world_executable_and_in_temp_dir() {
         0,
         "temp dir must be world-executable for nobody to access staged binary"
     );
-
-    // Clean up the staged directory
-    if let Some(staged_dir) = staged_path.parent() {
-        drop(fs::remove_dir_all(staged_dir));
-    }
 }
 
 #[cfg(unix)]
-#[test]
+#[rstest]
 fn find_staging_directory_detects_debug_profile() {
     let path = PathBuf::from("/project/target/debug/deps/pg_worker-abc123");
     let (staged_dir, target_dir) = find_staging_directory(&path);
@@ -96,7 +121,7 @@ fn find_staging_directory_detects_debug_profile() {
 }
 
 #[cfg(unix)]
-#[test]
+#[rstest]
 fn find_staging_directory_detects_release_profile() {
     let path = PathBuf::from("/project/target/release/pg_worker");
     let (staged_dir, target_dir) = find_staging_directory(&path);
@@ -123,7 +148,7 @@ fn find_staging_directory_detects_release_profile() {
 }
 
 #[cfg(unix)]
-#[test]
+#[rstest]
 fn should_restage_returns_true_for_missing_staged() {
     let dir = tempfile::tempdir().expect("tempdir");
     let source = dir.path().join("source");
@@ -134,7 +159,7 @@ fn should_restage_returns_true_for_missing_staged() {
 }
 
 #[cfg(unix)]
-#[test]
+#[rstest]
 fn should_restage_returns_false_when_staged_is_newer() {
     use std::time::{Duration, SystemTime};
 
@@ -155,12 +180,9 @@ fn should_restage_returns_false_when_staged_is_newer() {
 }
 
 #[cfg(unix)]
-#[test]
-fn pointer_file_written_to_target_dir() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    // Create a fake target/debug structure
-    let debug_dir = dir.path().join("target").join("debug");
-    fs::create_dir_all(&debug_dir).expect("create debug dir");
+#[rstest]
+fn pointer_file_written_to_target_dir(debug_target_dir: tempfile::TempDir) {
+    let debug_dir = debug_target_dir.path().join("target").join("debug");
     let source = debug_dir.join("pg_worker");
     fs::write(&source, b"#!/bin/sh\nexit 0\n").expect("write worker");
     let mut perms = fs::metadata(&source).expect("metadata").permissions();
@@ -169,6 +191,7 @@ fn pointer_file_written_to_target_dir() {
 
     let staged = try_stage_worker_binary(&source.into_os_string()).expect("stage worker");
     let staged_path = PathBuf::from(&staged);
+    let _cleanup = StagedDirCleanup::new(&staged_path);
 
     // Verify pointer file was created
     let pointer_path = debug_dir.join("pg_worker_staged.path");
@@ -185,9 +208,4 @@ fn pointer_file_written_to_target_dir() {
         staged_path.to_str().expect("staged path is UTF-8"),
         "pointer file should contain staged path"
     );
-
-    // Clean up the staged directory
-    if let Some(staged_dir) = staged_path.parent() {
-        drop(fs::remove_dir_all(staged_dir));
-    }
 }
