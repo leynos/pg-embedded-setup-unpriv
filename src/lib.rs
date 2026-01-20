@@ -260,7 +260,13 @@ impl PgEnvCfg {
     /// # Errors
     /// Returns an error when the semantic version requirement cannot be parsed.
     pub fn to_settings(&self) -> Result<Settings> {
-        let mut s = Settings::default();
+        // Disable the internal postgresql_embedded timeout. The crate handles timeouts
+        // externally via setup_timeout/start_timeout in TestBootstrapSettings.
+        // The default 5-second timeout is too short for initdb on slower systems.
+        let mut s = Settings {
+            timeout: None,
+            ..Settings::default()
+        };
 
         self.apply_version(&mut s)?;
         self.apply_connection(&mut s);
