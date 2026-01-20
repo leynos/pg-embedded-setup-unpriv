@@ -66,12 +66,9 @@ fn try_stage_worker_binary(original: &OsString) -> io::Result<OsString> {
 
     // Compute staging directory in /tmp and find target directory for pointer file
     let (staged_dir, target_profile_dir) = find_staging_directory(&source);
-    fs::create_dir_all(&staged_dir)?;
 
-    // Set directory to world-executable so privilege-dropped subprocesses can access it.
-    let mut dir_perms = fs::metadata(&staged_dir)?.permissions();
-    dir_perms.set_mode(0o755);
-    fs::set_permissions(&staged_dir, dir_perms)?;
+    // Security: Create staging directory with validation against symlink attacks
+    create_staging_directory_secure(&staged_dir)?;
 
     let staged = staged_dir.join(filename);
 
@@ -90,6 +87,78 @@ fn try_stage_worker_binary(original: &OsString) -> io::Result<OsString> {
     }
 
     Ok(staged.into_os_string())
+}
+
+/// Creates the staging directory securely, protecting against symlink attacks.
+///
+/// Validates that:
+/// 1. If the path already exists, it is not a symlink
+/// 2. If the path already exists, it is owned by the current user
+/// 3. After creation, the directory is not a symlink and is owned by current user
+#[cfg(unix)]
+fn create_staging_directory_secure(staged_dir: &PathBuf) -> io::Result<()> {
+    use nix::unistd::geteuid;
+    use std::os::unix::fs::MetadataExt;
+
+    let current_uid = geteuid().as_raw();
+
+    // Check if directory already exists
+    if let Ok(meta) = fs::symlink_metadata(staged_dir) {
+        // Reject symlinks - could be attacker-controlled
+        if meta.file_type().is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "staging directory is a symlink (potential attack): {}",
+                    staged_dir.display()
+                ),
+            ));
+        }
+
+        // Reject directories not owned by current user
+        if meta.uid() != current_uid {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "staging directory owned by uid {} (expected {}): {}",
+                    meta.uid(),
+                    current_uid,
+                    staged_dir.display()
+                ),
+            ));
+        }
+    } else {
+        // Create directory with restrictive permissions first
+        fs::create_dir_all(staged_dir)?;
+    }
+
+    // Re-validate after creation to protect against TOCTOU
+    let meta = fs::symlink_metadata(staged_dir)?;
+    if meta.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "staging directory became symlink after creation: {}",
+                staged_dir.display()
+            ),
+        ));
+    }
+    if meta.uid() != current_uid {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "staging directory ownership changed after creation: {}",
+                staged_dir.display()
+            ),
+        ));
+    }
+
+    // Set directory to world-executable so privilege-dropped subprocesses can access it.
+    let mut dir_perms = meta.permissions();
+    dir_perms.set_mode(0o755);
+    fs::set_permissions(staged_dir, dir_perms)?;
+
+    Ok(())
 }
 
 /// Finds the staging directory for the worker binary.

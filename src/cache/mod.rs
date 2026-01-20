@@ -7,11 +7,12 @@
 //!
 //! # Cache Location
 //!
-//! The cache directory is resolved in the following order:
+//! The cache directory is resolved by [`resolve_cache_dir`] in the following order:
 //!
 //! 1. `PG_BINARY_CACHE_DIR` environment variable if set
 //! 2. `$XDG_CACHE_HOME/pg-embedded/binaries` if `XDG_CACHE_HOME` is set
-//! 3. `~/.cache/pg-embedded/binaries` as fallback
+//! 3. `~/.cache/pg-embedded/binaries` if the home directory is available
+//! 4. `/tmp/pg-embedded/binaries` as last resort when none of the above are available
 //!
 //! # Cross-Process Coordination
 //!

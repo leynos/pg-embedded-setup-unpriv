@@ -136,13 +136,20 @@ fn should_restage_returns_true_for_missing_staged() {
 #[cfg(unix)]
 #[test]
 fn should_restage_returns_false_when_staged_is_newer() {
+    use std::time::{Duration, SystemTime};
+
     let dir = tempfile::tempdir().expect("tempdir");
     let source = dir.path().join("source");
     let staged = dir.path().join("staged");
 
     fs::write(&source, b"content").expect("write source");
-    std::thread::sleep(std::time::Duration::from_millis(10));
     fs::write(&staged, b"content").expect("write staged");
+
+    // Set source mtime to 1 hour ago to ensure staged is newer.
+    // This avoids flaky tests due to filesystem mtime resolution.
+    let past = SystemTime::now() - Duration::from_secs(3600);
+    let past_filetime = filetime::FileTime::from_system_time(past);
+    filetime::set_file_mtime(&source, past_filetime).expect("set source mtime");
 
     assert!(!should_restage(&source, &staged).expect("should_restage"));
 }

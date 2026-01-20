@@ -66,11 +66,11 @@ pub(super) fn try_use_binary_cache(
             // We need to copy to {installation_dir}/{version}/ to match expected layout
             let target_version_dir = target.join(&version);
 
-            let copy_result = copy_from_cache(&source_dir, &target_version_dir);
-            if copy_result.is_err() {
+            if let Err(err) = copy_from_cache(&source_dir, &target_version_dir) {
                 warn!(
                     target: LOG_TARGET,
                     version = %version,
+                    error = %err,
                     "cache copy failed, falling back to download"
                 );
                 return false;

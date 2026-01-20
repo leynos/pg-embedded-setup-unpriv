@@ -20,8 +20,6 @@ const LOCKS_SUBDIR: &str = ".locks";
 #[derive(Debug)]
 pub struct CacheLock {
     _file: File,
-    #[expect(dead_code, reason = "version stored for debugging and test assertions")]
-    version: String,
 }
 
 impl CacheLock {
@@ -103,10 +101,7 @@ impl CacheLock {
             return Err(io::Error::last_os_error());
         }
 
-        Ok(Self {
-            _file: file,
-            version: version.to_owned(),
-        })
+        Ok(Self { _file: file })
     }
 
     /// No-op lock acquisition on non-Unix platforms.
@@ -124,10 +119,7 @@ impl CacheLock {
             .open(&temp_path)?;
         // Attempt cleanup; ignore errors as temp files are ephemeral.
         drop(std::fs::remove_file(&temp_path));
-        Ok(Self {
-            _file: file,
-            version: version.to_owned(),
-        })
+        Ok(Self { _file: file })
     }
 }
 
