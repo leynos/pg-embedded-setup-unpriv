@@ -277,7 +277,8 @@ impl<'a> WorkerInvoker<'a> {
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
         log_in_process_start(operation, false);
-        self.invoke_unprivileged(in_process_op, operation.error_context())
+        let timeout = operation.timeout(self.bootstrap);
+        self.invoke_unprivileged(in_process_op, operation.error_context(), timeout)
     }
 
     fn run_root(&self, operation: WorkerOperation) -> BootstrapResult<()> {
@@ -297,12 +298,23 @@ impl<'a> WorkerInvoker<'a> {
         }
     }
 
-    fn invoke_unprivileged<Fut>(&self, future: Fut, ctx: &'static str) -> BootstrapResult<()>
+    fn invoke_unprivileged<Fut>(
+        &self,
+        future: Fut,
+        ctx: &'static str,
+        timeout: std::time::Duration,
+    ) -> BootstrapResult<()>
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
         self.runtime
-            .block_on(future)
+            .block_on(async { tokio::time::timeout(timeout, future).await })
+            .map_err(|_| {
+                BootstrapError::from(eyre!(
+                    "{ctx}: operation timed out after {}s",
+                    timeout.as_secs()
+                ))
+            })?
             .context(ctx)
             .map_err(BootstrapError::from)
     }
@@ -392,7 +404,8 @@ impl<'a> AsyncInvoker<'a> {
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
         log_in_process_start(operation, true);
-        invoke_unprivileged_async(in_process_op, operation.error_context()).await
+        let timeout = operation.timeout(self.bootstrap);
+        invoke_unprivileged_async(in_process_op, operation.error_context(), timeout).await
     }
 
     async fn run_root_async(&self, operation: WorkerOperation) -> BootstrapResult<()> {
@@ -416,13 +429,26 @@ impl<'a> AsyncInvoker<'a> {
     }
 }
 
-/// Directly awaits an unprivileged operation's future.
+/// Awaits an unprivileged operation's future with timeout protection.
 #[cfg(feature = "async-api")]
-async fn invoke_unprivileged_async<Fut>(future: Fut, ctx: &'static str) -> BootstrapResult<()>
+async fn invoke_unprivileged_async<Fut>(
+    future: Fut,
+    ctx: &'static str,
+    timeout: std::time::Duration,
+) -> BootstrapResult<()>
 where
     Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
 {
-    future.await.context(ctx).map_err(BootstrapError::from)
+    tokio::time::timeout(timeout, future)
+        .await
+        .map_err(|_| {
+            BootstrapError::from(eyre!(
+                "{ctx}: operation timed out after {}s",
+                timeout.as_secs()
+            ))
+        })?
+        .context(ctx)
+        .map_err(BootstrapError::from)
 }
 
 #[cfg(test)]
