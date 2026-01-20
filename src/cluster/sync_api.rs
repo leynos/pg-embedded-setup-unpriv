@@ -2,12 +2,13 @@
 
 use postgresql_embedded::{PostgreSQL, Settings};
 use tokio::runtime::Runtime;
-use tracing::{info, info_span};
+use tracing::info_span;
 
 use super::connection::TestClusterConnection;
 use super::installation::refresh_worker_installation_dir;
 use super::port_refresh::refresh_worker_port;
 use super::runtime::build_runtime;
+use super::startup::{log_lifecycle_complete, log_lifecycle_start};
 use super::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use super::{ClusterRuntime, StartupOutcome, TestCluster};
 use crate::bootstrap_for_tests;
@@ -49,22 +50,13 @@ impl TestCluster {
         })
     }
 
-    #[expect(
-        clippy::cognitive_complexity,
-        reason = "privilege-aware lifecycle setup requires explicit branching for observability"
-    )]
     fn start_postgres(
         runtime: &Runtime,
         mut bootstrap: TestBootstrapSettings,
         env_vars: &[(String, Option<String>)],
     ) -> BootstrapResult<StartupOutcome> {
         let privileges = bootstrap.privileges;
-        info!(
-            target: LOG_TARGET,
-            privileges = ?privileges,
-            mode = ?bootstrap.execution_mode,
-            "starting embedded postgres lifecycle"
-        );
+        log_lifecycle_start(privileges, &bootstrap, false);
 
         let (is_managed_via_worker, postgres) = if privileges == ExecutionPrivileges::Root {
             Self::invoke_lifecycle_root(runtime, &mut bootstrap, env_vars)?;
@@ -78,12 +70,7 @@ impl TestCluster {
             )
         };
 
-        info!(
-            target: LOG_TARGET,
-            privileges = ?privileges,
-            worker_managed = is_managed_via_worker,
-            "embedded postgres started"
-        );
+        log_lifecycle_complete(privileges, is_managed_via_worker, false);
         Ok(StartupOutcome {
             bootstrap,
             postgres,

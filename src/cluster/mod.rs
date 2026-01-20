@@ -55,6 +55,7 @@ mod installation;
 mod lifecycle;
 mod port_refresh;
 mod runtime;
+mod startup;
 mod sync_api;
 mod temporary_database;
 mod worker_invoker;

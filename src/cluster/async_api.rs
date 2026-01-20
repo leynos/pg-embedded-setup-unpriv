@@ -8,6 +8,7 @@ use super::drop_handling::DropContext;
 use super::installation::refresh_worker_installation_dir;
 use super::port_refresh::refresh_worker_port_async;
 use super::runtime::build_runtime;
+use super::startup::{log_lifecycle_complete, log_lifecycle_start};
 use super::worker_invoker::AsyncInvoker;
 use super::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use super::{ClusterRuntime, StartupOutcome, TestCluster};
@@ -81,7 +82,7 @@ impl TestCluster {
         env_vars: &[(String, Option<String>)],
     ) -> BootstrapResult<StartupOutcome> {
         let privileges = bootstrap.privileges;
-        Self::log_lifecycle_start(privileges, &bootstrap);
+        log_lifecycle_start(privileges, &bootstrap, true);
 
         let (is_managed_via_worker, postgres) = if privileges == ExecutionPrivileges::Root {
             Box::pin(Self::invoke_lifecycle_root_async(&mut bootstrap, env_vars)).await?;
@@ -100,32 +101,12 @@ impl TestCluster {
             )
         };
 
-        Self::log_lifecycle_complete(privileges, is_managed_via_worker);
+        log_lifecycle_complete(privileges, is_managed_via_worker, true);
         Ok(StartupOutcome {
             bootstrap,
             postgres,
             is_managed_via_worker,
         })
-    }
-
-    fn log_lifecycle_start(privileges: ExecutionPrivileges, bootstrap: &TestBootstrapSettings) {
-        info!(
-            target: LOG_TARGET,
-            privileges = ?privileges,
-            mode = ?bootstrap.execution_mode,
-            async_mode = true,
-            "starting embedded postgres lifecycle"
-        );
-    }
-
-    fn log_lifecycle_complete(privileges: ExecutionPrivileges, is_managed_via_worker: bool) {
-        info!(
-            target: LOG_TARGET,
-            privileges = ?privileges,
-            worker_managed = is_managed_via_worker,
-            async_mode = true,
-            "embedded postgres started"
-        );
     }
 
     /// Async variant of `invoke_lifecycle`.
