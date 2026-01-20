@@ -53,6 +53,8 @@ jobs:
         if: ${{ matrix.privilege == 'root' }}
         run: |
           export PG_EMBEDDED_WORKER="$PWD/target/debug/pg_worker"
+          # Ensure worker binary is world-executable for privilege-dropped subprocess
+          chmod 755 "$PG_EMBEDDED_WORKER"
           run_as_root() {
             : "${RUSTUP_HOME:=$HOME/.rustup}"
             : "${CARGO_HOME:=$HOME/.cargo}"
