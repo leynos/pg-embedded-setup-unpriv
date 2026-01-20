@@ -448,25 +448,34 @@ impl TestCluster {
                 // We need to copy to {installation_dir}/{version}/ to match expected layout
                 let target_version_dir = target.join(&version);
 
-                if copy_from_cache(&source_dir, &target_version_dir).is_ok() {
-                    bootstrap.settings.trust_installation_dir = true;
-                    info!(
-                        target: LOG_TARGET,
-                        version_req = %version_req,
-                        matched_version = %version,
-                        source = %source_dir,
-                        target = %target_version_dir,
-                        "using cached binaries"
-                    );
-                    true
-                } else {
+                let copy_result = copy_from_cache(&source_dir, &target_version_dir);
+                if copy_result.is_err() {
                     warn!(
                         target: LOG_TARGET,
                         version = %version,
                         "cache copy failed, falling back to download"
                     );
-                    false
+                    return false;
                 }
+
+                bootstrap.settings.trust_installation_dir = true;
+
+                // Set exact version to skip GitHub API version resolution.
+                // This avoids rate limiting when running many tests.
+                let exact_version = format!("={version}");
+                if let Ok(exact_req) = postgresql_embedded::VersionReq::parse(&exact_version) {
+                    bootstrap.settings.version = exact_req;
+                }
+
+                info!(
+                    target: LOG_TARGET,
+                    version_req = %version_req,
+                    matched_version = %version,
+                    source = %source_dir,
+                    target = %target_version_dir,
+                    "using cached binaries"
+                );
+                true
             }
             CacheLookupResult::Miss => {
                 // Cache entry was removed after initial lookup
