@@ -566,4 +566,103 @@ mod tests {
         assert!(result);
         assert!(target.join("bin/postgres").exists());
     }
+
+    #[test]
+    fn find_matching_cached_version_returns_none_for_empty_cache() {
+        let temp = tempdir().expect("tempdir");
+        let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
+        let version_req = VersionReq::parse("^17").expect("parse version req");
+
+        let result = find_matching_cached_version(cache_dir, &version_req);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn find_matching_cached_version_finds_exact_match() {
+        let temp = tempdir().expect("tempdir");
+        let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
+
+        // Create a valid cache entry for 17.4.0
+        let version_dir = cache_dir.join("17.4.0");
+        create_mock_binaries(&version_dir);
+        fs::write(version_dir.join(COMPLETION_MARKER), "").expect("write marker");
+
+        let version_req = VersionReq::parse("=17.4.0").expect("parse version req");
+        let result = find_matching_cached_version(cache_dir, &version_req);
+
+        let (version, path) = result.expect("should find cached version");
+        assert_eq!(version, "17.4.0");
+        assert!(path.ends_with("17.4.0"));
+    }
+
+    #[test]
+    fn find_matching_cached_version_matches_caret_requirement() {
+        let temp = tempdir().expect("tempdir");
+        let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
+
+        // Create a valid cache entry for 17.4.0
+        let version_dir = cache_dir.join("17.4.0");
+        create_mock_binaries(&version_dir);
+        fs::write(version_dir.join(COMPLETION_MARKER), "").expect("write marker");
+
+        // ^17 should match 17.4.0
+        let version_req = VersionReq::parse("^17").expect("parse version req");
+        let result = find_matching_cached_version(cache_dir, &version_req);
+
+        let (version, _) = result.expect("^17 should match 17.4.0");
+        assert_eq!(version, "17.4.0");
+    }
+
+    #[test]
+    fn find_matching_cached_version_returns_highest_matching() {
+        let temp = tempdir().expect("tempdir");
+        let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
+
+        // Create cache entries for 17.2.0 and 17.4.0
+        for version in ["17.2.0", "17.4.0"] {
+            let version_dir = cache_dir.join(version);
+            create_mock_binaries(&version_dir);
+            fs::write(version_dir.join(COMPLETION_MARKER), "").expect("write marker");
+        }
+
+        // ^17 should match highest (17.4.0)
+        let version_req = VersionReq::parse("^17").expect("parse version req");
+        let result = find_matching_cached_version(cache_dir, &version_req);
+
+        let (version, _) = result.expect("should find highest matching version");
+        assert_eq!(version, "17.4.0");
+    }
+
+    #[test]
+    fn find_matching_cached_version_ignores_non_matching() {
+        let temp = tempdir().expect("tempdir");
+        let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
+
+        // Create a valid cache entry for 16.0.0 only
+        let version_dir = cache_dir.join("16.0.0");
+        create_mock_binaries(&version_dir);
+        fs::write(version_dir.join(COMPLETION_MARKER), "").expect("write marker");
+
+        // ^17 should not match 16.0.0
+        let version_req = VersionReq::parse("^17").expect("parse version req");
+        let result = find_matching_cached_version(cache_dir, &version_req);
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn find_matching_cached_version_ignores_incomplete_entries() {
+        let temp = tempdir().expect("tempdir");
+        let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
+
+        // Create an incomplete cache entry (no marker)
+        let version_dir = cache_dir.join("17.4.0");
+        create_mock_binaries(&version_dir);
+        // Deliberately not writing completion marker
+
+        let version_req = VersionReq::parse("^17").expect("parse version req");
+        let result = find_matching_cached_version(cache_dir, &version_req);
+
+        assert!(result.is_none());
+    }
 }
