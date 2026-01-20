@@ -210,17 +210,23 @@ mod tests {
         );
     }
 
-    #[test]
-    #[expect(
-        clippy::cognitive_complexity,
-        reason = "test setup with temp directories and env vars is straightforward despite measured complexity"
-    )]
-    fn orchestrate_bootstrap_propagates_binary_cache_dir() {
+    /// Holds temporary directories and their UTF-8 paths for bootstrap tests.
+    struct BootstrapPaths {
+        _runtime: tempfile::TempDir,
+        _data: tempfile::TempDir,
+        _cache: tempfile::TempDir,
+        runtime_path: Utf8PathBuf,
+        data_path: Utf8PathBuf,
+        cache_path: Utf8PathBuf,
+    }
+
+    /// Creates bootstrap test paths, returning None if running as root.
+    fn bootstrap_paths() -> Option<BootstrapPaths> {
         if detect_execution_privileges() == ExecutionPrivileges::Root {
             tracing::warn!(
                 "skipping orchestrate test because root privileges require PG_EMBEDDED_WORKER"
             );
-            return;
+            return None;
         }
 
         let runtime = tempdir().expect("runtime dir");
@@ -233,21 +239,42 @@ mod tests {
         let cache_path =
             Utf8PathBuf::from_path_buf(cache.path().to_path_buf()).expect("cache dir utf8");
 
-        let settings = with_vars(
+        Some(BootstrapPaths {
+            _runtime: runtime,
+            _data: data,
+            _cache: cache,
+            runtime_path,
+            data_path,
+            cache_path,
+        })
+    }
+
+    /// Runs `orchestrate_bootstrap` with cache-related environment variables set.
+    fn orchestrate_with_cache_env(paths: &BootstrapPaths) -> TestBootstrapSettings {
+        with_vars(
             [
-                ("PG_RUNTIME_DIR", Some(runtime_path.as_str())),
-                ("PG_DATA_DIR", Some(data_path.as_str())),
-                ("PG_BINARY_CACHE_DIR", Some(cache_path.as_str())),
+                ("PG_RUNTIME_DIR", Some(paths.runtime_path.as_str())),
+                ("PG_DATA_DIR", Some(paths.data_path.as_str())),
+                ("PG_BINARY_CACHE_DIR", Some(paths.cache_path.as_str())),
                 ("PG_SUPERUSER", Some("cache_test")),
                 ("PG_PASSWORD", Some("cache_test_pw")),
                 ("PG_EMBEDDED_WORKER", None),
             ],
             || orchestrate_bootstrap().expect("bootstrap to succeed"),
-        );
+        )
+    }
+
+    #[test]
+    fn orchestrate_bootstrap_propagates_binary_cache_dir() {
+        let Some(paths) = bootstrap_paths() else {
+            return;
+        };
+
+        let settings = orchestrate_with_cache_env(&paths);
 
         assert_eq!(
             settings.binary_cache_dir,
-            Some(cache_path),
+            Some(paths.cache_path.clone()),
             "binary_cache_dir should propagate from PG_BINARY_CACHE_DIR"
         );
     }

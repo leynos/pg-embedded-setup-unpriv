@@ -97,32 +97,49 @@ async fn read_postmaster_port_with_retry_async(pid_path: &Path) -> BootstrapResu
 }
 
 /// Reads the port from a postmaster.pid file.
+///
+/// Returns `Ok(None)` for retryable conditions: file not found, missing port line,
+/// or unparseable port value. Returns `Err` only for unexpected I/O errors.
 fn read_postmaster_port(pid_path: &Path) -> BootstrapResult<Option<u16>> {
-    let contents = match std::fs::read_to_string(pid_path) {
-        Ok(contents) => contents,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(None);
-        }
-        Err(err) => {
-            return Err(crate::error::BootstrapError::from(eyre!(
-                "failed to read postmaster pid at {}: {err}",
-                pid_path.display()
-            )));
-        }
+    let Some(contents) = read_pid_file_contents(pid_path)? else {
+        return Ok(None);
     };
-    let port_line = contents.lines().nth(3).ok_or_else(|| {
-        crate::error::BootstrapError::from(eyre!(
-            "postmaster.pid missing port line at {}",
+    Ok(parse_port_from_pid_contents(&contents, pid_path))
+}
+
+/// Reads the contents of a postmaster.pid file if it exists.
+fn read_pid_file_contents(pid_path: &Path) -> BootstrapResult<Option<String>> {
+    match std::fs::read_to_string(pid_path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(crate::error::BootstrapError::from(eyre!(
+            "failed to read postmaster pid at {}: {err}",
             pid_path.display()
-        ))
-    })?;
-    let port = port_line.trim().parse::<u16>().map_err(|err| {
-        crate::error::BootstrapError::from(eyre!(
-            "failed to parse postmaster port from {}: {err}",
-            pid_path.display()
-        ))
-    })?;
-    Ok(Some(port))
+        ))),
+    }
+}
+
+/// Parses the port from postmaster.pid contents.
+///
+/// Returns `None` if the port line is missing or cannot be parsed.
+fn parse_port_from_pid_contents(contents: &str, pid_path: &Path) -> Option<u16> {
+    let port_line = contents.lines().nth(3)?;
+    port_line
+        .trim()
+        .parse::<u16>()
+        .inspect_err(|err| log_port_parse_failure(pid_path, err, port_line))
+        .ok()
+}
+
+/// Logs a debug message when port parsing fails.
+fn log_port_parse_failure(pid_path: &Path, err: &std::num::ParseIntError, port_line: &str) {
+    tracing::debug!(
+        target: LOG_TARGET,
+        path = %pid_path.display(),
+        error = %err,
+        port_line = %port_line,
+        "failed to parse postmaster port, will retry"
+    );
 }
 
 /// Resolves the installed directory from settings.
