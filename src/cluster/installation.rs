@@ -31,24 +31,34 @@ pub(super) fn refresh_worker_installation_dir(bootstrap: &mut TestBootstrapSetti
     }
 }
 
+/// Internal macro to implement `refresh_worker_port` logic.
+macro_rules! refresh_worker_port_impl {
+    ($bootstrap:expr, $retry_call:expr) => {{
+        if $bootstrap.privileges != ExecutionPrivileges::Root {
+            return Ok(());
+        }
+
+        let pid_path = $bootstrap.settings.data_dir.join("postmaster.pid");
+        if let Some(port) = $retry_call? {
+            $bootstrap.settings.port = port;
+            return Ok(());
+        }
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            path = %pid_path.display(),
+            "postmaster.pid missing after start; keeping configured port"
+        );
+        Ok(())
+    }};
+}
+
 /// Refreshes the worker port (synchronous variant).
 pub(super) fn refresh_worker_port(bootstrap: &mut TestBootstrapSettings) -> BootstrapResult<()> {
-    if bootstrap.privileges != ExecutionPrivileges::Root {
-        return Ok(());
-    }
-
-    let pid_path = bootstrap.settings.data_dir.join("postmaster.pid");
-    if let Some(port) = read_postmaster_port_with_retry(&pid_path)? {
-        bootstrap.settings.port = port;
-        return Ok(());
-    }
-
-    tracing::debug!(
-        target: LOG_TARGET,
-        path = %pid_path.display(),
-        "postmaster.pid missing after start; keeping configured port"
-    );
-    Ok(())
+    refresh_worker_port_impl!(
+        bootstrap,
+        read_postmaster_port_with_retry(&bootstrap.settings.data_dir.join("postmaster.pid"))
+    )
 }
 
 /// Refreshes the worker port (async variant).
@@ -56,22 +66,11 @@ pub(super) fn refresh_worker_port(bootstrap: &mut TestBootstrapSettings) -> Boot
 pub(super) async fn refresh_worker_port_async(
     bootstrap: &mut TestBootstrapSettings,
 ) -> BootstrapResult<()> {
-    if bootstrap.privileges != ExecutionPrivileges::Root {
-        return Ok(());
-    }
-
-    let pid_path = bootstrap.settings.data_dir.join("postmaster.pid");
-    if let Some(port) = read_postmaster_port_with_retry_async(&pid_path).await? {
-        bootstrap.settings.port = port;
-        return Ok(());
-    }
-
-    tracing::debug!(
-        target: LOG_TARGET,
-        path = %pid_path.display(),
-        "postmaster.pid missing after start; keeping configured port"
-    );
-    Ok(())
+    refresh_worker_port_impl!(
+        bootstrap,
+        read_postmaster_port_with_retry_async(&bootstrap.settings.data_dir.join("postmaster.pid"))
+            .await
+    )
 }
 
 /// Reads the postmaster port with retry (synchronous).
