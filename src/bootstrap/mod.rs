@@ -210,6 +210,48 @@ mod tests {
         );
     }
 
+    #[test]
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "test setup with temp directories and env vars is straightforward despite measured complexity"
+    )]
+    fn orchestrate_bootstrap_propagates_binary_cache_dir() {
+        if detect_execution_privileges() == ExecutionPrivileges::Root {
+            tracing::warn!(
+                "skipping orchestrate test because root privileges require PG_EMBEDDED_WORKER"
+            );
+            return;
+        }
+
+        let runtime = tempdir().expect("runtime dir");
+        let data = tempdir().expect("data dir");
+        let cache = tempdir().expect("cache dir");
+        let runtime_path =
+            Utf8PathBuf::from_path_buf(runtime.path().to_path_buf()).expect("runtime dir utf8");
+        let data_path =
+            Utf8PathBuf::from_path_buf(data.path().to_path_buf()).expect("data dir utf8");
+        let cache_path =
+            Utf8PathBuf::from_path_buf(cache.path().to_path_buf()).expect("cache dir utf8");
+
+        let settings = with_vars(
+            [
+                ("PG_RUNTIME_DIR", Some(runtime_path.as_str())),
+                ("PG_DATA_DIR", Some(data_path.as_str())),
+                ("PG_BINARY_CACHE_DIR", Some(cache_path.as_str())),
+                ("PG_SUPERUSER", Some("cache_test")),
+                ("PG_PASSWORD", Some("cache_test_pw")),
+                ("PG_EMBEDDED_WORKER", None),
+            ],
+            || orchestrate_bootstrap().expect("bootstrap to succeed"),
+        );
+
+        assert_eq!(
+            settings.binary_cache_dir,
+            Some(cache_path),
+            "binary_cache_dir should propagate from PG_BINARY_CACHE_DIR"
+        );
+    }
+
     fn assert_paths(
         settings: &TestBootstrapSettings,
         runtime_path: &Utf8PathBuf,

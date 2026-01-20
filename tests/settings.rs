@@ -82,13 +82,9 @@ fn to_settings_roundtrip() -> color_eyre::Result<()> {
         "encoding should be recorded in the configuration map",
     );
 
-    // Verify that binary_cache_dir is preserved in PgEnvCfg when set
-    let mut cfg_with_cache = cfg.clone();
-    cfg_with_cache.binary_cache_dir = Some(Utf8PathBuf::from("/custom/cache"));
-    ensure!(
-        cfg_with_cache.binary_cache_dir == Some(Utf8PathBuf::from("/custom/cache")),
-        "binary_cache_dir should be preserved in PgEnvCfg"
-    );
+    // Note: binary_cache_dir is not propagated through to_settings() as it is
+    // specific to this crate's cache system, not postgresql_embedded::Settings.
+    // See bootstrap module tests for binary_cache_dir propagation coverage.
 
     Ok(())
 }
