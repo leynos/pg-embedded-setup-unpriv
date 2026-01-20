@@ -1,4 +1,4 @@
-.PHONY: help all clean test build release lint fmt check-fmt markdownlint nixie
+.PHONY: help all clean test test-pg test-non-pg build release lint fmt check-fmt markdownlint nixie
 
 APP ?= pg_embedded_setup_unpriv
 CARGO ?= cargo
@@ -16,8 +16,12 @@ all: check-fmt lint test ## Perform all commit gate checks
 clean: ## Remove build artifacts
 	$(CARGO) clean
 
-test: ## Run tests with warnings treated as errors
+test: test-pg test-non-pg ## Run tests with warnings treated as errors
+
+test-pg: ## Run tests that require PostgreSQL
 	RUSTFLAGS="-D warnings" $(CARGO) nextest run --all-targets --all-features $(BUILD_JOBS)
+
+test-non-pg: ## Run tests that do not require PostgreSQL
 	RUSTFLAGS="-D warnings" $(CARGO) nextest run --tests --workspace --no-default-features --features dev-worker $(BUILD_JOBS)
 
 target/%/$(APP): ## Build binary in debug or release mode

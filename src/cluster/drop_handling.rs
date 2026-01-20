@@ -1,6 +1,6 @@
 //! Drop-time cleanup helpers for embedded clusters.
 
-use std::fmt::Display;
+use std::fmt::{self, Display};
 
 use postgresql_embedded::PostgreSQL;
 use tokio::time;
@@ -11,12 +11,31 @@ use super::{ClusterRuntime, TestCluster};
 use crate::TestBootstrapSettings;
 use crate::observability::LOG_TARGET;
 
+#[derive(Debug, Clone)]
+pub(super) struct DropContext(String);
+
+impl DropContext {
+    pub(super) fn new(context: impl Into<String>) -> Self {
+        Self(context.into())
+    }
+
+    pub(super) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Display for DropContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_str().fmt(formatter)
+    }
+}
+
 impl TestCluster {
     /// Best-effort cleanup for async clusters dropped without `stop_async()`.
     ///
     /// Attempts to spawn cleanup on the current runtime handle if available.
     /// For worker-managed clusters, attempts to invoke the worker stop operation.
-    pub(super) fn drop_async_cluster(&mut self, context: &str) {
+    pub(super) fn drop_async_cluster(&mut self, context: &DropContext) {
         Self::warn_async_drop_without_stop(context);
 
         if self.is_managed_via_worker {
@@ -28,7 +47,7 @@ impl TestCluster {
     }
 
     /// Best-effort worker stop for async clusters dropped without `stop_async()`.
-    fn drop_async_worker_managed(&self, context: &str) {
+    fn drop_async_worker_managed(&self, context: &DropContext) {
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             Self::error_no_runtime_for_cleanup(context);
             return;
@@ -36,13 +55,13 @@ impl TestCluster {
 
         let bootstrap = self.bootstrap.clone();
         let env_vars = self.env_vars.clone();
-        let owned_context = context.to_owned();
+        let owned_context = context.clone();
 
         drop(handle.spawn(spawn_worker_stop_task(bootstrap, env_vars, owned_context)));
     }
 
     /// Best-effort in-process stop for async clusters dropped without `stop_async()`.
-    fn drop_async_in_process(&self, context: &str, postgres: PostgreSQL) {
+    fn drop_async_in_process(&self, context: &DropContext, postgres: PostgreSQL) {
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             Self::error_no_runtime_for_cleanup(context);
             return;
@@ -51,7 +70,7 @@ impl TestCluster {
         spawn_async_cleanup(&handle, postgres, self.bootstrap.shutdown_timeout);
     }
 
-    fn warn_async_drop_without_stop(context: &str) {
+    fn warn_async_drop_without_stop(context: &DropContext) {
         tracing::warn!(
             target: LOG_TARGET,
             context = %context,
@@ -62,7 +81,7 @@ impl TestCluster {
         );
     }
 
-    fn error_no_runtime_for_cleanup(context: &str) {
+    fn error_no_runtime_for_cleanup(context: &DropContext) {
         tracing::error!(
             target: LOG_TARGET,
             context = %context,
@@ -70,7 +89,7 @@ impl TestCluster {
         );
     }
 
-    pub(super) fn warn_stop_failure(context: &str, err: &impl Display) {
+    pub(super) fn warn_stop_failure(context: &DropContext, err: &impl Display) {
         tracing::warn!(
             "SKIP-TEST-CLUSTER: failed to stop embedded postgres instance ({}): {}",
             context,
@@ -78,14 +97,14 @@ impl TestCluster {
         );
     }
 
-    pub(super) fn warn_stop_timeout(timeout_secs: u64, context: &str) {
+    pub(super) fn warn_stop_timeout(timeout_secs: u64, context: &DropContext) {
         tracing::warn!(
             "SKIP-TEST-CLUSTER: stop() timed out after {timeout_secs}s ({context}); proceeding with drop"
         );
     }
 
     /// Synchronous drop path: stops the cluster using the owned runtime.
-    pub(super) fn drop_sync_cluster(&mut self, context: &str) {
+    pub(super) fn drop_sync_cluster(&mut self, context: &DropContext) {
         let ClusterRuntime::Sync(ref runtime) = self.runtime else {
             // Should never happen: drop_sync_cluster is only called for sync mode.
             return;
@@ -158,7 +177,7 @@ fn spawn_async_cleanup(
 async fn spawn_worker_stop_task(
     bootstrap: TestBootstrapSettings,
     env_vars: Vec<(String, Option<String>)>,
-    context: String,
+    context: DropContext,
 ) {
     let result =
         tokio::task::spawn_blocking(move || worker_stop_sync(&bootstrap, &env_vars, &context))
@@ -179,7 +198,7 @@ async fn spawn_worker_stop_task(
 fn worker_stop_sync(
     bootstrap: &TestBootstrapSettings,
     env_vars: &[(String, Option<String>)],
-    context: &str,
+    context: &DropContext,
 ) {
     let Ok(runtime) = build_runtime() else {
         tracing::error!(
@@ -197,7 +216,7 @@ fn worker_stop_sync(
 
 impl Drop for TestCluster {
     fn drop(&mut self) {
-        let context = Self::stop_context(&self.bootstrap.settings);
+        let context = DropContext::new(Self::stop_context(&self.bootstrap.settings));
         let is_async = self.runtime.is_async();
         tracing::info!(
             target: LOG_TARGET,
