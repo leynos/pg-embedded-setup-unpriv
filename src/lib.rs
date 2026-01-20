@@ -6,6 +6,7 @@
 //! under an unprivileged account.
 
 mod bootstrap;
+pub mod cache;
 mod cluster;
 mod env;
 mod error;
@@ -229,6 +230,12 @@ pub struct PgEnvCfg {
     pub locale: Option<String>,
     /// Encoding applied to `initdb` when specified.
     pub encoding: Option<String>,
+    /// Directory for sharing downloaded `PostgreSQL` binaries across test runs.
+    ///
+    /// When set, binaries are cached in this directory and reused by subsequent
+    /// `TestCluster` instances. Defaults to `$XDG_CACHE_HOME/pg-embedded/binaries`
+    /// when unset.
+    pub binary_cache_dir: Option<Utf8PathBuf>,
 }
 
 impl PgEnvCfg {

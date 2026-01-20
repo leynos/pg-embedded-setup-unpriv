@@ -2136,6 +2136,7 @@ dependencies = [
  "color-eyre",
  "dashmap",
  "diesel",
+ "dirs",
  "figment",
  "figment-json5",
  "libc",
