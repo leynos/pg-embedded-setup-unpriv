@@ -144,13 +144,17 @@ impl TestCluster {
     /// embedded cluster fails.
     pub fn new() -> BootstrapResult<Self> {
         let span = info_span!(target: LOG_TARGET, "test_cluster");
+        // Resolve cache directory BEFORE applying test environment.
+        // Otherwise, the test sandbox's XDG_CACHE_HOME would be used.
+        let cache_config = BinaryCacheConfig::new();
         let (runtime, env_vars, env_guard, outcome) = {
             let _entered = span.enter();
             let initial_bootstrap = bootstrap_for_tests()?;
             let runtime = build_runtime()?;
             let env_vars = initial_bootstrap.environment.to_env();
             let env_guard = ScopedEnv::apply(&env_vars);
-            let outcome = Self::start_postgres(&runtime, initial_bootstrap, &env_vars)?;
+            let outcome =
+                Self::start_postgres(&runtime, initial_bootstrap, &env_vars, &cache_config)?;
             (runtime, env_vars, env_guard, outcome)
         };
 
@@ -174,6 +178,7 @@ impl TestCluster {
         runtime: &Runtime,
         mut bootstrap: TestBootstrapSettings,
         env_vars: &[(String, Option<String>)],
+        cache_config: &BinaryCacheConfig,
     ) -> BootstrapResult<StartupOutcome> {
         let privileges = bootstrap.privileges;
         info!(
@@ -184,9 +189,8 @@ impl TestCluster {
         );
 
         // Try to use cached binaries before starting the lifecycle
-        let cache_config = BinaryCacheConfig::new();
         let version_req = bootstrap.settings.version.clone();
-        let cache_hit = Self::try_use_binary_cache(&cache_config, &version_req, &mut bootstrap);
+        let cache_hit = Self::try_use_binary_cache(cache_config, &version_req, &mut bootstrap);
 
         let (is_managed_via_worker, postgres) = if privileges == ExecutionPrivileges::Root {
             Self::invoke_lifecycle_root(runtime, &mut bootstrap, env_vars)?;
@@ -202,7 +206,7 @@ impl TestCluster {
 
         // Populate cache after successful setup if it was a cache miss
         if !cache_hit {
-            Self::try_populate_binary_cache(&cache_config, &bootstrap.settings);
+            Self::try_populate_binary_cache(cache_config, &bootstrap.settings);
         }
 
         info!(
@@ -252,15 +256,13 @@ impl TestCluster {
         embedded: &mut PostgreSQL,
     ) -> BootstrapResult<()> {
         // Scope ensures the setup invoker releases its borrows before we refresh the settings.
-        {
-            let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-            invoker.invoke(worker_operation::WorkerOperation::Setup, async {
-                embedded.setup().await
-            })?;
-        }
+        let setup_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
+        setup_invoker.invoke(worker_operation::WorkerOperation::Setup, async {
+            embedded.setup().await
+        })?;
         Self::refresh_worker_installation_dir(bootstrap);
-        let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-        invoker.invoke(worker_operation::WorkerOperation::Start, async {
+        let start_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
+        start_invoker.invoke(worker_operation::WorkerOperation::Start, async {
             embedded.start().await
         })?;
         Self::refresh_worker_port(bootstrap)
@@ -458,6 +460,9 @@ impl TestCluster {
                     return false;
                 }
 
+                // Update installation_dir to point to the versioned directory where binaries were copied.
+                // postgresql_embedded expects installation_dir to contain bin/postgres directly.
+                bootstrap.settings.installation_dir = target_version_dir.clone().into();
                 bootstrap.settings.trust_installation_dir = true;
 
                 // Set exact version to skip GitHub API version resolution.
@@ -621,6 +626,10 @@ impl TestCluster {
 
         let span = info_span!(target: LOG_TARGET, "test_cluster", async_mode = true);
 
+        // Resolve cache directory BEFORE applying test environment.
+        // Otherwise, the test sandbox's XDG_CACHE_HOME would be used.
+        let cache_config = BinaryCacheConfig::new();
+
         // Sync bootstrap preparation (no await needed).
         let initial_bootstrap = bootstrap_for_tests()?;
         let env_vars = initial_bootstrap.environment.to_env();
@@ -628,9 +637,13 @@ impl TestCluster {
 
         // Async postgres startup, instrumented with the span.
         // Box::pin to avoid large future on the stack.
-        let outcome = Box::pin(Self::start_postgres_async(initial_bootstrap, &env_vars))
-            .instrument(span.clone())
-            .await?;
+        let outcome = Box::pin(Self::start_postgres_async(
+            initial_bootstrap,
+            &env_vars,
+            &cache_config,
+        ))
+        .instrument(span.clone())
+        .await?;
 
         Ok(Self {
             runtime: ClusterRuntime::Async,
@@ -649,14 +662,14 @@ impl TestCluster {
     async fn start_postgres_async(
         mut bootstrap: TestBootstrapSettings,
         env_vars: &[(String, Option<String>)],
+        cache_config: &BinaryCacheConfig,
     ) -> BootstrapResult<StartupOutcome> {
         let privileges = bootstrap.privileges;
         Self::log_lifecycle_start(privileges, &bootstrap);
 
         // Try to use cached binaries before starting the lifecycle
-        let cache_config = BinaryCacheConfig::new();
         let version_req = bootstrap.settings.version.clone();
-        let cache_hit = Self::try_use_binary_cache(&cache_config, &version_req, &mut bootstrap);
+        let cache_hit = Self::try_use_binary_cache(cache_config, &version_req, &mut bootstrap);
 
         let (is_managed_via_worker, postgres) = if privileges == ExecutionPrivileges::Root {
             Box::pin(Self::invoke_lifecycle_root_async(&mut bootstrap, env_vars)).await?;
@@ -677,7 +690,7 @@ impl TestCluster {
 
         // Populate cache after successful setup if it was a cache miss
         if !cache_hit {
-            Self::try_populate_binary_cache(&cache_config, &bootstrap.settings);
+            Self::try_populate_binary_cache(cache_config, &bootstrap.settings);
         }
 
         Self::log_lifecycle_complete(privileges, is_managed_via_worker, cache_hit);
@@ -722,16 +735,13 @@ impl TestCluster {
         env_vars: &[(String, Option<String>)],
         embedded: &mut PostgreSQL,
     ) -> BootstrapResult<()> {
-        // Scope ensures the setup invoker releases its borrows before we refresh the settings.
-        {
-            let invoker = AsyncInvoker::new(bootstrap, env_vars);
-            Box::pin(
-                invoker.invoke(worker_operation::WorkerOperation::Setup, async {
-                    embedded.setup().await
-                }),
-            )
-            .await?;
-        }
+        let invoker = AsyncInvoker::new(bootstrap, env_vars);
+        Box::pin(
+            invoker.invoke(worker_operation::WorkerOperation::Setup, async {
+                embedded.setup().await
+            }),
+        )
+        .await?;
         Self::refresh_worker_installation_dir(bootstrap);
         let start_invoker = AsyncInvoker::new(bootstrap, env_vars);
         Box::pin(
