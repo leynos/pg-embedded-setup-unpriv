@@ -53,8 +53,25 @@ jobs:
         if: ${{ matrix.privilege == 'root' }}
         run: |
           export PG_EMBEDDED_WORKER="$PWD/target/debug/pg_worker"
-          # Ensure worker binary is world-executable for privilege-dropped subprocess
+
+          # Make worker binary and all parent directories accessible to nobody user
+          # The privilege-dropped subprocess needs to traverse the entire path
+          make_path_accessible() {
+            local path="$1"
+            while [[ "$path" != "/" && "$path" != "." ]]; do
+              chmod o+x "$path" 2>/dev/null || true
+              path="$(dirname "$path")"
+            done
+          }
+
           chmod 755 "$PG_EMBEDDED_WORKER"
+          make_path_accessible "$(dirname "$PG_EMBEDDED_WORKER")"
+
+          # Verify accessibility for nobody user
+          echo "Worker binary: $PG_EMBEDDED_WORKER"
+          echo "Permissions: $(stat -c '%a %n' "$PG_EMBEDDED_WORKER")"
+          sudo -u nobody test -x "$PG_EMBEDDED_WORKER" && echo "nobody can execute worker" || echo "ERROR: nobody cannot execute worker"
+
           run_as_root() {
             : "${RUSTUP_HOME:=$HOME/.rustup}"
             : "${CARGO_HOME:=$HOME/.cargo}"
