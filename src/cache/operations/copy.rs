@@ -141,9 +141,20 @@ fn copy_symlink(src: &Path, dst: &Path) -> io::Result<()> {
 
 #[cfg(not(unix))]
 fn copy_symlink(src: &Path, dst: &Path) -> io::Result<()> {
-    // On non-Unix, fall back to copying the target file
+    // On non-Unix, follow the symlink and copy the target.
+    // The symlink target is resolved by checking src directly (after following).
     if src.is_file() {
         fs::copy(src, dst)?;
+    } else if src.is_dir() {
+        copy_dir_recursive(src, dst)?;
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "symlink target does not exist or cannot be read: {}",
+                src.display()
+            ),
+        ));
     }
     Ok(())
 }

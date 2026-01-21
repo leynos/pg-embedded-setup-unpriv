@@ -1,14 +1,15 @@
 //! Tests for cache operations.
 
+use super::lookup::COMPLETION_MARKER;
 use super::*;
 use camino::Utf8Path;
 use postgresql_embedded::VersionReq;
+use rstest::{fixture, rstest};
 use std::fs;
-use tempfile::tempdir;
+use tempfile::{TempDir, tempdir};
 
-/// Marker file name indicating a complete cache entry.
-const COMPLETION_MARKER: &str = ".complete";
-
+/// Creates a `bin` subdirectory in the given path with mock `postgres` and
+/// `pg_ctl` binary files for cache tests.
 fn create_mock_binaries(dir: &Utf8Path) {
     let bin_dir = dir.join("bin");
     fs::create_dir_all(&bin_dir).expect("create bin dir");
@@ -48,45 +49,50 @@ fn assert_cached_match(versions: &[&str], req: &str, expected: Option<&str>) {
     }
 }
 
-#[test]
-fn check_cache_returns_miss_for_empty_directory() {
+/// Fixture providing a temporary cache directory as a UTF-8 path.
+#[fixture]
+fn cache_fixture() -> (TempDir, camino::Utf8PathBuf) {
     let temp = tempdir().expect("tempdir");
-    let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
+    let cache_dir =
+        camino::Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 path");
+    (temp, cache_dir)
+}
 
-    let result = check_cache(cache_dir, "17.4.0");
+#[rstest]
+fn check_cache_returns_miss_for_empty_directory(cache_fixture: (TempDir, camino::Utf8PathBuf)) {
+    let (_temp, cache_dir) = cache_fixture;
+
+    let result = check_cache(&cache_dir, "17.4.0");
     assert!(matches!(result, CacheLookupResult::Miss));
 }
 
-#[test]
-fn check_cache_returns_miss_without_marker() {
-    let temp = tempdir().expect("tempdir");
-    let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
+#[rstest]
+fn check_cache_returns_miss_without_marker(cache_fixture: (TempDir, camino::Utf8PathBuf)) {
+    let (_temp, cache_dir) = cache_fixture;
     let version_dir = cache_dir.join("17.4.0");
     create_mock_binaries(&version_dir);
 
-    let result = check_cache(cache_dir, "17.4.0");
+    let result = check_cache(&cache_dir, "17.4.0");
     assert!(matches!(result, CacheLookupResult::Miss));
 }
 
-#[test]
-fn check_cache_returns_miss_without_bin_directory() {
-    let temp = tempdir().expect("tempdir");
-    let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
+#[rstest]
+fn check_cache_returns_miss_without_bin_directory(cache_fixture: (TempDir, camino::Utf8PathBuf)) {
+    let (_temp, cache_dir) = cache_fixture;
     let version_dir = cache_dir.join("17.4.0");
     fs::create_dir_all(&version_dir).expect("create version dir");
     fs::write(version_dir.join(COMPLETION_MARKER), "").expect("write marker");
 
-    let result = check_cache(cache_dir, "17.4.0");
+    let result = check_cache(&cache_dir, "17.4.0");
     assert!(matches!(result, CacheLookupResult::Miss));
 }
 
-#[test]
-fn check_cache_returns_hit_with_marker_and_bin() {
-    let temp = tempdir().expect("tempdir");
-    let cache_dir = Utf8Path::from_path(temp.path()).expect("utf8 path");
-    let version_dir = create_complete_cache_entry(cache_dir, "17.4.0");
+#[rstest]
+fn check_cache_returns_hit_with_marker_and_bin(cache_fixture: (TempDir, camino::Utf8PathBuf)) {
+    let (_temp, cache_dir) = cache_fixture;
+    let version_dir = create_complete_cache_entry(&cache_dir, "17.4.0");
 
-    let result = check_cache(cache_dir, "17.4.0");
+    let result = check_cache(&cache_dir, "17.4.0");
     match result {
         CacheLookupResult::Hit { source_dir } => {
             assert_eq!(source_dir, version_dir);
@@ -144,10 +150,7 @@ fn try_use_cache_returns_true_on_hit() {
     let cache_dir = Utf8Path::from_path(cache_temp.path()).expect("utf8 cache");
     let target = Utf8Path::from_path(target_temp.path()).expect("utf8 target");
 
-    // Set up cache
-    let version_dir = cache_dir.join("17.4.0");
-    create_mock_binaries(&version_dir);
-    fs::write(version_dir.join(COMPLETION_MARKER), "").expect("write marker");
+    create_complete_cache_entry(cache_dir, "17.4.0");
 
     let result = try_use_cache(cache_dir, "17.4.0", target);
     assert!(result);
@@ -164,19 +167,16 @@ fn find_matching_cached_version_returns_none_for_empty_cache() {
     assert!(result.is_none());
 }
 
-#[test]
-fn find_matching_cached_version_finds_exact_match() {
-    assert_cached_match(&["17.4.0"], "=17.4.0", Some("17.4.0"));
-}
-
-#[test]
-fn find_matching_cached_version_matches_caret_requirement() {
-    assert_cached_match(&["17.4.0"], "^17", Some("17.4.0"));
-}
-
-#[test]
-fn find_matching_cached_version_returns_highest_matching() {
-    assert_cached_match(&["17.2.0", "17.4.0"], "^17", Some("17.4.0"));
+#[rstest]
+#[case::exact_match(&["17.4.0"], "=17.4.0", Some("17.4.0"))]
+#[case::caret_requirement(&["17.4.0"], "^17", Some("17.4.0"))]
+#[case::highest_matching(&["17.2.0", "17.4.0"], "^17", Some("17.4.0"))]
+fn find_matching_cached_version_scenarios(
+    #[case] versions: &[&str],
+    #[case] req: &str,
+    #[case] expected: Option<&str>,
+) {
+    assert_cached_match(versions, req, expected);
 }
 
 #[test]

@@ -76,6 +76,7 @@ impl CacheLock {
     /// Acquires a lock with the specified type.
     #[cfg(unix)]
     fn acquire(cache_dir: &Utf8Path, version: &str, lock_type: LockType) -> io::Result<Self> {
+        validate_version(version)?;
         let locks_dir = cache_dir.join(LOCKS_SUBDIR);
         std::fs::create_dir_all(&locks_dir)?;
 
@@ -107,6 +108,7 @@ impl CacheLock {
     /// No-op lock acquisition on non-Unix platforms.
     #[cfg(not(unix))]
     fn acquire(_cache_dir: &Utf8Path, version: &str, _lock_type: LockType) -> io::Result<Self> {
+        validate_version(version)?;
         // Cross-process locking not supported; return a dummy lock.
         // Concurrent tests may race on non-Unix platforms.
         // Create a temporary file without external dependencies.
@@ -130,6 +132,23 @@ enum LockType {
     Exclusive,
     /// Shared lock for reads.
     Shared,
+}
+
+/// Validates that a version string is a single path component.
+///
+/// Rejects versions containing path separators or parent directory references
+/// that could escape the cache directory.
+fn validate_version(version: &str) -> io::Result<()> {
+    use std::path::Component;
+
+    let mut components = std::path::Path::new(version).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(()),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "version must be a single path component",
+        )),
+    }
 }
 
 #[cfg(test)]

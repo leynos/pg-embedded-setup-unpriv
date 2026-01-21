@@ -10,7 +10,7 @@ use tracing::{debug, warn};
 use super::copy::copy_from_cache;
 
 /// Marker file name indicating a complete cache entry.
-const COMPLETION_MARKER: &str = ".complete";
+pub(crate) const COMPLETION_MARKER: &str = ".complete";
 
 /// Observability target for cache operations.
 const LOG_TARGET: &str = "pg_embed::cache";
@@ -134,24 +134,21 @@ pub fn find_matching_cached_version(
 ) -> Option<(String, Utf8PathBuf)> {
     let dir_entries = read_cache_directory(cache_dir)?;
 
-    let mut matching_versions: Vec<(Version, Utf8PathBuf)> = dir_entries
+    // Use max_by for O(n) instead of collect + sort for O(n log n)
+    let (version, path) = dir_entries
         .filter_map(Result::ok)
         .filter_map(|entry| try_parse_cache_entry(&entry, version_req))
-        .collect();
+        .max_by(|a, b| a.0.cmp(&b.0))?;
 
-    matching_versions.sort_by(|a, b| b.0.cmp(&a.0));
-
-    matching_versions.into_iter().next().map(|(version, path)| {
-        let version_str = version.to_string();
-        debug!(
-            target: LOG_TARGET,
-            version_req = %version_req,
-            matched_version = %version_str,
-            path = %path,
-            "found matching cached version"
-        );
-        (version_str, path)
-    })
+    let version_str = version.to_string();
+    debug!(
+        target: LOG_TARGET,
+        version_req = %version_req,
+        matched_version = %version_str,
+        path = %path,
+        "found matching cached version"
+    );
+    Some((version_str, path))
 }
 
 /// Reads the cache directory, logging errors as debug messages.
@@ -207,6 +204,7 @@ fn try_parse_cache_entry(
 ///
 /// Returns `true` if binaries were successfully copied from cache, `false` if
 /// the cache was missed or an error occurred.
+#[must_use]
 pub fn try_use_cache(cache_dir: &Utf8Path, version: &str, target: &Utf8Path) -> bool {
     let CacheLookupResult::Hit { source_dir } = check_cache(cache_dir, version) else {
         return false;

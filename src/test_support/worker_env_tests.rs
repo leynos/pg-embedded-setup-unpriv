@@ -130,22 +130,22 @@ fn assert_staging_directory_for_profile(
 
 #[cfg(unix)]
 #[rstest]
-fn find_staging_directory_detects_debug_profile() {
-    assert_staging_directory_for_profile(
-        "/project/target/debug/deps/pg_worker-abc123",
-        "debug",
-        "/project/target/debug",
-    );
-}
-
-#[cfg(unix)]
-#[rstest]
-fn find_staging_directory_detects_release_profile() {
-    assert_staging_directory_for_profile(
-        "/project/target/release/pg_worker",
-        "release",
-        "/project/target/release",
-    );
+#[case::debug(
+    "/project/target/debug/deps/pg_worker-abc123",
+    "debug",
+    "/project/target/debug"
+)]
+#[case::release(
+    "/project/target/release/pg_worker",
+    "release",
+    "/project/target/release"
+)]
+fn find_staging_directory_detects_profile(
+    #[case] source_path: &str,
+    #[case] expected_profile: &str,
+    #[case] expected_target_dir: &str,
+) {
+    assert_staging_directory_for_profile(source_path, expected_profile, expected_target_dir);
 }
 
 #[cfg(unix)]

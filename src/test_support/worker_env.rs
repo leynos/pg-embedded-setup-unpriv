@@ -102,14 +102,14 @@ fn create_staging_directory_secure(staged_dir: &PathBuf) -> io::Result<()> {
 
     let current_uid = geteuid().as_raw();
 
-    // Check if directory already exists
+    // Check if path already exists
     if let Ok(meta) = fs::symlink_metadata(staged_dir) {
-        // Reject symlinks - could be attacker-controlled
-        if meta.file_type().is_symlink() {
+        // Reject symlinks or non-directories - could be attacker-controlled
+        if meta.file_type().is_symlink() || !meta.file_type().is_dir() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
-                    "staging directory is a symlink (potential attack): {}",
+                    "staging path is not a real directory: {}",
                     staged_dir.display()
                 ),
             ));
@@ -134,11 +134,11 @@ fn create_staging_directory_secure(staged_dir: &PathBuf) -> io::Result<()> {
 
     // Re-validate after creation to protect against TOCTOU
     let meta = fs::symlink_metadata(staged_dir)?;
-    if meta.file_type().is_symlink() {
+    if meta.file_type().is_symlink() || !meta.file_type().is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
-                "staging directory became symlink after creation: {}",
+                "staging path became non-directory after creation: {}",
                 staged_dir.display()
             ),
         ));
