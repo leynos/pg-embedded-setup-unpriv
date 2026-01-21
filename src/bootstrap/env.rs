@@ -415,6 +415,31 @@ mod tests {
 
     // Tests for discover_worker_from_path
 
+    /// Executes `discover_worker_from_path()` with a modified PATH, restoring
+    /// the original value afterwards. The `setup` closure runs after PATH is
+    /// changed but before discovery, allowing custom test setup.
+    fn with_modified_path<F>(new_path: &str, setup: F) -> Option<Utf8PathBuf>
+    where
+        F: FnOnce(),
+    {
+        let original_path = std::env::var_os("PATH");
+        unsafe {
+            // SAFETY: test is single-threaded for this env modification
+            std::env::set_var("PATH", new_path);
+        }
+
+        setup();
+        let result = discover_worker_from_path();
+
+        // Restore PATH
+        match original_path {
+            Some(p) => unsafe { std::env::set_var("PATH", p) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+
+        result
+    }
+
     #[cfg(unix)]
     #[test]
     fn discover_worker_finds_binary_in_path() {
@@ -478,22 +503,11 @@ mod tests {
     fn discover_worker_skips_directories() {
         let temp = tempdir().expect("create tempdir");
         let worker_dir = temp.path().join("pg_worker");
-        fs::create_dir(&worker_dir).expect("create directory");
-
-        let original_path = std::env::var_os("PATH");
         let new_path = temp.path().to_string_lossy().to_string();
-        unsafe {
-            // SAFETY: test is single-threaded for this env modification
-            std::env::set_var("PATH", &new_path);
-        }
 
-        let result = discover_worker_from_path();
-
-        // Restore PATH
-        match original_path {
-            Some(p) => unsafe { std::env::set_var("PATH", p) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
+        let result = with_modified_path(&new_path, || {
+            fs::create_dir(&worker_dir).expect("create directory");
+        });
 
         assert!(
             result.is_none(),
@@ -504,22 +518,9 @@ mod tests {
     #[test]
     fn discover_worker_returns_none_when_not_found() {
         let temp = tempdir().expect("create tempdir");
-
-        let original_path = std::env::var_os("PATH");
-        // Use only the empty temp directory as PATH
         let new_path = temp.path().to_string_lossy().to_string();
-        unsafe {
-            // SAFETY: test is single-threaded for this env modification
-            std::env::set_var("PATH", &new_path);
-        }
 
-        let result = discover_worker_from_path();
-
-        // Restore PATH
-        match original_path {
-            Some(p) => unsafe { std::env::set_var("PATH", p) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
+        let result = with_modified_path(&new_path, || {});
 
         assert!(result.is_none(), "should return None when worker not found");
     }
