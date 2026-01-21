@@ -35,10 +35,10 @@ pub(super) fn worker_binary_from_env(
 pub(crate) fn parse_worker_path_from_env(raw: &std::ffi::OsStr) -> BootstrapResult<Utf8PathBuf> {
     let path = Utf8PathBuf::from_path_buf(std::path::PathBuf::from(raw)).map_err(|_| {
         let invalid_value = raw.to_string_lossy().to_string();
-        BootstrapError::from(color_eyre::eyre::eyre!(
-            "PG_EMBEDDED_WORKER contains a non-UTF-8 value: {invalid_value:?}. \
-             Provide a UTF-8 encoded absolute path to the worker binary."
-        ))
+        let msg = format!(
+            "PG_EMBEDDED_WORKER contains a non-UTF-8 value: {invalid_value:?}. Provide a UTF-8 encoded absolute path to the worker binary."
+        );
+        BootstrapError::from(color_eyre::eyre::eyre!(msg))
     })?;
 
     if path.as_str().is_empty() {
@@ -56,15 +56,15 @@ pub(crate) fn parse_worker_path_from_env(raw: &std::ffi::OsStr) -> BootstrapResu
 }
 
 fn try_find_worker_in_directory(
-    dir: &std::path::Path,
+    dir: std::path::PathBuf,
     worker_name: &str,
 ) -> BootstrapResult<Option<Utf8PathBuf>> {
-    let dir_str = Utf8PathBuf::from_path_buf(dir.to_path_buf()).map_err(|_| {
-        let invalid_dir = dir.to_string_lossy().to_string();
-        BootstrapError::from(color_eyre::eyre::eyre!(
-            "PATH contains non-UTF-8 directory: {invalid_dir:?}. \
-             Provide UTF-8 encoded paths or set PG_EMBEDDED_WORKER explicitly."
-        ))
+    let dir_str = Utf8PathBuf::from_path_buf(dir).map_err(|non_utf8_dir| {
+        let invalid_dir = non_utf8_dir.to_string_lossy().to_string();
+        let msg = format!(
+            "PATH contains non-UTF-8 directory: {invalid_dir:?}. Provide UTF-8 encoded paths or set PG_EMBEDDED_WORKER explicitly."
+        );
+        BootstrapError::from(color_eyre::eyre::eyre!(msg))
     })?;
 
     if !is_trusted_path_directory(dir_str.as_std_path()) {
@@ -88,7 +88,7 @@ pub(crate) fn discover_worker_from_path(worker_name: &str) -> BootstrapResult<Op
     };
 
     for dir in std::env::split_paths(&path_var) {
-        match try_find_worker_in_directory(&dir, worker_name) {
+        match try_find_worker_in_directory(dir, worker_name) {
             Ok(Some(worker)) => return Ok(Some(worker)),
             Ok(None) => {}
             Err(e) => return Err(e),
