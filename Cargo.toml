@@ -108,7 +108,7 @@ uncased = "0.9"
 figment-json5 = "0.1.1"
 cap-std = "3.4.4"
 camino = { version = "1.2", features = ["serde1"] }
-thiserror = "1"
+thiserror = "2"
 serde_json = "1"
 secrecy = { version = "0.10", features = ["serde"] }
 tempfile = "3"
