@@ -132,29 +132,33 @@ fn populate_cache_creates_version_directory() {
     assert!(version_dir.join("bin/postgres").exists());
 }
 
-#[test]
-fn try_use_cache_returns_false_on_miss() {
+/// Asserts `try_use_cache` behaviour with configurable setup and expectations.
+fn assert_try_use_cache(populate_cache: bool, expected_result: bool, check_files_copied: bool) {
     let cache_temp = tempdir().expect("cache tempdir");
     let target_temp = tempdir().expect("target tempdir");
     let cache_dir = Utf8Path::from_path(cache_temp.path()).expect("utf8 cache");
     let target = Utf8Path::from_path(target_temp.path()).expect("utf8 target");
 
+    if populate_cache {
+        create_complete_cache_entry(cache_dir, "17.4.0");
+    }
+
     let result = try_use_cache(cache_dir, "17.4.0", target);
-    assert!(!result);
+    assert_eq!(result, expected_result);
+
+    if check_files_copied {
+        assert!(target.join("bin/postgres").exists());
+    }
+}
+
+#[test]
+fn try_use_cache_returns_false_on_miss() {
+    assert_try_use_cache(false, false, false);
 }
 
 #[test]
 fn try_use_cache_returns_true_on_hit() {
-    let cache_temp = tempdir().expect("cache tempdir");
-    let target_temp = tempdir().expect("target tempdir");
-    let cache_dir = Utf8Path::from_path(cache_temp.path()).expect("utf8 cache");
-    let target = Utf8Path::from_path(target_temp.path()).expect("utf8 target");
-
-    create_complete_cache_entry(cache_dir, "17.4.0");
-
-    let result = try_use_cache(cache_dir, "17.4.0", target);
-    assert!(result);
-    assert!(target.join("bin/postgres").exists());
+    assert_try_use_cache(true, true, true);
 }
 
 #[test]
