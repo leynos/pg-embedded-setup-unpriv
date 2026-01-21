@@ -280,7 +280,7 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
 }
 
 #[cfg(test)]
-#[path = "pg_worker_helpers.rs"]
+#[path = "../../tests/support/pg_worker_helpers.rs"]
 mod pg_worker_helpers;
 
 #[cfg(test)]
