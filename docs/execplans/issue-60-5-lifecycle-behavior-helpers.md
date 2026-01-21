@@ -26,23 +26,25 @@ The `postgresql_embedded` crate provides a `Status` enum:
 
 ### 1. Helper Functions
 
-#### `has_valid_data_dir(data_dir: &Utf8Path) -> bool`
+#### `is_setup_complete(pg: &PostgreSQL, data_dir: &Utf8Path) -> bool`
 
-**Purpose**: Check if the data directory is a valid PostgreSQL data directory.
+**Purpose**: Check if PostgreSQL setup is complete (both installed and
+initialized).
 
 **Implementation**:
 
-- Check if the directory exists
-- Check if `PG_VERSION` file exists (indicates initialized PostgreSQL data
-  directory)
-- Optionally check if `postmaster.pid` exists (indicates running server)
-- Return `true` only if directory exists and contains `PG_VERSION`
+- Check if the data directory is a directory and contains `PG_VERSION`
+- Check if `pg.status()` indicates installation is complete (not
+  `NotInstalled`)
+- Return `true` only if data directory is valid and installation exists
 
 **Rationale**:
 
 - `PG_VERSION` is a canonical marker for a PostgreSQL data directory
 - Created during `pg.setup()` and persists through start/stop cycles
 - This aligns with PostgreSQL's own data directory validation
+- Must also check installation status to avoid skipping setup when binaries are
+  missing
 
 #### `ensure_postgres_setup(pg: &mut PostgreSQL, data_dir: &Utf8Path)
 
@@ -52,11 +54,11 @@ The `postgresql_embedded` crate provides a `Status` enum:
 
 **Implementation**:
 
-- Call `has_valid_data_dir()` to check if setup is needed
-- If not valid:
+- Call `is_setup_complete()` to check if setup is needed
+- If not complete:
   - Call `pg.setup().await` to initialize the data directory
   - Return any errors with descriptive context
-- If already valid:
+- If already complete:
   - Log that setup is being skipped (using `tracing::info!`)
   - Return `Ok(())` immediately
 
@@ -130,7 +132,7 @@ fn extract_data_dir(settings: &postgresql_embedded::Settings) -> Utf8PathBuf {
 **Rationale**:
 
 - Settings uses `std::path::PathBuf` but our helpers use `Utf8Path`
-- Centralises the conversion logic
+- Centralizes the conversion logic
 - Fails fast with clear error if data_dir is not valid UTF-8
 
 ### 4. Imports
@@ -153,7 +155,7 @@ use tracing::info;
 flowchart TD
     A[Start ensure_postgres_started] --> B[Call ensure_postgres_setup]
     subgraph SetupPath [ensure_postgres_setup]
-        B --> C[Call has_valid_data_dir]
+        B --> C[Call is_setup_complete]
         C -->|true| D[Log skip setup]
         C -->|false| E[Call pg.setup]
         E --> F[Return from ensure_postgres_setup]
@@ -174,7 +176,7 @@ validation and idempotent start logic.
 ## Implementation Order
 
 1. Add imports (`Utf8Path`, `tracing::info`)
-2. Implement `has_valid_data_dir()` helper
+2. Implement `is_setup_complete()` helper
 3. Implement `ensure_postgres_setup()` helper
 4. Implement `ensure_postgres_started()` helper
 5. Add `extract_data_dir()` helper
@@ -225,20 +227,20 @@ info!("PostgreSQL already started, skipping redundant start");
 
 ## Open Questions
 
-1. **Should we check for `postmaster.pid` in `has_valid_data_dir`?**
-    - Only `PG_VERSION` needed to detect initialized data dir
-    - `postmaster.pid` indicates running state (not validity)
+1. **Should we check for `postmaster.pid` in `is_setup_complete`?**
+    - Only `PG_VERSION` needed to detect initialized data dir.
+    - `postmaster.pid` indicates running state (not validity).
 
 2. **Log level for idempotent skips?**
-    - `info` level as currently planned
-    - Alternative: `debug` level to reduce noise
+    - `info` level as currently planned.
+    - Alternative: `debug` level to reduce noise.
 
 ## Notes
 
 - The `postgresql_embedded::setup()` method already checks if data directory
   exists and skips initialization if present
-- However, `has_valid_data_dir()` is still needed to detect partial/corrupted
-  setups
+- However, `is_setup_complete()` is still needed to detect partial/corrupted
+  setups and to ensure installation is complete before skipping setup
 - The `Status::Stopped` variant indicates data dir is initialized but server
   not running
 - This implementation ensures robust state management across all operation

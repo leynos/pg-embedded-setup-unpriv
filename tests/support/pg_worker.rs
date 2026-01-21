@@ -183,19 +183,19 @@ fn extract_data_dir(settings: &postgresql_embedded::Settings) -> Result<Utf8Path
         .map_err(|_| WorkerError::SettingsConversion("data_dir must be valid UTF-8".into()))
 }
 
-fn has_valid_data_dir(data_dir: &Utf8Path) -> bool {
-    data_dir.is_dir() && data_dir.join("PG_VERSION").exists()
+fn is_setup_complete(pg: &PostgreSQL, data_dir: &Utf8Path) -> bool {
+    data_dir.is_dir() && data_dir.join("PG_VERSION").exists() && pg.status() != Status::NotInstalled
 }
 
 #[expect(
     clippy::cognitive_complexity,
-    reason = "function has simple conditional with single early return and async call"
+    reason = "function has simple conditional with early return and one async call"
 )]
 async fn ensure_postgres_setup(
     pg: &mut PostgreSQL,
     data_dir: &Utf8Path,
 ) -> Result<(), WorkerError> {
-    if has_valid_data_dir(data_dir) {
+    if is_setup_complete(pg, data_dir) {
         info!("PostgreSQL setup already complete, skipping redundant setup");
         return Ok(());
     }
