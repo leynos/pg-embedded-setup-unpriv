@@ -214,7 +214,7 @@ use std::ffi::OsString;
 /// assert!(cfg.port.is_none());
 /// ```
 pub struct PgEnvCfg {
-    /// Optional semver requirement that constrains the `PostgreSQL` version.
+    /// Optional semver requirement that constrains `PostgreSQL` version.
     pub version_req: Option<String>,
     /// Port assigned to the embedded `PostgreSQL` server.
     pub port: Option<u16>,
@@ -233,7 +233,7 @@ pub struct PgEnvCfg {
     /// Directory for sharing downloaded `PostgreSQL` binaries across test runs.
     ///
     /// When `Some`, this explicit path is used directly by `TestCluster`, bypassing
-    /// the automatic resolution chain. When `None`, the cache directory is resolved
+    /// automatic resolution chain. When `None`, the cache directory is resolved
     /// in the following order:
     ///
     /// 1. `PG_BINARY_CACHE_DIR` environment variable (if set and non-empty)
@@ -241,6 +241,10 @@ pub struct PgEnvCfg {
     /// 3. `$HOME/.cache/pg-embedded/binaries` (if `HOME` is set)
     /// 4. `/tmp/pg-embedded/binaries` (final fallback)
     pub binary_cache_dir: Option<Utf8PathBuf>,
+    /// Name of worker binary to discover in PATH.
+    ///
+    /// Defaults to `pg_worker` when not specified via `PG_WORKER_NAME`.
+    pub worker_name: Option<String>,
 }
 
 impl PgEnvCfg {

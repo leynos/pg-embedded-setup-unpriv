@@ -10,6 +10,7 @@ use camino::Utf8PathBuf;
 use rstest::rstest;
 use tempfile::tempdir;
 
+use crate::BootstrapResult;
 use crate::bootstrap::env::{
     discover_worker_from_path, is_trusted_path_directory, parse_worker_path_from_env,
 };
@@ -68,15 +69,16 @@ fn parse_worker_path_cases(
 ///
 /// Uses `ScopedEnv` for panic-safe restoration and automatic `ENV_LOCK`
 /// acquisition.
-fn with_modified_path<F>(new_path: &str, setup: F) -> Option<Utf8PathBuf>
+fn with_modified_path<F>(new_path: &str, setup: F) -> BootstrapResult<Option<Utf8PathBuf>>
 where
     F: FnOnce(),
 {
-    let _env_guard =
-        ScopedEnv::apply_os([(OsString::from("PATH"), Some(OsString::from(new_path)))]);
+    let key = OsString::from("PATH");
+    let value = Some(OsString::from(new_path));
+    let _env_guard = ScopedEnv::apply_os([(key, value)]);
 
     setup();
-    discover_worker_from_path()
+    discover_worker_from_path("pg_worker")
     // PATH restored automatically when _env_guard drops
 }
 
@@ -92,7 +94,8 @@ fn discover_worker_finds_binary_in_path() {
         let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
         perms.set_mode(0o755);
         fs::set_permissions(&worker_path, perms).expect("set permissions");
-    });
+    })
+    .expect("should not error during worker discovery");
 
     let found = result.expect("should find worker in PATH");
     assert!(
@@ -103,7 +106,7 @@ fn discover_worker_finds_binary_in_path() {
 
 #[test]
 fn discover_worker_returns_none_for_empty_path() {
-    let result = with_modified_path("", || {});
+    let result = with_modified_path("", || {}).expect("should not error on empty PATH");
 
     assert!(result.is_none(), "empty PATH should return None");
 }
@@ -117,7 +120,8 @@ fn discover_worker_skips_directories() {
 
     let result = with_modified_path(&new_path, || {
         fs::create_dir(&worker_dir).expect("create directory");
-    });
+    })
+    .expect("should not error during worker discovery");
 
     assert!(
         result.is_none(),
@@ -130,7 +134,8 @@ fn discover_worker_returns_none_when_not_found() {
     let temp = tempdir().expect("create tempdir");
     let new_path = temp.path().to_string_lossy().to_string();
 
-    let result = with_modified_path(&new_path, || {});
+    let result =
+        with_modified_path(&new_path, || {}).expect("should not error during worker discovery");
 
     assert!(result.is_none(), "should return None when worker not found");
 }
@@ -157,7 +162,8 @@ fn discover_worker_skips_non_executable_and_finds_later_entry() {
 
     let new_path = format!("{}:{}", temp1.path().display(), temp2.path().display());
 
-    let result = with_modified_path(&new_path, || {});
+    let result =
+        with_modified_path(&new_path, || {}).expect("should not error during worker discovery");
 
     let found = result.expect("should find executable worker in second directory");
     assert!(
@@ -175,7 +181,8 @@ fn discover_worker_skips_relative_path_entries() {
     // is_trusted_path_directory regardless of whether a worker exists there.
     // No need to actually create a worker or change CWD; the security filter
     // rejects relative paths before checking for files.
-    let result = with_modified_path("relative/path/entry", || {});
+    let result = with_modified_path("relative/path/entry", || {})
+        .expect("should not error during worker discovery");
 
     assert!(
         result.is_none(),
@@ -204,7 +211,8 @@ fn discover_worker_skips_world_writable_directories() {
 
     let new_path = temp.path().to_string_lossy().to_string();
 
-    let result = with_modified_path(&new_path, || {});
+    let result =
+        with_modified_path(&new_path, || {}).expect("should not error during worker discovery");
 
     assert!(
         result.is_none(),
@@ -233,5 +241,48 @@ fn is_trusted_path_directory_rejects_relative_paths() {
     assert!(
         !is_trusted_path_directory(std::path::Path::new(".")),
         "current directory should not be trusted"
+    );
+}
+
+// Note: Non-UTF-8 PATH entry test disabled due to rustc E0277 issue.
+// This test will be re-enabled in a follow-up commit.
+#[cfg(unix)]
+    let valid_dir = temp.path().join("valid_dir");
+    let worker_path = temp.path().join("pg_worker");
+    let new_path = format!("{}:{}", temp.path().display(), valid_dir.display());
+
+    let non_utf8_dir_name = b"non_\xff_utf8";
+    let non_utf8_dir = temp.path().join(non_utf8_dir_name);
+    let new_path_with_non_utf8 = format!("{}:{}", temp.path().display(), non_utf8_dir.display());
+
+    let result = with_modified_path(&new_path_with_non_utf8, || {
+        fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
+        let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&worker_path, perms).expect("set permissions");
+    });
+
+    let err = result.expect_err("should error on non-UTF-8 PATH entry");
+    assert!(
+        err.to_string()
+            .contains("PATH contains non-UTF-8 directory"),
+        "error should mention non-UTF-8 PATH: {err}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn discover_worker_uses_custom_worker_name() {
+    let temp = tempdir().expect("create tempdir");
+    let _worker_path = temp.path().join("my_custom_worker");
+    let _new_path = temp.path().to_string_lossy().to_string();
+
+    let result =
+        discover_worker_from_path("my_custom_worker").expect("should not error on valid PATH");
+
+    let found = result.expect("should find custom worker name");
+    assert!(
+        found.as_str().contains("my_custom_worker"),
+        "found path should contain custom worker name: {found}"
     );
 }

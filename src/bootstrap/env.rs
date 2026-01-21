@@ -100,16 +100,18 @@ pub(super) fn shutdown_timeout_from_env() -> BootstrapResult<Duration> {
     }
 }
 
-pub(super) fn worker_binary_from_env() -> BootstrapResult<Option<Utf8PathBuf>> {
-    // First: check explicit PG_EMBEDDED_WORKER environment variable
+pub(super) fn worker_binary_from_env(
+    worker_name: Option<&str>,
+) -> BootstrapResult<Option<Utf8PathBuf>> {
+    let name = worker_name.unwrap_or("pg_worker");
+
     if let Some(raw) = env::var_os("PG_EMBEDDED_WORKER") {
         let path = parse_worker_path_from_env(&raw)?;
         validate_worker_binary(&path)?;
         return Ok(Some(path));
     }
 
-    // Second: search PATH for pg_worker binary
-    if let Some(path) = discover_worker_from_path() {
+    if let Some(path) = discover_worker_from_path(name)? {
         validate_worker_binary(&path)?;
         return Ok(Some(path));
     }
@@ -140,27 +142,64 @@ pub(crate) fn parse_worker_path_from_env(raw: &std::ffi::OsStr) -> BootstrapResu
     Ok(path)
 }
 
-/// Searches the `PATH` environment variable for the `pg_worker` binary.
+/// Searches `PATH` environment variable for specified worker binary.
 ///
-/// Returns the first valid UTF-8 path to an existing executable `pg_worker`
-/// file, or `None` if no candidate is found. This enables zero-configuration
-/// usage when the worker is installed via `cargo install`.
+/// Returns first valid UTF-8 path to an existing executable worker file,
+/// or `None` if no candidate is found. This enables zero-configuration
+/// usage when worker is installed via `cargo install`.
+///
+/// Returns an error if any PATH entry contains non-UTF-8 characters, allowing
+/// users to diagnose misconfigured PATH entries.
 ///
 /// Security: Skips relative PATH entries and world-writable directories to
 /// prevent privilege escalation when running as root. Non-executable
 /// candidates are also skipped so a valid worker later in PATH can be found.
-pub(crate) fn discover_worker_from_path() -> Option<Utf8PathBuf> {
-    let path_var = env::var_os("PATH")?;
-    env::split_paths(&path_var)
-        .filter(|dir| is_trusted_path_directory(dir))
-        .map(|dir| {
-            let candidate = dir.join("pg_worker");
-            #[cfg(windows)]
-            let candidate = candidate.with_extension("exe");
-            candidate
-        })
-        .find(|candidate| is_executable(candidate))
-        .and_then(|candidate| Utf8PathBuf::from_path_buf(candidate).ok())
+///
+/// # Errors
+///
+/// Returns `BootstrapError` if any PATH directory contains non-UTF-8
+/// characters, making the PATH entry invalid.
+pub(crate) fn discover_worker_from_path(worker_name: &str) -> BootstrapResult<Option<Utf8PathBuf>> {
+    let path_var = match env::var_os("PATH") {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+
+    let mut error = None;
+
+    for dir in env::split_paths(&path_var) {
+        let dir_str = match Utf8PathBuf::from_path_buf(dir.clone()) {
+            Ok(p) => p,
+            Err(_) => {
+                let invalid_dir = dir.to_string_lossy().to_string();
+                error = Some(BootstrapError::from(color_eyre::eyre::eyre!(
+                    "PATH contains non-UTF-8 directory: {invalid_dir:?}. \
+                     Provide UTF-8 encoded paths or set PG_EMBEDDED_WORKER explicitly."
+                )));
+                continue;
+            }
+        };
+
+        if !is_trusted_path_directory(dir_str.as_std_path()) {
+            continue;
+        }
+
+        let candidate = dir_str.join(worker_name);
+        #[cfg(windows)]
+        let candidate = candidate.with_extension("exe");
+
+        if is_executable(candidate.as_std_path()) {
+            if let Some(err) = error {
+                return Err(err);
+            }
+            return Ok(Some(candidate));
+        }
+    }
+
+    if let Some(err) = error {
+        return Err(err);
+    }
+    Ok(None)
 }
 
 /// Checks whether the candidate path is an executable file.
