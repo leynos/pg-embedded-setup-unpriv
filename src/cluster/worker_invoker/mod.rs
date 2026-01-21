@@ -311,8 +311,8 @@ impl<'a> WorkerInvoker<'a> {
             .block_on(async { tokio::time::timeout(timeout, future).await })
             .map_err(|_| {
                 BootstrapError::from(eyre!(
-                    "{ctx}: operation timed out after {}s",
-                    timeout.as_secs()
+                    "{ctx}: operation timed out after {:.1}s",
+                    timeout.as_secs_f64()
                 ))
             })?
             .context(ctx)
@@ -443,8 +443,8 @@ where
         .await
         .map_err(|_| {
             BootstrapError::from(eyre!(
-                "{ctx}: operation timed out after {}s",
-                timeout.as_secs()
+                "{ctx}: operation timed out after {:.1}s",
+                timeout.as_secs_f64()
             ))
         })?
         .context(ctx)

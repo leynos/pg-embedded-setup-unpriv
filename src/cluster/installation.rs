@@ -7,7 +7,7 @@ use crate::error::BootstrapResult;
 use crate::observability::LOG_TARGET;
 use crate::{ExecutionPrivileges, TestBootstrapSettings};
 use color_eyre::eyre::eyre;
-use postgresql_embedded::Settings;
+use postgresql_embedded::{Settings, Version};
 use std::path::Path;
 use std::time::Duration;
 
@@ -168,7 +168,23 @@ pub(super) fn resolve_installed_dir(settings: &Settings) -> Option<std::path::Pa
             path.join("bin").is_dir().then_some(path)
         })
         .collect::<Vec<_>>();
-    candidates.sort();
+    candidates.sort_by(|a, b| {
+        let version_a = a
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|s| Version::parse(s).ok());
+        let version_b = b
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|s| Version::parse(s).ok());
+
+        match (version_a, version_b) {
+            (Some(va), Some(vb)) => va.cmp(&vb),
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (None, None) => a.cmp(b),
+        }
+    });
     candidates.pop()
 }
 
