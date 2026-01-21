@@ -493,32 +493,14 @@ mod tests {
     fn discover_worker_finds_binary_in_path() {
         let temp = tempdir().expect("create tempdir");
         let worker_path = temp.path().join("pg_worker");
-        fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
-        let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&worker_path, perms).expect("set permissions");
+        let new_path = temp.path().to_string_lossy().to_string();
 
-        let original_path = std::env::var_os("PATH");
-        let new_path = format!(
-            "{}:{}",
-            temp.path().display(),
-            original_path
-                .as_ref()
-                .map(|p| p.to_string_lossy())
-                .unwrap_or_default()
-        );
-        unsafe {
-            // SAFETY: test is single-threaded for this env modification
-            std::env::set_var("PATH", &new_path);
-        }
-
-        let result = discover_worker_from_path();
-
-        // Restore PATH
-        match original_path {
-            Some(p) => unsafe { std::env::set_var("PATH", p) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
+        let result = with_modified_path(&new_path, || {
+            fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
+            let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&worker_path, perms).expect("set permissions");
+        });
 
         let found = result.expect("should find worker in PATH");
         assert!(
