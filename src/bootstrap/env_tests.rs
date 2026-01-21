@@ -263,8 +263,8 @@ fn is_trusted_path_directory_rejects_relative_paths() {
     );
 }
 
-// Note: Non-UTF-8 PATH entry test disabled due to rustc E0277 issue.
-// This test will be re-enabled in a follow-up commit.
+// FIXME: re-enable when rustc E0277 is resolved — temporarily disabled due to rustc E0277
+// See: https://github.com/leynos/pg-embedded-setup-unpriv/issues/78
 /*
 #[cfg(unix)]
 #[test]
