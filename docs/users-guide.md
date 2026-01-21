@@ -20,7 +20,7 @@ tool and integrate it into automated test flows.
 
 - Linux supports both privilege branches. Root executions use `pg_worker` to
   drop to `nobody` for filesystem work. The library discovers the worker
-  automatically if it is in `PATH`, or you can set `PG_EMBEDDED_WORKER`
+  automatically if it is in `PATH`, or `PG_EMBEDDED_WORKER` can be set
   explicitly.
 - macOS runs the unprivileged path; root executions are expected to fail fast
   because privilege dropping is not supported on that target.
@@ -595,10 +595,10 @@ Install both binaries via Cargo:
 cargo install pg-embed-setup-unpriv
 ```
 
-This installs `pg_embedded_setup_unpriv` (the main setup helper) and `pg_worker`
-(the privilege-dropping worker). Ensure `~/.cargo/bin` (or your Cargo install
-directory) is in `PATH`. The library will automatically discover `pg_worker`
-when running as root.
+This installs `pg_embedded_setup_unpriv` (the main setup helper) and
+`pg_worker` (the privilege-dropping worker). Ensure `~/.cargo/bin` (or your
+Cargo install directory) is in `PATH`. The library will automatically discover
+`pg_worker` when running as root.
 
 Alternatively, set `PG_EMBEDDED_WORKER` to the absolute path of the worker
 binary if it is installed elsewhere:

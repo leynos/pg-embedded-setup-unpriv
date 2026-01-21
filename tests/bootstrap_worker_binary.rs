@@ -9,6 +9,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 use color_eyre::eyre::{Result, ensure, eyre};
+use nix::unistd::geteuid;
 use pg_embedded_setup_unpriv::{BootstrapErrorKind, bootstrap_for_tests};
 
 #[path = "support/cap_fs_bootstrap.rs"]
@@ -120,6 +121,102 @@ fn env_without_timezone_removes_tz_variable() -> Result<()> {
         tzdir_removed,
         "expected time zone helper to remove the TZDIR variable"
     );
+
+    sandbox.reset()?;
+
+    Ok(())
+}
+
+#[test]
+fn bootstrap_discovers_worker_from_path() -> Result<()> {
+    let sandbox = TestSandbox::new("discover-worker-from-path")?;
+    let bin_dir = sandbox.install_dir().join("bin");
+    fs::create_dir_all(bin_dir.as_std_path())?;
+
+    // Create a minimal pg_worker stub that satisfies discovery checks
+    let worker_path = bin_dir.join("pg_worker");
+    fs::write(worker_path.as_std_path(), b"#!/bin/sh\nexit 0\n")?;
+    let mut perms = fs::metadata(worker_path.as_std_path())?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(worker_path.as_std_path(), perms)?;
+
+    // Set up environment with custom PATH containing our bin directory
+    // and explicitly unset PG_EMBEDDED_WORKER so discovery falls through to PATH
+    let mut env_vars = sandbox.env_without_timezone();
+    env_vars.push((OsString::from("PG_EMBEDDED_WORKER"), None));
+    env_vars.push((
+        OsString::from("PATH"),
+        Some(OsString::from(bin_dir.as_str())),
+    ));
+
+    // Bootstrap should discover the worker from PATH. It will fail later
+    // during actual setup (since our stub doesn't do real work), but the
+    // discovery phase should succeed.
+    let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
+
+    // The bootstrap will fail because our stub doesn't actually work,
+    // but the error should NOT be about missing worker binary.
+    match outcome {
+        Ok(_) => {
+            // Bootstrap succeeded - worker was discovered and used
+            sandbox.reset()?;
+            Ok(())
+        }
+        Err(err) => {
+            let message = err.to_string();
+            ensure!(
+                !message.contains("pg_worker binary not found"),
+                "PATH discovery should have found the worker, but got: {message}"
+            );
+            ensure!(
+                err.kind() != BootstrapErrorKind::WorkerBinaryMissing,
+                "PATH discovery should have found the worker, but got WorkerBinaryMissing"
+            );
+            sandbox.reset()?;
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn bootstrap_fails_when_worker_not_in_path_or_env() -> Result<()> {
+    let sandbox = TestSandbox::new("no-worker-anywhere")?;
+
+    // Create environment with:
+    // - PG_EMBEDDED_WORKER explicitly unset
+    // - PATH pointing to an empty directory (no pg_worker)
+    let empty_bin_dir = sandbox.install_dir().join("empty-bin");
+    fs::create_dir_all(empty_bin_dir.as_std_path())?;
+
+    let mut env_vars = sandbox.env_without_timezone();
+    env_vars.push((OsString::from("PG_EMBEDDED_WORKER"), None));
+    env_vars.push((
+        OsString::from("PATH"),
+        Some(OsString::from(empty_bin_dir.as_str())),
+    ));
+
+    let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
+
+    // When running as root, the bootstrap should fail with missing worker error
+    // When running as unprivileged, the bootstrap succeeds without needing a worker
+    if geteuid().is_root() {
+        let err = outcome.expect_err("bootstrap should fail when worker is not found as root");
+        let message = err.to_string();
+        ensure!(
+            message.contains("pg_worker binary not found"),
+            "expected missing-worker error when running as root, got: {message}"
+        );
+    } else {
+        // Unprivileged execution doesn't require a worker, so bootstrap may succeed
+        // or fail for other reasons (e.g., network issues), but not for missing worker
+        if let Err(err) = outcome {
+            let message = err.to_string();
+            ensure!(
+                !message.contains("pg_worker binary not found"),
+                "unprivileged bootstrap should not require worker, but got: {message}"
+            );
+        }
+    }
 
     sandbox.reset()?;
 

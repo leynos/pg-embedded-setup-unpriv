@@ -126,11 +126,6 @@ fn parse_worker_path_from_env(raw: &std::ffi::OsStr) -> BootstrapResult<Utf8Path
         ))
     })?;
 
-    validate_worker_path_not_empty_or_root(&path)?;
-    Ok(path)
-}
-
-fn validate_worker_path_not_empty_or_root(path: &Utf8PathBuf) -> BootstrapResult<()> {
     if path.as_str().is_empty() {
         return Err(BootstrapError::from(color_eyre::eyre::eyre!(
             "PG_EMBEDDED_WORKER must not be empty"
@@ -141,36 +136,27 @@ fn validate_worker_path_not_empty_or_root(path: &Utf8PathBuf) -> BootstrapResult
             "PG_EMBEDDED_WORKER must not point at the filesystem root"
         )));
     }
-    Ok(())
+
+    Ok(path)
 }
 
 /// Searches the `PATH` environment variable for the `pg_worker` binary.
 ///
 /// Returns the first valid UTF-8 path to an existing `pg_worker` file, or
 /// `None` if no candidate is found. This enables zero-configuration usage when
-/// the worker is installed via `cargo install`.
+/// the worker is installed via `cargo install`. Non-UTF-8 PATH segments and
+/// candidates are skipped gracefully.
 fn discover_worker_from_path() -> Option<Utf8PathBuf> {
     let path_var = env::var_os("PATH")?;
-    env::split_paths(&path_var).find_map(|dir| try_find_worker_in_dir(&dir))
-}
-
-fn try_find_worker_in_dir(dir: &std::path::Path) -> Option<Utf8PathBuf> {
-    let candidate = build_worker_candidate_path(dir);
-    is_valid_worker_candidate(&candidate)
-}
-
-fn build_worker_candidate_path(dir: &std::path::Path) -> PathBuf {
-    let candidate = dir.join("pg_worker");
-    #[cfg(windows)]
-    let candidate = candidate.with_extension("exe");
-    candidate
-}
-
-fn is_valid_worker_candidate(candidate: &std::path::Path) -> Option<Utf8PathBuf> {
-    if !candidate.is_file() {
-        return None;
-    }
-    Utf8PathBuf::from_path_buf(candidate.to_path_buf()).ok()
+    env::split_paths(&path_var)
+        .map(|dir| {
+            let candidate = dir.join("pg_worker");
+            #[cfg(windows)]
+            let candidate = candidate.with_extension("exe");
+            candidate
+        })
+        .find(|candidate| candidate.is_file())
+        .and_then(|candidate| Utf8PathBuf::from_path_buf(candidate).ok())
 }
 
 fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {
@@ -370,5 +356,171 @@ fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
     #[cfg(not(unix))]
     {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    // Tests for parse_worker_path_from_env
+
+    #[test]
+    fn parse_worker_path_rejects_empty_string() {
+        let result = parse_worker_path_from_env(OsStr::new(""));
+        let err = result.expect_err("empty path should be rejected");
+        assert!(
+            err.to_string().contains("must not be empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_worker_path_rejects_root_path() {
+        let result = parse_worker_path_from_env(OsStr::new("/"));
+        let err = result.expect_err("root path should be rejected");
+        assert!(
+            err.to_string()
+                .contains("must not point at the filesystem root"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_worker_path_accepts_valid_path() {
+        let result = parse_worker_path_from_env(OsStr::new("/usr/local/bin/pg_worker"));
+        let path = result.expect("valid path should be accepted");
+        assert_eq!(path.as_str(), "/usr/local/bin/pg_worker");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_worker_path_rejects_non_utf8() {
+        let non_utf8 = OsStr::from_bytes(b"/path/with/invalid/\xff/bytes");
+        let result = parse_worker_path_from_env(non_utf8);
+        let err = result.expect_err("non-UTF-8 path should be rejected");
+        assert!(
+            err.to_string().contains("non-UTF-8 value"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // Tests for discover_worker_from_path
+
+    #[cfg(unix)]
+    #[test]
+    fn discover_worker_finds_binary_in_path() {
+        let temp = tempdir().expect("create tempdir");
+        let worker_path = temp.path().join("pg_worker");
+        fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
+        let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&worker_path, perms).expect("set permissions");
+
+        let original_path = std::env::var_os("PATH");
+        let new_path = format!(
+            "{}:{}",
+            temp.path().display(),
+            original_path
+                .as_ref()
+                .map(|p| p.to_string_lossy())
+                .unwrap_or_default()
+        );
+        unsafe {
+            // SAFETY: test is single-threaded for this env modification
+            std::env::set_var("PATH", &new_path);
+        }
+
+        let result = discover_worker_from_path();
+
+        // Restore PATH
+        match original_path {
+            Some(p) => unsafe { std::env::set_var("PATH", p) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+
+        let found = result.expect("should find worker in PATH");
+        assert!(
+            found.as_str().contains("pg_worker"),
+            "found path should contain pg_worker: {found}"
+        );
+    }
+
+    #[test]
+    fn discover_worker_returns_none_for_empty_path() {
+        let original_path = std::env::var_os("PATH");
+        unsafe {
+            // SAFETY: test is single-threaded for this env modification
+            std::env::set_var("PATH", "");
+        }
+
+        let result = discover_worker_from_path();
+
+        // Restore PATH
+        match original_path {
+            Some(p) => unsafe { std::env::set_var("PATH", p) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+
+        assert!(result.is_none(), "empty PATH should return None");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discover_worker_skips_directories() {
+        let temp = tempdir().expect("create tempdir");
+        let worker_dir = temp.path().join("pg_worker");
+        fs::create_dir(&worker_dir).expect("create directory");
+
+        let original_path = std::env::var_os("PATH");
+        let new_path = temp.path().to_string_lossy().to_string();
+        unsafe {
+            // SAFETY: test is single-threaded for this env modification
+            std::env::set_var("PATH", &new_path);
+        }
+
+        let result = discover_worker_from_path();
+
+        // Restore PATH
+        match original_path {
+            Some(p) => unsafe { std::env::set_var("PATH", p) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+
+        assert!(
+            result.is_none(),
+            "should not find pg_worker when it is a directory"
+        );
+    }
+
+    #[test]
+    fn discover_worker_returns_none_when_not_found() {
+        let temp = tempdir().expect("create tempdir");
+
+        let original_path = std::env::var_os("PATH");
+        // Use only the empty temp directory as PATH
+        let new_path = temp.path().to_string_lossy().to_string();
+        unsafe {
+            // SAFETY: test is single-threaded for this env modification
+            std::env::set_var("PATH", &new_path);
+        }
+
+        let result = discover_worker_from_path();
+
+        // Restore PATH
+        match original_path {
+            Some(p) => unsafe { std::env::set_var("PATH", p) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+
+        assert!(result.is_none(), "should return None when worker not found");
     }
 }

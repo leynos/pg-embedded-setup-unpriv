@@ -49,8 +49,8 @@ Install both binaries via Cargo:
 cargo install pg-embed-setup-unpriv
 ```
 
-This installs `pg_embedded_setup_unpriv` (the main setup helper) and `pg_worker`
-(the privilege-dropping worker).
+This installs `pg_embedded_setup_unpriv` (the main setup helper) and
+`pg_worker` (the privilege-dropping worker).
 
 ### Discovery
 
