@@ -24,7 +24,7 @@ The `postgresql_embedded` crate provides a `Status` enum:
 
 ## Requirements
 
-### 1. Helper Functions
+### 1. Helper functions
 
 #### `is_setup_complete(pg: &PostgreSQL, data_dir: &Utf8Path) -> bool`
 
@@ -95,7 +95,7 @@ initialized).
 - Map `postgresql_embedded::Error` to `WorkerError::PostgresOperation`
 - Preserve error context (e.g., "start failed: {original_error}")
 
-### 2. Operation Handling Updates
+### 2. Operation handling updates
 
 Update `run_worker()` operation dispatch:
 
@@ -118,22 +118,22 @@ Update `run_worker()` operation dispatch:
 - Already idempotent via `handle_stop_result()` which ignores missing
   `postmaster.pid` errors
 
-### 3. Data Directory Extraction
+### 3. Data directory extraction
 
 Add helper to extract data directory from settings:
 
 ```rust
-fn extract_data_dir(settings: &postgresql_embedded::Settings) -> Utf8PathBuf {
+fn extract_data_dir(settings: &postgresql_embedded::Settings) -> Result<Utf8PathBuf, WorkerError> {
     Utf8PathBuf::from_path_buf(settings.data_dir.clone())
-        .expect("data_dir must be valid UTF-8")
+        .map_err(|_| WorkerError::SettingsConversion("data_dir must be valid UTF-8".into()))
 }
 ```
 
 **Rationale**:
 
 - Settings uses `std::path::PathBuf` but the helpers use `Utf8Path`
-- Centralizes the conversion logic
-- Fails fast with clear error if data_dir is not valid UTF-8
+- Centralises the conversion logic
+- Returns a `Result` for proper error handling when data_dir is not valid UTF-8
 
 ### 4. Imports
 
@@ -149,11 +149,9 @@ use tracing::info;
 - `Utf8Path` for UTF-8 validated paths
 - `tracing::info` for idempotent operation logging
 
-### 5. Flow Diagram
+### 5. Flow diagram
 
-This diagram illustrates the control flow of ensure_postgres_started, showing
-how it calls ensure_postgres_setup, checks if setup is complete using
-is_setup_complete, runs pg.setup, checks pg.status, and calls pg.start.
+The following diagram summarises the `ensure_postgres_started` control flow.
 
 ```mermaid
 flowchart TD
@@ -177,7 +175,7 @@ flowchart TD
 **Figure:** Lifecycle flow for `ensure_postgres_started` showing setup
 validation and idempotent start logic.
 
-## Implementation Order
+## Implementation order
 
 1. Add imports (`Utf8Path`, `tracing::info`)
 2. Implement `is_setup_complete()` helper
@@ -187,7 +185,7 @@ validation and idempotent start logic.
 6. Update `run_worker()` to extract data_dir and pass to helpers
 7. Update operation dispatch to use new helpers
 
-## Testing Considerations
+## Testing considerations
 
 ### Existing tests remain valid
 
@@ -200,7 +198,7 @@ validation and idempotent start logic.
 - Calling `start` twice should succeed (idempotent)
 - Calling `start` without prior `setup` should succeed (helper ensures setup)
 
-## Error Messages
+## Error messages
 
 Error messages should follow existing pattern:
 
@@ -229,7 +227,7 @@ info!("PostgreSQL already started, skipping redundant start");
 
 - `std::path::Path` for path operations
 
-## Open Questions
+## Open questions
 
 1. **Should we check for `postmaster.pid` in `is_setup_complete`?**
     - Only `PG_VERSION` needed to detect initialized data dir.
