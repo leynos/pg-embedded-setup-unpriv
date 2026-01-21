@@ -98,52 +98,59 @@ fn apply_cached_binaries(
     true
 }
 
+/// Logs when no matching cached version is found.
+fn log_no_matching_version(version_req: &VersionReq) {
+    debug!(
+        target: LOG_TARGET,
+        version_req = %version_req,
+        "no matching cached version found"
+    );
+}
+
+/// Logs when cache lock acquisition fails.
+fn log_lock_acquisition_failed(version: &str) {
+    debug!(
+        target: LOG_TARGET,
+        version = %version,
+        "failed to acquire cache lock, skipping cache"
+    );
+}
+
+/// Logs when a cache entry becomes invalid after lock acquisition.
+fn log_cache_entry_invalid(version: &str) {
+    debug!(
+        target: LOG_TARGET,
+        version = %version,
+        "cache entry no longer valid"
+    );
+}
+
 /// Attempts to use cached binaries for the given version requirement.
 ///
 /// Returns `true` if binaries were successfully copied from cache, `false` otherwise.
 /// On cache hit, sets `trust_installation_dir = true` to skip re-validation in setup.
-#[expect(
-    clippy::cognitive_complexity,
-    reason = "cache lookup flow with lock acquisition and multiple early returns"
-)]
 pub(super) fn try_use_binary_cache(
     config: &BinaryCacheConfig,
     version_req: &VersionReq,
     bootstrap: &mut TestBootstrapSettings,
 ) -> bool {
-    // Find a cached version that matches the requirement
     let Some((version, _source_dir)) = find_matching_cached_version(&config.cache_dir, version_req)
     else {
-        debug!(
-            target: LOG_TARGET,
-            version_req = %version_req,
-            "no matching cached version found"
-        );
+        log_no_matching_version(version_req);
         return false;
     };
 
-    // Acquire shared lock for the specific version
     let Ok(_lock) = CacheLock::acquire_shared(&config.cache_dir, &version) else {
-        debug!(
-            target: LOG_TARGET,
-            version = %version,
-            "failed to acquire cache lock, skipping cache"
-        );
+        log_lock_acquisition_failed(&version);
         return false;
     };
 
-    // Double-check the cache is still valid after acquiring the lock
     match check_cache(&config.cache_dir, &version) {
         CacheLookupResult::Hit { source_dir } => {
             apply_cached_binaries(&source_dir, &version, version_req, bootstrap)
         }
         CacheLookupResult::Miss => {
-            // Cache entry was removed after initial lookup
-            debug!(
-                target: LOG_TARGET,
-                version = %version,
-                "cache entry no longer valid"
-            );
+            log_cache_entry_invalid(&version);
             false
         }
     }

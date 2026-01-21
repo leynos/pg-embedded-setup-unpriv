@@ -302,13 +302,13 @@ impl Drop for TestCluster {
 
         if is_async {
             // Async clusters should use stop_async() explicitly; attempt best-effort cleanup.
-            shutdown::drop_async_cluster(
-                self.is_managed_via_worker,
-                &mut self.postgres,
-                &self.bootstrap,
-                &self.env_vars,
-                &context,
-            );
+            shutdown::drop_async_cluster(shutdown::DropContext {
+                is_managed_via_worker: self.is_managed_via_worker,
+                postgres: &mut self.postgres,
+                bootstrap: &self.bootstrap,
+                env_vars: &self.env_vars,
+                context: &context,
+            });
         } else {
             self.drop_sync_cluster(&context);
         }
@@ -326,11 +326,13 @@ impl TestCluster {
 
         shutdown::drop_sync_cluster(
             runtime,
-            self.is_managed_via_worker,
-            &mut self.postgres,
-            &self.bootstrap,
-            &self.env_vars,
-            context,
+            shutdown::DropContext {
+                is_managed_via_worker: self.is_managed_via_worker,
+                postgres: &mut self.postgres,
+                bootstrap: &self.bootstrap,
+                env_vars: &self.env_vars,
+                context,
+            },
         );
     }
 }

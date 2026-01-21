@@ -16,6 +16,15 @@ use super::runtime::build_runtime;
 use super::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use super::worker_operation;
 
+/// Context for cluster drop operations, grouping related shutdown state.
+pub(super) struct DropContext<'a> {
+    pub is_managed_via_worker: bool,
+    pub postgres: &'a mut Option<PostgreSQL>,
+    pub bootstrap: &'a TestBootstrapSettings,
+    pub env_vars: &'a [(String, Option<String>)],
+    pub context: &'a str,
+}
+
 /// Builds a context string for logging shutdown operations.
 pub(super) fn stop_context(settings: &Settings) -> String {
     let data_dir = settings.data_dir.display();
@@ -96,18 +105,15 @@ pub(super) fn stop_via_worker_sync(
 }
 
 /// Synchronous drop path: stops the cluster using the owned runtime.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "cluster shutdown requires all state components; grouping would obscure intent"
-)]
-pub(super) fn drop_sync_cluster(
-    runtime: &tokio::runtime::Runtime,
-    is_managed_via_worker: bool,
-    postgres: &mut Option<PostgreSQL>,
-    bootstrap: &TestBootstrapSettings,
-    env_vars: &[(String, Option<String>)],
-    context: &str,
-) {
+pub(super) fn drop_sync_cluster(runtime: &tokio::runtime::Runtime, ctx: DropContext<'_>) {
+    let DropContext {
+        is_managed_via_worker,
+        postgres,
+        bootstrap,
+        env_vars,
+        context,
+    } = ctx;
+
     if is_managed_via_worker {
         let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
         if let Err(err) = invoker.invoke_as_root(worker_operation::WorkerOperation::Stop) {
@@ -135,17 +141,15 @@ pub(super) fn drop_sync_cluster(
 ///
 /// Attempts to spawn cleanup on the current runtime handle if available.
 /// For worker-managed clusters, attempts to invoke the worker stop operation.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "cluster shutdown requires all state components; grouping would obscure intent"
-)]
-pub(super) fn drop_async_cluster(
-    is_managed_via_worker: bool,
-    postgres: &mut Option<PostgreSQL>,
-    bootstrap: &TestBootstrapSettings,
-    env_vars: &[(String, Option<String>)],
-    context: &str,
-) {
+pub(super) fn drop_async_cluster(ctx: DropContext<'_>) {
+    let DropContext {
+        is_managed_via_worker,
+        postgres,
+        bootstrap,
+        env_vars,
+        context,
+    } = ctx;
+
     warn_async_drop_without_stop(context);
 
     if is_managed_via_worker {
@@ -223,19 +227,19 @@ pub(super) fn spawn_async_cleanup(
 ///
 /// Used by the async drop path to invoke the worker stop operation without
 /// blocking the current async context.
-#[expect(
-    clippy::cognitive_complexity,
-    reason = "complexity is from spawn_blocking + error! macro expansion, not logic"
-)]
 pub(super) async fn spawn_worker_stop_task(
     bootstrap: TestBootstrapSettings,
     env_vars: Vec<(String, Option<String>)>,
     context: String,
 ) {
-    let result =
+    handle_worker_stop_join(
         tokio::task::spawn_blocking(move || worker_stop_sync(&bootstrap, &env_vars, &context))
-            .await;
+            .await,
+    );
+}
 
+/// Handles the result of a worker stop task join.
+fn handle_worker_stop_join(result: Result<(), tokio::task::JoinError>) {
     if let Err(err) = result {
         tracing::error!(
             target: LOG_TARGET,
@@ -308,24 +312,25 @@ pub(super) fn warn_stop_timeout(timeout_secs: u64, context: &str) {
 mod tests {
     use super::*;
     use crate::test_support::capture_warn_logs;
+    use rstest::rstest;
 
-    #[test]
-    fn warn_stop_timeout_emits_warning() {
-        let (logs, ()) = capture_warn_logs(|| warn_stop_timeout(5, "ctx"));
+    #[rstest]
+    #[case::timeout(
+        || warn_stop_timeout(5, "ctx"),
+        "stop() timed out after 5s (ctx)"
+    )]
+    #[case::failure(
+        || warn_stop_failure("ctx", &"boom"),
+        "failed to stop embedded postgres instance"
+    )]
+    fn warning_functions_emit_expected_logs(
+        #[case] action: fn(),
+        #[case] expected_substring: &str,
+    ) {
+        let (logs, ()) = capture_warn_logs(action);
         assert!(
-            logs.iter()
-                .any(|line| line.contains("stop() timed out after 5s (ctx)")),
-            "expected timeout warning, got {logs:?}"
-        );
-    }
-
-    #[test]
-    fn warn_stop_failure_emits_warning() {
-        let (logs, ()) = capture_warn_logs(|| warn_stop_failure("ctx", &"boom"));
-        assert!(
-            logs.iter()
-                .any(|line| line.contains("failed to stop embedded postgres instance")),
-            "expected failure warning, got {logs:?}"
+            logs.iter().any(|line| line.contains(expected_substring)),
+            "expected warning containing '{expected_substring}', got {logs:?}"
         );
     }
 }

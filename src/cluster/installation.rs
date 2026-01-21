@@ -108,17 +108,24 @@ async fn read_postmaster_port_async(pid_path: &Path) -> BootstrapResult<Option<u
     Ok(parse_port_from_pid_contents(&contents, pid_path))
 }
 
+/// Internal macro to implement `read_pid_file_contents` logic.
+macro_rules! read_pid_file_contents_impl {
+    ($read_fn:expr, $pid_path:expr) => {
+        match $read_fn {
+            Ok(contents) => Ok(Some(contents)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(crate::error::BootstrapError::from(eyre!(
+                "failed to read postmaster pid at {}: {err}",
+                $pid_path.display()
+            ))),
+        }
+    };
+}
+
 /// Reads the contents of a postmaster.pid file if it exists (async).
 #[cfg(feature = "async-api")]
 async fn read_pid_file_contents_async(pid_path: &Path) -> BootstrapResult<Option<String>> {
-    match tokio::fs::read_to_string(pid_path).await {
-        Ok(contents) => Ok(Some(contents)),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(crate::error::BootstrapError::from(eyre!(
-            "failed to read postmaster pid at {}: {err}",
-            pid_path.display()
-        ))),
-    }
+    read_pid_file_contents_impl!(tokio::fs::read_to_string(pid_path).await, pid_path)
 }
 
 /// Reads the port from a postmaster.pid file.
@@ -134,14 +141,7 @@ fn read_postmaster_port(pid_path: &Path) -> BootstrapResult<Option<u16>> {
 
 /// Reads the contents of a postmaster.pid file if it exists.
 fn read_pid_file_contents(pid_path: &Path) -> BootstrapResult<Option<String>> {
-    match std::fs::read_to_string(pid_path) {
-        Ok(contents) => Ok(Some(contents)),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(crate::error::BootstrapError::from(eyre!(
-            "failed to read postmaster pid at {}: {err}",
-            pid_path.display()
-        ))),
-    }
+    read_pid_file_contents_impl!(std::fs::read_to_string(pid_path), pid_path)
 }
 
 /// Parses the port from postmaster.pid contents.

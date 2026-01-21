@@ -245,7 +245,7 @@ pub(super) fn log_lifecycle_complete(
         target: LOG_TARGET,
         privileges = ?privileges,
         worker_managed = is_managed_via_worker,
-        cache_hit = cache_hit,
+        cache_hit,
         async_mode = true,
         "embedded postgres started"
     );
