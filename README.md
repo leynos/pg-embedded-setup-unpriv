@@ -61,8 +61,8 @@ The library locates the worker binary in this order:
 2. **PATH search** – If the environment variable is unset, the library searches
    each directory in `PATH` for an executable named `pg_worker`.
 
-For most installations, no configuration is needed: ensure `~/.cargo/bin` is in
-your `PATH` and the library will find the worker automatically.
+For most installations, no configuration is needed: ensure `~/.cargo/bin` is on
+`PATH` and the library will find the worker automatically.
 
 ### Manual configuration
 

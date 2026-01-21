@@ -596,7 +596,7 @@ cargo install pg-embed-setup-unpriv
 ```
 
 This installs `pg_embedded_setup_unpriv` (the main setup helper) and
-`pg_worker` (the privilege-dropping worker). Ensure `~/.cargo/bin` (or your
+`pg_worker` (the privilege-dropping worker). Ensure `~/.cargo/bin` (or the
 Cargo install directory) is in `PATH`. The library will automatically discover
 `pg_worker` when running as root.
 

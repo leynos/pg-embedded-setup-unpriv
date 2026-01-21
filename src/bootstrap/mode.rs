@@ -66,11 +66,11 @@ pub(super) fn determine_execution_mode(
         match privileges {
             ExecutionPrivileges::Root => {
                 if worker_binary.is_none() {
-                    Err(BootstrapError::from(color_eyre::eyre::eyre!(
-                        "pg_worker binary not found. Install with \
-                         'cargo install pg-embed-setup-unpriv' and ensure pg_worker is in PATH, \
-                         or set PG_EMBEDDED_WORKER to its absolute path."
-                    )))
+                    Err(BootstrapError::from(color_eyre::eyre::eyre!(concat!(
+                        "pg_worker binary not found. Install with ",
+                        "'cargo install pg-embed-setup-unpriv' and ensure pg_worker is in PATH, ",
+                        "or set PG_EMBEDDED_WORKER to its absolute path."
+                    ))))
                 } else {
                     Ok(ExecutionMode::Subprocess)
                 }

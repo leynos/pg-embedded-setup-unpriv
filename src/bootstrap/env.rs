@@ -142,21 +142,61 @@ fn parse_worker_path_from_env(raw: &std::ffi::OsStr) -> BootstrapResult<Utf8Path
 
 /// Searches the `PATH` environment variable for the `pg_worker` binary.
 ///
-/// Returns the first valid UTF-8 path to an existing `pg_worker` file, or
-/// `None` if no candidate is found. This enables zero-configuration usage when
-/// the worker is installed via `cargo install`. Non-UTF-8 PATH segments and
-/// candidates are skipped gracefully.
+/// Returns the first valid UTF-8 path to an existing executable `pg_worker`
+/// file, or `None` if no candidate is found. This enables zero-configuration
+/// usage when the worker is installed via `cargo install`.
+///
+/// Security: Skips relative PATH entries and world-writable directories to
+/// prevent privilege escalation when running as root. Non-executable
+/// candidates are also skipped so a valid worker later in PATH can be found.
 fn discover_worker_from_path() -> Option<Utf8PathBuf> {
     let path_var = env::var_os("PATH")?;
     env::split_paths(&path_var)
+        .filter(|dir| is_trusted_path_directory(dir))
         .map(|dir| {
             let candidate = dir.join("pg_worker");
             #[cfg(windows)]
             let candidate = candidate.with_extension("exe");
             candidate
         })
-        .find(|candidate| candidate.is_file())
+        .find(|candidate| is_executable(candidate))
         .and_then(|candidate| Utf8PathBuf::from_path_buf(candidate).ok())
+}
+
+/// Checks whether the candidate path is an executable file.
+#[cfg(unix)]
+fn is_executable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && (m.permissions().mode() & 0o111) != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &std::path::Path) -> bool {
+    std::fs::metadata(path)
+        .map(|m| m.is_file())
+        .unwrap_or(false)
+}
+
+/// Checks whether a PATH directory is safe to search for executables.
+///
+/// Rejects relative paths and world-writable directories to prevent privilege
+/// escalation when running as root.
+#[cfg(unix)]
+fn is_trusted_path_directory(dir: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    if !dir.is_absolute() {
+        return false;
+    }
+    std::fs::metadata(dir)
+        .map(|m| m.is_dir() && (m.permissions().mode() & 0o002) == 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_trusted_path_directory(dir: &std::path::Path) -> bool {
+    dir.is_absolute()
 }
 
 fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {
@@ -523,5 +563,126 @@ mod tests {
         let result = with_modified_path(&new_path, || {});
 
         assert!(result.is_none(), "should return None when worker not found");
+    }
+
+    // Tests for security hardening (is_executable, is_trusted_path_directory)
+
+    #[cfg(unix)]
+    #[test]
+    fn discover_worker_skips_non_executable_and_finds_later_entry() {
+        let temp1 = tempdir().expect("create tempdir1");
+        let temp2 = tempdir().expect("create tempdir2");
+
+        // Create non-executable pg_worker in first directory
+        let non_exec = temp1.path().join("pg_worker");
+        fs::write(&non_exec, b"#!/bin/sh\nexit 0\n").expect("write non-exec");
+        // Leave permissions at default (no execute bit)
+
+        // Create executable pg_worker in second directory
+        let exec = temp2.path().join("pg_worker");
+        fs::write(&exec, b"#!/bin/sh\nexit 0\n").expect("write exec");
+        let mut perms = fs::metadata(&exec).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&exec, perms).expect("set permissions");
+
+        let new_path = format!("{}:{}", temp1.path().display(), temp2.path().display());
+
+        let result = with_modified_path(&new_path, || {});
+
+        let found = result.expect("should find executable worker in second directory");
+        assert!(
+            found
+                .as_str()
+                .contains(temp2.path().to_str().expect("temp2 path")),
+            "should find worker in temp2, not temp1: {found}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discover_worker_skips_relative_path_entries() {
+        let temp = tempdir().expect("create tempdir");
+
+        // Create executable pg_worker in temp directory
+        let worker_path = temp.path().join("pg_worker");
+        fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
+        let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&worker_path, perms).expect("set permissions");
+
+        // Use relative path (just the directory name without leading /)
+        let relative_path = temp
+            .path()
+            .file_name()
+            .expect("file_name")
+            .to_str()
+            .expect("to_str");
+        let cwd = std::env::current_dir().expect("cwd");
+
+        // Temporarily change to parent of temp
+        std::env::set_current_dir(temp.path().parent().expect("parent")).expect("chdir");
+
+        let result = with_modified_path(relative_path, || {});
+
+        // Restore working directory
+        std::env::set_current_dir(cwd).expect("restore cwd");
+
+        assert!(
+            result.is_none(),
+            "should not find worker in relative PATH entry"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discover_worker_skips_world_writable_directories() {
+        let temp = tempdir().expect("create tempdir");
+
+        // Create executable pg_worker
+        let worker_path = temp.path().join("pg_worker");
+        fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
+        let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&worker_path, perms).expect("set permissions");
+
+        // Make directory world-writable
+        let mut dir_perms = fs::metadata(temp.path())
+            .expect("dir metadata")
+            .permissions();
+        dir_perms.set_mode(0o777);
+        fs::set_permissions(temp.path(), dir_perms).expect("set dir permissions");
+
+        let new_path = temp.path().to_string_lossy().to_string();
+
+        let result = with_modified_path(&new_path, || {});
+
+        assert!(
+            result.is_none(),
+            "should not find worker in world-writable directory"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn is_trusted_path_directory_accepts_normal_directories() {
+        let temp = tempdir().expect("create tempdir");
+        // Default permissions should be 0o755 or similar (not world-writable)
+        assert!(
+            is_trusted_path_directory(temp.path()),
+            "normal directory should be trusted"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn is_trusted_path_directory_rejects_relative_paths() {
+        assert!(
+            !is_trusted_path_directory(std::path::Path::new("relative/path")),
+            "relative path should not be trusted"
+        );
+        assert!(
+            !is_trusted_path_directory(std::path::Path::new(".")),
+            "current directory should not be trusted"
+        );
     }
 }
