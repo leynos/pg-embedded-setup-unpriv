@@ -37,17 +37,19 @@
 //! caller to demote credentials before spawning the child process.
 #![cfg(unix)]
 
+use camino::{Utf8Path, Utf8PathBuf};
+use pg_embedded_setup_unpriv::test_support::ambient_dir_and_path;
 use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
 use postgresql_embedded::PostgreSQL;
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::io::Read;
+use std::path::PathBuf;
 use thiserror::Error;
 use tokio::runtime::Builder;
 
 /// Boxed error type for the main result.
-type BoxError = Box<dyn std::error::Error>;
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Errors that can occur during worker operations.
 #[derive(Debug, Error)]
@@ -55,7 +57,7 @@ enum WorkerError {
     #[error("invalid arguments: {0}")]
     InvalidArgs(String),
     #[error("failed to read worker config: {0}")]
-    ConfigRead(#[source] std::io::Error),
+    ConfigRead(#[source] BoxError),
     #[error("failed to parse worker config: {0}")]
     ConfigParse(#[source] serde_json::Error),
     #[error("settings conversion failed: {0}")]
@@ -72,6 +74,7 @@ enum WorkerError {
     DataDirRecovery(String),
 }
 
+#[derive(Debug)]
 enum Operation {
     Setup,
     Start,
@@ -123,16 +126,19 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
 
 fn parse_args(
     mut args: impl Iterator<Item = OsString>,
-) -> Result<(Operation, PathBuf), WorkerError> {
+) -> Result<(Operation, Utf8PathBuf), WorkerError> {
     let _program = args.next();
     let operation = args
         .next()
         .ok_or_else(|| WorkerError::InvalidArgs("missing operation argument".into()))
         .and_then(|arg| Operation::parse(&arg))?;
-    let config_path = args
+    let config_path_buf = args
         .next()
         .map(PathBuf::from)
         .ok_or_else(|| WorkerError::InvalidArgs("missing config path argument".into()))?;
+    let config_path = Utf8PathBuf::from_path_buf(config_path_buf).map_err(|p| {
+        WorkerError::InvalidArgs(format!("config path is not valid UTF-8: {}", p.display()))
+    })?;
     if let Some(extra) = args.next() {
         let extra_arg = extra.to_string_lossy();
         return Err(WorkerError::InvalidArgs(format!(
@@ -142,9 +148,17 @@ fn parse_args(
     Ok((operation, config_path))
 }
 
-fn load_payload(config_path: &Path) -> Result<WorkerPayload, WorkerError> {
-    let config_bytes = fs::read(config_path).map_err(WorkerError::ConfigRead)?;
+fn load_payload(config_path: &Utf8Path) -> Result<WorkerPayload, WorkerError> {
+    let config_bytes = read_config_file(config_path).map_err(WorkerError::ConfigRead)?;
     serde_json::from_slice(&config_bytes).map_err(WorkerError::ConfigParse)
+}
+
+fn read_config_file(path: &Utf8Path) -> Result<Vec<u8>, BoxError> {
+    let (dir, relative) = ambient_dir_and_path(path)?;
+    let mut file = dir.open(relative.as_std_path())?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 fn build_runtime() -> Result<tokio::runtime::Runtime, WorkerError> {
@@ -212,18 +226,21 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
 }
 
 #[cfg(test)]
+#[path = "pg_worker_helpers.rs"]
+mod pg_worker_helpers;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use pg_embedded_setup_unpriv::test_support;
-    use postgresql_embedded::{Settings, VersionReq};
-    use std::collections::HashMap;
-    use std::ffi::OsString;
-    use std::os::unix::fs::PermissionsExt;
-    use std::path::Path;
-    use std::time::Duration;
-    use tempfile::{TempDir, tempdir};
+    use std::ffi::{OsStr, OsString};
+    use std::fs;
+    use std::os::unix::ffi::OsStrExt;
+    use tempfile::tempdir;
 
-    const PG_CTL_STUB: &str = include_str!("fixtures/pg_ctl_stub.sh");
+    use pg_worker_helpers::{
+        MockEnvironmentOperations, apply_worker_environment_with, build_settings,
+        write_pg_ctl_stub, write_worker_config,
+    };
 
     #[test]
     fn rejects_extra_argument() {
@@ -242,29 +259,23 @@ mod tests {
 
     #[test]
     fn apply_worker_environment_uses_plaintext_and_unsets() {
-        // Use scoped_env to ensure environment variables are cleaned up after the test
-        // and to serialise access across concurrent tests.
-        let _guard = test_support::scoped_env(vec![
-            (OsString::from("PGWORKER_SECRET_KEY"), None),
-            (OsString::from("PGWORKER_NONE_KEY"), None),
-        ]);
-
         let secret = PlainSecret::from("super-secret-value".to_owned());
         let env_pairs = vec![
             ("PGWORKER_SECRET_KEY".to_owned(), Some(secret)),
             ("PGWORKER_NONE_KEY".to_owned(), None),
         ];
 
-        apply_worker_environment(&env_pairs);
+        let mut mock = MockEnvironmentOperations::new();
+        mock.expect_set_var()
+            .times(1)
+            .withf(|key, value| key == "PGWORKER_SECRET_KEY" && value == "super-secret-value")
+            .return_const(());
+        mock.expect_remove_var()
+            .times(1)
+            .withf(|key| key == "PGWORKER_NONE_KEY")
+            .return_const(());
 
-        assert_eq!(
-            env::var("PGWORKER_SECRET_KEY").as_deref(),
-            Ok("super-secret-value")
-        );
-        assert!(matches!(
-            env::var("PGWORKER_NONE_KEY"),
-            Err(env::VarError::NotPresent)
-        ));
+        apply_worker_environment_with::<MockEnvironmentOperations>(&mock, &env_pairs);
     }
 
     #[test]
@@ -293,43 +304,31 @@ mod tests {
         );
     }
 
-    fn write_pg_ctl_stub(bin_dir: &Path) -> Result<(), std::io::Error> {
-        fs::create_dir_all(bin_dir)?;
-        let pg_ctl_path = bin_dir.join("pg_ctl");
-        fs::write(&pg_ctl_path, PG_CTL_STUB)?;
-        let mut permissions = fs::metadata(&pg_ctl_path)?.permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&pg_ctl_path, permissions)?;
-        Ok(())
-    }
+    #[test]
+    fn parse_args_rejects_non_utf8_config_path() {
+        let program = OsString::from("pg_worker");
+        let operation = OsString::from("setup");
+        let non_utf8 = OsStr::from_bytes(&[0x80]).to_os_string();
 
-    fn build_settings(
-        temp_root: &TempDir,
-        install_dir: PathBuf,
-        data_dir: PathBuf,
-    ) -> Result<Settings, BoxError> {
-        Ok(Settings {
-            releases_url: "https://example.invalid/releases".into(),
-            version: VersionReq::parse("=16.4.0")?,
-            installation_dir: install_dir,
-            password_file: temp_root.path().join("pgpass"),
-            data_dir,
-            host: "127.0.0.1".into(),
-            port: 54_321,
-            username: "postgres".into(),
-            password: "postgres".into(),
-            temporary: false,
-            timeout: Some(Duration::from_secs(5)),
-            configuration: HashMap::new(),
-            trust_installation_dir: true,
-        })
-    }
+        let args = vec![program, operation, non_utf8].into_iter();
 
-    fn write_worker_config(temp_root: &TempDir, settings: &Settings) -> Result<PathBuf, BoxError> {
-        let payload = WorkerPayload::new(settings, Vec::new())?;
-        let config_path = temp_root.path().join("config.json");
-        let config_bytes = serde_json::to_vec(&payload)?;
-        fs::write(&config_path, config_bytes)?;
-        Ok(config_path)
+        let result = parse_args(args);
+
+        match result {
+            Err(WorkerError::InvalidArgs(msg)) => {
+                let msg_lc = msg.to_lowercase();
+                assert!(
+                    msg_lc.contains("utf-8"),
+                    "error message should mention UTF-8, got: {msg}"
+                );
+                assert!(
+                    msg_lc.contains("config"),
+                    "error message should mention config path, got: {msg}"
+                );
+            }
+            other => panic!(
+                "expected WorkerError::InvalidArgs for non-UTF-8 config path, got: {other:?}"
+            ),
+        }
     }
 }
