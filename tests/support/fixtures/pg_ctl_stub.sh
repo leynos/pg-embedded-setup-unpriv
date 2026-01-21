@@ -37,7 +37,9 @@ fi
 case "$command" in
   initdb)
     mkdir -p "$data_dir"
+    mkdir -p "$data_dir/global"
     echo "16" > "$data_dir/PG_VERSION"
+    touch "$data_dir/global/pg_filenode.map"
     echo "pg_ctl_stub initdb: created PG_VERSION in $data_dir" >&2
     ;;
   start)
