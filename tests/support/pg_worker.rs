@@ -208,6 +208,7 @@ async fn ensure_postgres_setup(
 
     reset_data_dir(data_dir)
         .map_err(|e| WorkerError::PostgresOperation(format!("data dir reset failed: {e}")))?;
+
     pg.setup()
         .await
         .map_err(|e| WorkerError::PostgresOperation(format!("setup failed: {e}")))
@@ -330,6 +331,7 @@ mod tests {
         let data_dir = temp_root.path().join("data");
         write_pg_ctl_stub(&install_dir.join("bin")).expect("write pg_ctl stub");
         fs::create_dir_all(&data_dir).expect("create data dir");
+        fs::write(data_dir.join("PG_VERSION"), "16\n").expect("write PG_VERSION");
 
         let settings =
             build_settings(&temp_root, install_dir, data_dir.clone()).expect("build settings");
