@@ -166,6 +166,7 @@ idempotent lifecycle helpers). One conflict was automatically resolved by
 zdiff3 in the imports section:
 
 Conflict: Both branches modified imports in pg_worker.rs.
+
 - origin/main added: `use postgresql_embedded::{PostgreSQL, Status};`
   and `use tracing::info;`
 - Issue 60.3 added: `use std::collections::HashMap;`
@@ -176,12 +177,14 @@ Resolution: zdiff3 correctly preserved all imports, combining
 The rebase successfully integrated Issue 60.3's `EnvStore` trait and
 implementations with Issue 60.5's lifecycle helpers. Both features now
 coexist in the same file:
+
 - Issue 60.5: Lifecycle state management (extract_data_dir,
   is_setup_complete, ensure_postgres_setup, ensure_postgres_started)
 - Issue 60.3: Environment mutation abstraction (EnvStore trait,
   ProcessEnvStore, TestEnvStore)
 
 All quality gates passed after rebase:
+
 - `make check-fmt`: succeeded
 - `make test`: all 117 tests passed (including Issue 60.5's new tests)
 - `make lint`: succeeded (no typecheck target in this project)
