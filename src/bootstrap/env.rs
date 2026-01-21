@@ -146,10 +146,10 @@ pub(crate) fn parse_worker_path_from_env(raw: &std::ffi::OsStr) -> BootstrapResu
 /// is found, Ok(None) if the directory should be skipped, or Err if the
 /// directory is malformed (non-UTF-8).
 fn try_find_worker_in_directory(
-    dir: std::path::PathBuf,
+    dir: &std::path::Path,
     worker_name: &str,
 ) -> BootstrapResult<Option<Utf8PathBuf>> {
-    let dir_str = Utf8PathBuf::from_path_buf(dir.clone()).map_err(|_| {
+    let dir_str = Utf8PathBuf::from_path_buf(dir.to_path_buf()).map_err(|_| {
         let invalid_dir = dir.to_string_lossy().to_string();
         BootstrapError::from(color_eyre::eyre::eyre!(
             "PATH contains non-UTF-8 directory: {invalid_dir:?}. \
@@ -190,15 +190,14 @@ fn try_find_worker_in_directory(
 /// Returns `BootstrapError` if any PATH directory contains non-UTF-8
 /// characters, making the PATH entry invalid.
 pub(crate) fn discover_worker_from_path(worker_name: &str) -> BootstrapResult<Option<Utf8PathBuf>> {
-    let path_var = match env::var_os("PATH") {
-        Some(v) => v,
-        None => return Ok(None),
+    let Some(path_var) = env::var_os("PATH") else {
+        return Ok(None);
     };
 
     for dir in env::split_paths(&path_var) {
-        match try_find_worker_in_directory(dir, worker_name) {
+        match try_find_worker_in_directory(&dir, worker_name) {
             Ok(Some(worker)) => return Ok(Some(worker)),
-            Ok(None) => continue,
+            Ok(None) => {}
             Err(e) => return Err(e),
         }
     }

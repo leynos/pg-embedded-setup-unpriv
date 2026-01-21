@@ -49,6 +49,7 @@ fn to_settings_roundtrip() -> color_eyre::Result<()> {
         locale: Some("en_US".into()),
         encoding: Some("UTF8".into()),
         binary_cache_dir: None,
+        worker_name: None,
     };
     let settings = cfg.to_settings()?;
     let expected_version = VersionReq::parse("=16.4.0").map_err(|err| eyre!(err))?;
