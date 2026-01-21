@@ -336,7 +336,6 @@ fn ensure_install_dir_for_user(path: &Utf8PathBuf, user: &User) -> BootstrapResu
 fn ensure_pgpass_for_user(path: &Utf8PathBuf, user: &User) -> BootstrapResult<()> {
     use cap_std::fs::{OpenOptions, OpenOptionsExt};
     use nix::sys::stat::{Mode, fchmod};
-    use std::os::fd::AsRawFd;
 
     // The descriptor-relative lookup anchors path resolution and prevents
     // ancestor directory swap attacks. O_NOFOLLOW additionally ensures the
@@ -375,14 +374,13 @@ fn ensure_pgpass_for_user(path: &Utf8PathBuf, user: &User) -> BootstrapResult<()
         )));
     }
 
-    let fd = file.as_raw_fd();
-    fchown(fd, Some(user.uid), Some(user.gid)).map_err(|err| {
+    fchown(&file, Some(user.uid), Some(user.gid)).map_err(|err| {
         BootstrapError::from(color_eyre::eyre::eyre!(
             "fchown {} failed: {err}",
             path.as_str()
         ))
     })?;
-    fchmod(fd, Mode::from_bits_truncate(0o600)).map_err(|err| {
+    fchmod(&file, Mode::from_bits_truncate(0o600)).map_err(|err| {
         BootstrapError::from(color_eyre::eyre::eyre!(
             "fchmod {} failed: {err}",
             path.as_str()
