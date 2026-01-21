@@ -97,6 +97,109 @@ Table: Environment variables used by the binary cache.
 | `PG_BINARY_CACHE_DIR` | Override the cache directory location |
 | `XDG_CACHE_HOME`      | Standard XDG cache base directory     |
 
+## Startup sequence
+
+Figure: `TestCluster` startup with binary cache integration.
+
+```mermaid
+sequenceDiagram
+    actor TestAuthor
+    participant TestCode
+    participant TestCluster
+    participant startup as startup module
+    participant cache_integration as cache_integration module
+    participant cache as cache module
+    participant CacheLock
+    participant installation as installation module
+    participant PostgreSQL
+
+    TestAuthor->>TestCode: run_tests()
+    TestCode->>TestCluster: new()
+    activate TestCluster
+
+    TestCluster->>TestCluster: bootstrap_for_tests()
+    Note right of TestCluster: Resolves settings from<br/>environment and config
+
+    TestCluster->>startup: cache_config_from_bootstrap(bootstrap)
+    startup-->>TestCluster: cache_config
+
+    TestCluster->>startup: start_postgres(runtime, bootstrap, env_vars, cache_config)
+    activate startup
+
+    startup->>cache_integration: try_use_binary_cache(config, version_req, bootstrap)
+    activate cache_integration
+
+    cache_integration->>cache: find_matching_cached_version(cache_dir, version_req)
+
+    alt cache_hit
+        cache-->>cache_integration: (version, source_dir)
+        cache_integration->>CacheLock: acquire_shared(cache_dir, version)
+        CacheLock-->>cache_integration: lock
+
+        Note right of cache_integration: Double-check after<br/>acquiring lock
+        cache_integration->>cache: check_cache(cache_dir, version)
+        cache-->>cache_integration: CacheLookupResult::Hit { source_dir }
+
+        cache_integration->>cache: copy_from_cache(source_dir, target_dir)
+        cache-->>cache_integration: Ok(())
+
+        Note right of cache_integration: Update bootstrap settings
+        cache_integration->>cache_integration: set installation_dir
+        cache_integration->>cache_integration: set trust_installation_dir = true
+        cache_integration->>cache_integration: set exact version requirement
+
+        cache_integration-->>startup: true
+    else cache_miss
+        cache-->>cache_integration: None
+        cache_integration-->>startup: false
+    end
+    deactivate cache_integration
+
+    startup->>startup: handle_privilege_lifecycle(privileges, runtime, bootstrap, env_vars)
+
+    alt root_privileges
+        startup->>startup: invoke_lifecycle_root(runtime, bootstrap, env_vars)
+        Note right of startup: Worker subprocess<br/>manages PostgreSQL
+    else unprivileged
+        startup->>PostgreSQL: new(settings)
+        startup->>startup: invoke_lifecycle(runtime, bootstrap, env_vars, embedded)
+        PostgreSQL->>PostgreSQL: setup()
+        PostgreSQL->>PostgreSQL: start()
+    end
+
+    opt cache_miss
+        startup->>cache_integration: try_populate_binary_cache(config, settings)
+        activate cache_integration
+
+        cache_integration->>installation: resolve_installed_dir(settings)
+        installation-->>cache_integration: installed_dir
+
+        cache_integration->>cache_integration: extract_version_from_path(installed_dir)
+
+        Note right of cache_integration: Skip if already cached
+        cache_integration->>cache: check_cache(cache_dir, version)
+        cache-->>cache_integration: CacheLookupResult::Miss
+
+        cache_integration->>CacheLock: acquire_exclusive(cache_dir, version)
+        CacheLock-->>cache_integration: lock
+
+        Note right of cache_integration: Double-check after<br/>acquiring exclusive lock
+        cache_integration->>cache: check_cache(cache_dir, version)
+        cache-->>cache_integration: CacheLookupResult::Miss
+
+        cache_integration->>cache: populate_cache(source, cache_dir, version)
+        cache-->>cache_integration: Ok(())
+
+        deactivate cache_integration
+    end
+
+    startup-->>TestCluster: StartupOutcome
+    deactivate startup
+
+    TestCluster-->>TestCode: TestCluster instance
+    deactivate TestCluster
+```
+
 ## Cache maintenance
 
 The cache does not perform automatic cleanup. To clear stale entries:
