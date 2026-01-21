@@ -72,8 +72,12 @@ pub fn resolve_cache_dir() -> Utf8PathBuf {
         return dir;
     }
 
-    // Last resort: temp directory
-    Utf8PathBuf::from("/tmp/pg-embedded/binaries")
+    // Last resort: temp directory (portable across platforms)
+    let temp_path = std::env::temp_dir().join("pg-embedded").join("binaries");
+    Utf8PathBuf::from_path_buf(temp_path).unwrap_or_else(|path| {
+        // If temp_dir is not valid UTF-8, use a hardcoded fallback
+        Utf8PathBuf::from(path.to_string_lossy().into_owned())
+    })
 }
 
 /// Attempts to resolve cache directory from `PG_BINARY_CACHE_DIR` environment variable.

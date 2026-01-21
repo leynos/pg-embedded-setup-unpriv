@@ -46,7 +46,7 @@ pub(super) fn start_postgres(
     cache_config: &BinaryCacheConfig,
 ) -> BootstrapResult<StartupOutcome> {
     let privileges = bootstrap.privileges;
-    log_lifecycle_start_sync(privileges, &bootstrap);
+    log_lifecycle_start(privileges, &bootstrap, false);
 
     let version_req = bootstrap.settings.version.clone();
     let cache_hit =
@@ -56,7 +56,7 @@ pub(super) fn start_postgres(
         handle_privilege_lifecycle(privileges, runtime, &mut bootstrap, env_vars)?;
 
     populate_cache_on_miss(cache_hit, cache_config, &bootstrap);
-    log_lifecycle_complete_sync(privileges, is_managed_via_worker, cache_hit);
+    log_lifecycle_complete(privileges, is_managed_via_worker, cache_hit, false);
 
     Ok(StartupOutcome {
         bootstrap,
@@ -65,27 +65,34 @@ pub(super) fn start_postgres(
     })
 }
 
-/// Logs the start of the sync lifecycle.
-fn log_lifecycle_start_sync(privileges: ExecutionPrivileges, bootstrap: &TestBootstrapSettings) {
+/// Logs the start of the lifecycle.
+fn log_lifecycle_start(
+    privileges: ExecutionPrivileges,
+    bootstrap: &TestBootstrapSettings,
+    is_async: bool,
+) {
     info!(
         target: LOG_TARGET,
         privileges = ?privileges,
         mode = ?bootstrap.execution_mode,
+        async_mode = is_async,
         "starting embedded postgres lifecycle"
     );
 }
 
-/// Logs completion of the sync lifecycle.
-fn log_lifecycle_complete_sync(
+/// Logs completion of the lifecycle.
+fn log_lifecycle_complete(
     privileges: ExecutionPrivileges,
     is_managed_via_worker: bool,
     cache_hit: bool,
+    is_async: bool,
 ) {
     info!(
         target: LOG_TARGET,
         privileges = ?privileges,
         worker_managed = is_managed_via_worker,
         cache_hit,
+        async_mode = is_async,
         "embedded postgres started"
     );
 }
@@ -182,7 +189,7 @@ pub(super) async fn start_postgres_async(
     cache_config: &BinaryCacheConfig,
 ) -> BootstrapResult<StartupOutcome> {
     let privileges = bootstrap.privileges;
-    log_lifecycle_start(privileges, &bootstrap);
+    log_lifecycle_start(privileges, &bootstrap, true);
 
     // Try to use cached binaries before starting the lifecycle
     let version_req = bootstrap.settings.version.clone();
@@ -211,44 +218,12 @@ pub(super) async fn start_postgres_async(
         cache_integration::try_populate_binary_cache(cache_config, &bootstrap.settings);
     }
 
-    log_lifecycle_complete(privileges, is_managed_via_worker, cache_hit);
+    log_lifecycle_complete(privileges, is_managed_via_worker, cache_hit, true);
     Ok(StartupOutcome {
         bootstrap,
         postgres,
         is_managed_via_worker,
     })
-}
-
-/// Logs the start of the async lifecycle.
-#[cfg(feature = "async-api")]
-pub(super) fn log_lifecycle_start(
-    privileges: ExecutionPrivileges,
-    bootstrap: &TestBootstrapSettings,
-) {
-    info!(
-        target: LOG_TARGET,
-        privileges = ?privileges,
-        mode = ?bootstrap.execution_mode,
-        async_mode = true,
-        "starting embedded postgres lifecycle"
-    );
-}
-
-/// Logs completion of the async lifecycle.
-#[cfg(feature = "async-api")]
-pub(super) fn log_lifecycle_complete(
-    privileges: ExecutionPrivileges,
-    is_managed_via_worker: bool,
-    cache_hit: bool,
-) {
-    info!(
-        target: LOG_TARGET,
-        privileges = ?privileges,
-        worker_managed = is_managed_via_worker,
-        cache_hit,
-        async_mode = true,
-        "embedded postgres started"
-    );
 }
 
 /// Async variant of `invoke_lifecycle`.
@@ -283,6 +258,7 @@ pub(super) async fn invoke_lifecycle_root_async(
     env_vars: &[(String, Option<String>)],
 ) -> BootstrapResult<()> {
     let setup_invoker = AsyncInvoker::new(bootstrap, env_vars);
+    // No-op future: the worker subprocess performs the actual setup; this drives the invocation.
     Box::pin(
         setup_invoker.invoke(worker_operation::WorkerOperation::Setup, async {
             Ok::<(), postgresql_embedded::Error>(())
@@ -291,6 +267,7 @@ pub(super) async fn invoke_lifecycle_root_async(
     .await?;
     installation::refresh_worker_installation_dir(bootstrap);
     let start_invoker = AsyncInvoker::new(bootstrap, env_vars);
+    // No-op future: the worker subprocess performs the actual start; this drives the invocation.
     Box::pin(
         start_invoker.invoke(worker_operation::WorkerOperation::Start, async {
             Ok::<(), postgresql_embedded::Error>(())
