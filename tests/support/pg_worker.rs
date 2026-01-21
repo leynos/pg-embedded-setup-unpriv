@@ -37,12 +37,14 @@
 //! caller to demote credentials before spawning the child process.
 #![cfg(unix)]
 
+use camino::{Utf8Path, Utf8PathBuf};
+use cap_std::{ambient_authority, fs::Dir};
 use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
 use postgresql_embedded::PostgreSQL;
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::io::Read;
+use std::path::PathBuf;
 use thiserror::Error;
 use tokio::runtime::Builder;
 
@@ -123,16 +125,19 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
 
 fn parse_args(
     mut args: impl Iterator<Item = OsString>,
-) -> Result<(Operation, PathBuf), WorkerError> {
+) -> Result<(Operation, Utf8PathBuf), WorkerError> {
     let _program = args.next();
     let operation = args
         .next()
         .ok_or_else(|| WorkerError::InvalidArgs("missing operation argument".into()))
         .and_then(|arg| Operation::parse(&arg))?;
-    let config_path = args
+    let config_path_buf = args
         .next()
         .map(PathBuf::from)
         .ok_or_else(|| WorkerError::InvalidArgs("missing config path argument".into()))?;
+    let config_path = Utf8PathBuf::from_path_buf(config_path_buf).map_err(|p| {
+        WorkerError::InvalidArgs(format!("config path is not valid UTF-8: {}", p.display()))
+    })?;
     if let Some(extra) = args.next() {
         let extra_arg = extra.to_string_lossy();
         return Err(WorkerError::InvalidArgs(format!(
@@ -142,9 +147,35 @@ fn parse_args(
     Ok((operation, config_path))
 }
 
-fn load_payload(config_path: &Path) -> Result<WorkerPayload, WorkerError> {
-    let config_bytes = fs::read(config_path).map_err(WorkerError::ConfigRead)?;
+fn load_payload(config_path: &Utf8Path) -> Result<WorkerPayload, WorkerError> {
+    let config_bytes = read_config_file(config_path)
+        .map_err(|e| WorkerError::ConfigRead(std::io::Error::other(e.to_string())))?;
     serde_json::from_slice(&config_bytes).map_err(WorkerError::ConfigParse)
+}
+
+fn read_config_file(path: &Utf8Path) -> Result<Vec<u8>, BoxError> {
+    let (dir, relative) = ambient_dir_and_path(path)?;
+    let mut file = dir.open(relative.as_std_path())?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf), BoxError> {
+    if path.has_root() {
+        let (dir_path, relative) = match path.parent() {
+            Some(parent) => {
+                let relative = path.strip_prefix(parent)?.to_path_buf();
+                (parent, relative)
+            }
+            None => (path, Utf8PathBuf::new()),
+        };
+        let dir = Dir::open_ambient_dir(dir_path.as_std_path(), ambient_authority())?;
+        Ok((dir, relative))
+    } else {
+        let dir = Dir::open_ambient_dir(".", ambient_authority())?;
+        Ok((dir, path.to_path_buf()))
+    }
 }
 
 fn build_runtime() -> Result<tokio::runtime::Runtime, WorkerError> {
@@ -218,6 +249,7 @@ mod tests {
     use postgresql_embedded::{Settings, VersionReq};
     use std::collections::HashMap;
     use std::ffi::OsString;
+    use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::time::Duration;
