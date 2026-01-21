@@ -11,7 +11,7 @@ use rstest::rstest;
 use tempfile::tempdir;
 
 use crate::BootstrapResult;
-use crate::bootstrap::env::{
+use crate::bootstrap::worker_discovery::{
     discover_worker_from_path, is_trusted_path_directory, parse_worker_path_from_env,
 };
 use crate::env::ScopedEnv;

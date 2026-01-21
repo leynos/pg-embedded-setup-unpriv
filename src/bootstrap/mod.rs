@@ -7,6 +7,7 @@ mod env;
 mod env_tests;
 mod mode;
 mod prepare;
+mod worker_discovery;
 
 use std::time::Duration;
 
@@ -22,9 +23,8 @@ pub use env::{TestBootstrapEnvironment, find_timezone_dir};
 pub use mode::{ExecutionMode, ExecutionPrivileges, detect_execution_privileges};
 
 use self::{
-    env::{shutdown_timeout_from_env, worker_binary_from_env},
-    mode::determine_execution_mode,
-    prepare::prepare_bootstrap,
+    env::shutdown_timeout_from_env, mode::determine_execution_mode, prepare::prepare_bootstrap,
+    worker_discovery::worker_binary_from_env,
 };
 
 const DEFAULT_SETUP_TIMEOUT: Duration = Duration::from_secs(180);
