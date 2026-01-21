@@ -238,8 +238,8 @@ mod tests {
     use tempfile::tempdir;
 
     use pg_worker_helpers::{
-        MockEnvironment, apply_worker_environment_with, build_settings, write_pg_ctl_stub,
-        write_worker_config,
+        MockEnvironmentOperations, apply_worker_environment_with, build_settings,
+        write_pg_ctl_stub, write_worker_config,
     };
 
     #[test]
@@ -265,14 +265,17 @@ mod tests {
             ("PGWORKER_NONE_KEY".to_owned(), None),
         ];
 
-        let mock = MockEnvironment::default();
-        apply_worker_environment_with::<MockEnvironment>(&mock, &env_pairs);
+        let mut mock = MockEnvironmentOperations::new();
+        mock.expect_set_var()
+            .times(1)
+            .withf(|key, value| key == "PGWORKER_SECRET_KEY" && value == "super-secret-value")
+            .return_const(());
+        mock.expect_remove_var()
+            .times(1)
+            .withf(|key| key == "PGWORKER_NONE_KEY")
+            .return_const(());
 
-        assert_eq!(
-            mock.get("PGWORKER_SECRET_KEY"),
-            Some("super-secret-value".to_owned())
-        );
-        assert!(mock.get("PGWORKER_NONE_KEY").is_none());
+        apply_worker_environment_with::<MockEnvironmentOperations>(&mock, &env_pairs);
     }
 
     #[test]

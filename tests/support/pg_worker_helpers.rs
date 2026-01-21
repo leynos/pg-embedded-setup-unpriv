@@ -1,5 +1,6 @@
 //! Test helpers and fixtures for `pg_worker` tests.
 
+use mockall::automock;
 use postgresql_embedded::{Settings, VersionReq};
 use std::collections::HashMap;
 use std::fs;
@@ -19,56 +20,10 @@ pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 pub const PG_CTL_STUB: &str = include_str!("fixtures/pg_ctl_stub.sh");
 
 /// Trait for environment variable operations, allowing mock implementations in tests.
+#[automock]
 pub trait EnvironmentOperations {
     fn set_var(&self, key: &str, value: &str);
     fn remove_var(&self, key: &str);
-}
-
-/// Mock environment implementation for tests that tracks environment operations
-/// without actually mutating the process environment.
-#[derive(Debug, Default)]
-pub struct MockEnvironment {
-    vars: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
-}
-
-impl MockEnvironment {
-    /// Retrieves an environment variable by key.
-    ///
-    /// Returns `Some(String)` if the variable exists in this mock environment,
-    /// or `None` if it is absent. This method is thread-safe and will panic if
-    /// the internal mutex is poisoned.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal mutex guarding the environment map is poisoned.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let env = MockEnvironment::default();
-    /// env.set_var("HOME", "/home/test");
-    /// assert_eq!(env.get("HOME"), Some("/home/test".to_string()));
-    /// assert_eq!(env.get("NONEXISTENT"), None);
-    /// ```
-    pub fn get(&self, key: &str) -> Option<String> {
-        self.vars
-            .lock()
-            .expect("MockEnvironment.vars mutex poisoned")
-            .get(key)
-            .cloned()
-    }
-}
-
-impl EnvironmentOperations for MockEnvironment {
-    fn set_var(&self, key: &str, value: &str) {
-        let mut vars = self.vars.lock().expect("mock env mutex poisoned");
-        vars.insert(key.to_owned(), value.to_owned());
-    }
-
-    fn remove_var(&self, key: &str) {
-        let mut vars = self.vars.lock().expect("mock env mutex poisoned");
-        vars.remove(key);
-    }
 }
 
 /// Applies environment overrides using the provided operations implementation.
