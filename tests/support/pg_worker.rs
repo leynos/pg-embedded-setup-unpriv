@@ -40,13 +40,15 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use pg_embedded_setup_unpriv::test_support::ambient_dir_and_path;
 use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
-use postgresql_embedded::PostgreSQL;
+use postgresql_embedded::{PostgreSQL, Status};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use thiserror::Error;
 use tokio::runtime::Builder;
+use tracing::info;
 
 /// Boxed error type for the main result.
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -105,6 +107,7 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
         .settings
         .into_settings()
         .map_err(|e| WorkerError::SettingsConversion(e.to_string()))?;
+    let data_dir = extract_data_dir(&settings)?;
 
     let runtime = build_runtime()?;
     apply_worker_environment(&payload.environment);
@@ -115,9 +118,17 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
                 let pg_handle = pg.as_mut().ok_or_else(|| {
                     WorkerError::PostgresOperation("pg handle missing during setup".into())
                 })?;
-                execute_setup(pg_handle).await
+                ensure_postgres_setup(pg_handle, &data_dir).await
             }
-            Operation::Start => execute_start(&mut pg).await,
+            Operation::Start => {
+                let pg_handle = pg.as_mut().ok_or_else(|| {
+                    WorkerError::PostgresOperation("pg handle missing during start".into())
+                })?;
+                ensure_postgres_started(pg_handle, &data_dir).await?;
+                let handle = pg.take();
+                std::mem::forget(handle);
+                Ok(())
+            }
             Operation::Stop => execute_stop(&mut pg).await,
         }
     })?;
@@ -168,23 +179,57 @@ fn build_runtime() -> Result<tokio::runtime::Runtime, WorkerError> {
         .map_err(WorkerError::RuntimeInit)
 }
 
-async fn execute_setup(pg: &mut PostgreSQL) -> Result<(), WorkerError> {
+fn extract_data_dir(settings: &postgresql_embedded::Settings) -> Result<Utf8PathBuf, WorkerError> {
+    Utf8PathBuf::from_path_buf(settings.data_dir.clone())
+        .map_err(|_| WorkerError::SettingsConversion("data_dir must be valid UTF-8".into()))
+}
+
+fn has_valid_data_dir(_pg: &PostgreSQL, data_dir: &Utf8Path) -> bool {
+    let pg_version = data_dir.join("PG_VERSION");
+    pg_version.exists()
+}
+
+fn reset_data_dir(data_dir: &Utf8Path) -> Result<(), BoxError> {
+    match fs::remove_dir_all(data_dir.as_std_path()) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
+async fn ensure_postgres_setup(
+    pg: &mut PostgreSQL,
+    data_dir: &Utf8Path,
+) -> Result<(), WorkerError> {
+    if has_valid_data_dir(pg, data_dir) {
+        info!("PostgreSQL setup already complete, skipping redundant setup");
+        return Ok(());
+    }
+
+    reset_data_dir(data_dir)
+        .map_err(|e| WorkerError::PostgresOperation(format!("data dir reset failed: {e}")))?;
     pg.setup()
         .await
         .map_err(|e| WorkerError::PostgresOperation(format!("setup failed: {e}")))
 }
 
-async fn execute_start(pg: &mut Option<PostgreSQL>) -> Result<(), WorkerError> {
-    let mut handle = pg
-        .take()
-        .ok_or_else(|| WorkerError::PostgresOperation("pg handle missing during start".into()))?;
-    handle
-        .start()
+async fn ensure_postgres_started(
+    pg: &mut PostgreSQL,
+    data_dir: &Utf8Path,
+) -> Result<(), WorkerError> {
+    ensure_postgres_setup(pg, data_dir).await?;
+    start_if_not_started(pg).await
+}
+
+async fn start_if_not_started(pg: &mut PostgreSQL) -> Result<(), WorkerError> {
+    if pg.status() == Status::Started {
+        info!("PostgreSQL already started, skipping redundant start");
+        return Ok(());
+    }
+
+    pg.start()
         .await
-        .map_err(|e| WorkerError::PostgresOperation(format!("start failed: {e}")))?;
-    // Prevent `Drop` from stopping the just-started server.
-    std::mem::forget(handle);
-    Ok(())
+        .map_err(|e| WorkerError::PostgresOperation(format!("start failed: {e}")))
 }
 
 async fn execute_stop(pg: &mut Option<PostgreSQL>) -> Result<(), WorkerError> {
