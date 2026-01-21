@@ -37,14 +37,40 @@
 //! caller to demote credentials before spawning the child process.
 #![cfg(unix)]
 
-use color_eyre::eyre::{Context, Report, Result};
 use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
 use postgresql_embedded::PostgreSQL;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use thiserror::Error;
 use tokio::runtime::Builder;
+
+/// Boxed error type for the main result.
+type BoxError = Box<dyn std::error::Error>;
+
+/// Errors that can occur during worker operations.
+#[derive(Debug, Error)]
+enum WorkerError {
+    #[error("invalid arguments: {0}")]
+    InvalidArgs(String),
+    #[error("failed to read worker config: {0}")]
+    ConfigRead(#[source] std::io::Error),
+    #[error("failed to parse worker config: {0}")]
+    ConfigParse(#[source] serde_json::Error),
+    #[error("settings conversion failed: {0}")]
+    SettingsConversion(String),
+    #[error("runtime init failed: {0}")]
+    RuntimeInit(#[source] std::io::Error),
+    #[error("postgres operation failed: {0}")]
+    PostgresOperation(String),
+    #[expect(
+        dead_code,
+        reason = "variant reserved for future data directory recovery errors"
+    )]
+    #[error("data dir recovery: {0}")]
+    DataDirRecovery(String),
+}
 
 enum Operation {
     Setup,
@@ -53,30 +79,29 @@ enum Operation {
 }
 
 impl Operation {
-    fn parse(arg: &OsStr) -> Result<Self> {
+    fn parse(arg: &OsStr) -> Result<Self, WorkerError> {
         match arg.to_string_lossy().as_ref() {
             "setup" => Ok(Self::Setup),
             "start" => Ok(Self::Start),
             "stop" => Ok(Self::Stop),
-            other => Err(Report::msg(format!(
-                "unknown pg_worker operation '{other}'; valid operations are setup, start, and stop"
+            other => Err(WorkerError::InvalidArgs(format!(
+                "unknown operation '{other}'; expected setup, start, or stop"
             ))),
         }
     }
 }
 
-fn main() -> Result<()> {
-    color_eyre::install()?;
-    run_worker(env::args_os())
+fn main() -> Result<(), BoxError> {
+    run_worker(env::args_os()).map_err(Into::into)
 }
 
-fn run_worker(args: impl Iterator<Item = OsString>) -> Result<()> {
+fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
     let (operation, config_path) = parse_args(args)?;
     let payload = load_payload(&config_path)?;
     let settings = payload
         .settings
         .into_settings()
-        .wrap_err("failed to rebuild PostgreSQL settings from snapshot")?;
+        .map_err(|e| WorkerError::SettingsConversion(e.to_string()))?;
 
     let runtime = build_runtime()?;
     apply_worker_environment(&payload.environment);
@@ -84,9 +109,9 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<()> {
     runtime.block_on(async {
         match operation {
             Operation::Setup => {
-                let pg_handle = pg
-                    .as_mut()
-                    .ok_or_else(|| Report::msg("pg handle missing during setup"))?;
+                let pg_handle = pg.as_mut().ok_or_else(|| {
+                    WorkerError::PostgresOperation("pg handle missing during setup".into())
+                })?;
                 execute_setup(pg_handle).await
             }
             Operation::Start => execute_start(&mut pg).await,
@@ -96,68 +121,72 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<()> {
     Ok(())
 }
 
-fn parse_args(mut args: impl Iterator<Item = OsString>) -> Result<(Operation, PathBuf)> {
+fn parse_args(
+    mut args: impl Iterator<Item = OsString>,
+) -> Result<(Operation, PathBuf), WorkerError> {
     let _program = args.next();
     let operation = args
         .next()
-        .ok_or_else(|| Report::msg("missing operation argument"))
+        .ok_or_else(|| WorkerError::InvalidArgs("missing operation argument".into()))
         .and_then(|arg| Operation::parse(&arg))?;
     let config_path = args
         .next()
         .map(PathBuf::from)
-        .ok_or_else(|| Report::msg("missing config path argument"))?;
+        .ok_or_else(|| WorkerError::InvalidArgs("missing config path argument".into()))?;
     if let Some(extra) = args.next() {
         let extra_arg = extra.to_string_lossy();
-        return Err(Report::msg(format!(
-            "unexpected extra argument: {extra_arg}; expected only operation and config path"
+        return Err(WorkerError::InvalidArgs(format!(
+            "unexpected extra argument: {extra_arg}"
         )));
     }
     Ok((operation, config_path))
 }
 
-fn load_payload(config_path: &PathBuf) -> Result<WorkerPayload> {
-    let config_bytes = fs::read(config_path).wrap_err("failed to read worker config")?;
-    serde_json::from_slice(&config_bytes).wrap_err("failed to parse worker config")
+fn load_payload(config_path: &Path) -> Result<WorkerPayload, WorkerError> {
+    let config_bytes = fs::read(config_path).map_err(WorkerError::ConfigRead)?;
+    serde_json::from_slice(&config_bytes).map_err(WorkerError::ConfigParse)
 }
 
-fn build_runtime() -> Result<tokio::runtime::Runtime> {
+fn build_runtime() -> Result<tokio::runtime::Runtime, WorkerError> {
     Builder::new_current_thread()
         .enable_all()
         .build()
-        .wrap_err("failed to build runtime for worker")
+        .map_err(WorkerError::RuntimeInit)
 }
 
-async fn execute_setup(pg: &mut PostgreSQL) -> Result<()> {
+async fn execute_setup(pg: &mut PostgreSQL) -> Result<(), WorkerError> {
     pg.setup()
         .await
-        .wrap_err("postgresql_embedded::setup() failed")
+        .map_err(|e| WorkerError::PostgresOperation(format!("setup failed: {e}")))
 }
 
-async fn execute_start(pg: &mut Option<PostgreSQL>) -> Result<()> {
+async fn execute_start(pg: &mut Option<PostgreSQL>) -> Result<(), WorkerError> {
     let mut handle = pg
         .take()
-        .ok_or_else(|| Report::msg("pg handle missing during start"))?;
+        .ok_or_else(|| WorkerError::PostgresOperation("pg handle missing during start".into()))?;
     handle
         .start()
         .await
-        .wrap_err("postgresql_embedded::start() failed")?;
+        .map_err(|e| WorkerError::PostgresOperation(format!("start failed: {e}")))?;
     // Prevent `Drop` from stopping the just-started server.
     std::mem::forget(handle);
     Ok(())
 }
 
-async fn execute_stop(pg: &mut Option<PostgreSQL>) -> Result<()> {
+async fn execute_stop(pg: &mut Option<PostgreSQL>) -> Result<(), WorkerError> {
     let pg_handle = pg
         .as_mut()
-        .ok_or_else(|| Report::msg("pg handle missing during stop"))?;
+        .ok_or_else(|| WorkerError::PostgresOperation("pg handle missing during stop".into()))?;
     handle_stop_result(pg_handle.stop().await)
 }
 
-fn handle_stop_result(result: Result<(), postgresql_embedded::Error>) -> Result<()> {
+fn handle_stop_result(result: Result<(), postgresql_embedded::Error>) -> Result<(), WorkerError> {
     match result {
         Ok(()) => Ok(()),
         Err(err) if stop_missing_pid_is_ok(&err) => Ok(()),
-        Err(err) => Err(err).wrap_err("postgresql_embedded::stop() failed"),
+        Err(err) => Err(WorkerError::PostgresOperation(format!(
+            "stop failed: {err}"
+        ))),
     }
 }
 
@@ -185,50 +214,16 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use color_eyre::eyre::ensure;
+    use pg_embedded_setup_unpriv::test_support;
     use postgresql_embedded::{Settings, VersionReq};
     use std::collections::HashMap;
+    use std::ffi::OsString;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
-    use std::sync::{LazyLock, Mutex};
     use std::time::Duration;
-    use std::time::{SystemTime, UNIX_EPOCH};
     use tempfile::{TempDir, tempdir};
 
-    static ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-    const PG_CTL_STUB: &str = r#"#!/bin/sh
-set -eu
-data_dir=""
-expect_data=0
-for arg in "$@"; do
-  if [ "$expect_data" -eq 1 ]; then
-    data_dir="$arg"
-    break
-  fi
-  case "$arg" in
-    -D)
-      expect_data=1
-      ;;
-    -D*)
-      data_dir="${arg#-D}"
-      break
-      ;;
-    --pgdata)
-      expect_data=1
-      ;;
-    --pgdata=*)
-      data_dir="${arg#--pgdata=}"
-      break
-      ;;
-  esac
-done
-if [ -z "$data_dir" ]; then
-  echo "missing -D argument" >&2
-  exit 1
-fi
-mkdir -p "$data_dir"
-echo "12345" > "$data_dir/postmaster.pid"
-"#;
+    const PG_CTL_STUB: &str = include_str!("fixtures/pg_ctl_stub.sh");
 
     #[test]
     fn rejects_extra_argument() {
@@ -247,81 +242,64 @@ echo "12345" > "$data_dir/postmaster.pid"
 
     #[test]
     fn apply_worker_environment_uses_plaintext_and_unsets() {
-        let _guard = ENV_MUTEX
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-        let secret_key = unique_env_key("PGWORKER_SECRET_KEY");
-        let none_key = unique_env_key("PGWORKER_NONE_KEY");
-
-        unsafe {
-            // SAFETY: scoped test cleanup; single-threaded in this process.
-            env::remove_var(&secret_key);
-            env::remove_var(&none_key);
-        }
+        // Use scoped_env to ensure environment variables are cleaned up after the test
+        // and to serialise access across concurrent tests.
+        let _guard = test_support::scoped_env(vec![
+            (OsString::from("PGWORKER_SECRET_KEY"), None),
+            (OsString::from("PGWORKER_NONE_KEY"), None),
+        ]);
 
         let secret = PlainSecret::from("super-secret-value".to_owned());
-        let env_pairs = vec![(secret_key.clone(), Some(secret)), (none_key.clone(), None)];
+        let env_pairs = vec![
+            ("PGWORKER_SECRET_KEY".to_owned(), Some(secret)),
+            ("PGWORKER_NONE_KEY".to_owned(), None),
+        ];
 
         apply_worker_environment(&env_pairs);
 
-        assert_eq!(env::var(&secret_key).as_deref(), Ok("super-secret-value"));
+        assert_eq!(
+            env::var("PGWORKER_SECRET_KEY").as_deref(),
+            Ok("super-secret-value")
+        );
         assert!(matches!(
-            env::var(&none_key),
+            env::var("PGWORKER_NONE_KEY"),
             Err(env::VarError::NotPresent)
         ));
-
-        unsafe {
-            // SAFETY: scoped test cleanup; single-threaded in this process.
-            env::remove_var(secret_key);
-            env::remove_var(none_key);
-        }
-    }
-
-    fn unique_env_key(prefix: &str) -> String {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock drift")
-            .as_nanos();
-        format!("{prefix}_{pid}_{nanos}", pid = std::process::id())
     }
 
     #[test]
-    fn start_operation_does_not_stop_postgres() -> Result<()> {
-        let temp_root = tempdir().wrap_err("create temp root")?;
+    fn start_operation_does_not_stop_postgres() {
+        let temp_root = tempdir().expect("create temp root");
         let install_dir = temp_root.path().join("install");
         let data_dir = temp_root.path().join("data");
-        write_pg_ctl_stub(&install_dir.join("bin"))?;
-        fs::create_dir_all(&data_dir).wrap_err("create data dir")?;
+        write_pg_ctl_stub(&install_dir.join("bin")).expect("write pg_ctl stub");
+        fs::create_dir_all(&data_dir).expect("create data dir");
 
-        let settings = build_settings(&temp_root, install_dir, data_dir.clone())?;
-        let config_path = write_worker_config(&temp_root, &settings)?;
+        let settings =
+            build_settings(&temp_root, install_dir, data_dir.clone()).expect("build settings");
+        let config_path = write_worker_config(&temp_root, &settings).expect("write worker config");
 
         let args = vec![
             OsString::from("pg_worker"),
             OsString::from("start"),
             config_path.into_os_string(),
         ];
-        run_worker(args.into_iter()).wrap_err("run start operation")?;
+        run_worker(args.into_iter()).expect("run start operation");
 
         let pid_path = data_dir.join("postmaster.pid");
-        ensure!(
+        assert!(
             pid_path.is_file(),
             "expected pid file to persist at {pid_path:?}"
         );
-
-        Ok(())
     }
 
-    fn write_pg_ctl_stub(bin_dir: &Path) -> Result<()> {
-        fs::create_dir_all(bin_dir).wrap_err("create bin dir")?;
+    fn write_pg_ctl_stub(bin_dir: &Path) -> Result<(), std::io::Error> {
+        fs::create_dir_all(bin_dir)?;
         let pg_ctl_path = bin_dir.join("pg_ctl");
-        fs::write(&pg_ctl_path, PG_CTL_STUB).wrap_err("write pg_ctl stub")?;
-        let mut permissions = fs::metadata(&pg_ctl_path)
-            .wrap_err("read pg_ctl stub metadata")?
-            .permissions();
+        fs::write(&pg_ctl_path, PG_CTL_STUB)?;
+        let mut permissions = fs::metadata(&pg_ctl_path)?.permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&pg_ctl_path, permissions).wrap_err("set pg_ctl stub permissions")?;
+        fs::set_permissions(&pg_ctl_path, permissions)?;
         Ok(())
     }
 
@@ -329,10 +307,10 @@ echo "12345" > "$data_dir/postmaster.pid"
         temp_root: &TempDir,
         install_dir: PathBuf,
         data_dir: PathBuf,
-    ) -> Result<Settings> {
+    ) -> Result<Settings, BoxError> {
         Ok(Settings {
             releases_url: "https://example.invalid/releases".into(),
-            version: VersionReq::parse("=16.4.0").wrap_err("parse version")?,
+            version: VersionReq::parse("=16.4.0")?,
             installation_dir: install_dir,
             password_file: temp_root.path().join("pgpass"),
             data_dir,
@@ -347,11 +325,11 @@ echo "12345" > "$data_dir/postmaster.pid"
         })
     }
 
-    fn write_worker_config(temp_root: &TempDir, settings: &Settings) -> Result<PathBuf> {
-        let payload = WorkerPayload::new(settings, Vec::new()).wrap_err("build payload")?;
+    fn write_worker_config(temp_root: &TempDir, settings: &Settings) -> Result<PathBuf, BoxError> {
+        let payload = WorkerPayload::new(settings, Vec::new())?;
         let config_path = temp_root.path().join("config.json");
-        let config_bytes = serde_json::to_vec(&payload).wrap_err("serialize worker payload")?;
-        fs::write(&config_path, config_bytes).wrap_err("write worker config")?;
+        let config_bytes = serde_json::to_vec(&payload)?;
+        fs::write(&config_path, config_bytes)?;
         Ok(config_path)
     }
 }
