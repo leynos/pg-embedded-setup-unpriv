@@ -241,49 +241,16 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pg_embedded_setup_unpriv::test_support;
     use postgresql_embedded::{Settings, VersionReq};
     use std::collections::HashMap;
+    use std::ffi::OsString;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
-    use std::sync::{LazyLock, Mutex};
     use std::time::Duration;
-    use std::time::{SystemTime, UNIX_EPOCH};
     use tempfile::{TempDir, tempdir};
 
-    static ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-    const PG_CTL_STUB: &str = r#"#!/bin/sh
-set -eu
-data_dir=""
-expect_data=0
-for arg in "$@"; do
-  if [ "$expect_data" -eq 1 ]; then
-    data_dir="$arg"
-    break
-  fi
-  case "$arg" in
-    -D)
-      expect_data=1
-      ;;
-    -D*)
-      data_dir="${arg#-D}"
-      break
-      ;;
-    --pgdata)
-      expect_data=1
-      ;;
-    --pgdata=*)
-      data_dir="${arg#--pgdata=}"
-      break
-      ;;
-  esac
-done
-if [ -z "$data_dir" ]; then
-  echo "missing -D argument" >&2
-  exit 1
-fi
-mkdir -p "$data_dir"
-echo "12345" > "$data_dir/postmaster.pid"
-"#;
+    const PG_CTL_STUB: &str = include_str!("fixtures/pg_ctl_stub.sh");
 
     #[test]
     fn rejects_extra_argument() {
@@ -302,43 +269,29 @@ echo "12345" > "$data_dir/postmaster.pid"
 
     #[test]
     fn apply_worker_environment_uses_plaintext_and_unsets() {
-        let _guard = ENV_MUTEX
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-        let secret_key = unique_env_key("PGWORKER_SECRET_KEY");
-        let none_key = unique_env_key("PGWORKER_NONE_KEY");
-
-        unsafe {
-            // SAFETY: scoped test cleanup; single-threaded in this process.
-            env::remove_var(&secret_key);
-            env::remove_var(&none_key);
-        }
+        // Use scoped_env to ensure environment variables are cleaned up after the test
+        // and to serialise access across concurrent tests.
+        let _guard = test_support::scoped_env(vec![
+            (OsString::from("PGWORKER_SECRET_KEY"), None),
+            (OsString::from("PGWORKER_NONE_KEY"), None),
+        ]);
 
         let secret = PlainSecret::from("super-secret-value".to_owned());
-        let env_pairs = vec![(secret_key.clone(), Some(secret)), (none_key.clone(), None)];
+        let env_pairs = vec![
+            ("PGWORKER_SECRET_KEY".to_owned(), Some(secret)),
+            ("PGWORKER_NONE_KEY".to_owned(), None),
+        ];
 
         apply_worker_environment(&env_pairs);
 
-        assert_eq!(env::var(&secret_key).as_deref(), Ok("super-secret-value"));
+        assert_eq!(
+            env::var("PGWORKER_SECRET_KEY").as_deref(),
+            Ok("super-secret-value")
+        );
         assert!(matches!(
-            env::var(&none_key),
+            env::var("PGWORKER_NONE_KEY"),
             Err(env::VarError::NotPresent)
         ));
-
-        unsafe {
-            // SAFETY: scoped test cleanup; single-threaded in this process.
-            env::remove_var(secret_key);
-            env::remove_var(none_key);
-        }
-    }
-
-    fn unique_env_key(prefix: &str) -> String {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock drift")
-            .as_nanos();
-        format!("{prefix}_{pid}_{nanos}", pid = std::process::id())
     }
 
     #[test]
