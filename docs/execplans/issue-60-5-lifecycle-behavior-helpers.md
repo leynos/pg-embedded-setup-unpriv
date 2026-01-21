@@ -1,4 +1,4 @@
-# Issue 60.5: Lifecycle Behavior Helpers
+# Issue 60.5: Lifecycle Behaviour Helpers
 
 ## Overview
 
@@ -131,7 +131,7 @@ fn extract_data_dir(settings: &postgresql_embedded::Settings) -> Utf8PathBuf {
 
 **Rationale**:
 
-- Settings uses `std::path::PathBuf` but our helpers use `Utf8Path`
+- Settings uses `std::path::PathBuf` but the helpers use `Utf8Path`
 - Centralizes the conversion logic
 - Fails fast with clear error if data_dir is not valid UTF-8
 
@@ -150,6 +150,10 @@ use tracing::info;
 - `tracing::info` for idempotent operation logging
 
 ### 5. Flow Diagram
+
+This diagram illustrates the control flow of ensure_postgres_started, showing
+how it calls ensure_postgres_setup, checks if setup is complete using
+is_setup_complete, runs pg.setup, checks pg.status, and calls pg.start.
 
 ```mermaid
 flowchart TD
