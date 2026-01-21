@@ -86,18 +86,25 @@ where
     // PATH restored automatically when _env_guard drops
 }
 
+/// Creates an executable worker file with the given name in the specified directory.
+/// On Unix, sets executable permissions (0o755).
+#[cfg(unix)]
+fn create_executable_worker(dir: &std::path::Path, worker_name: &str) {
+    let worker_path = dir.join(worker_name);
+    fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
+    let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&worker_path, perms).expect("set permissions");
+}
+
 #[cfg(unix)]
 #[test]
 fn discover_worker_finds_binary_in_path() {
     let temp = tempdir().expect("create tempdir");
-    let worker_path = temp.path().join("pg_worker");
     let new_path = temp.path().to_string_lossy().to_string();
 
     let result = with_modified_path(&new_path, "pg_worker", || {
-        fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
-        let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&worker_path, perms).expect("set permissions");
+        create_executable_worker(temp.path(), "pg_worker");
     })
     .expect("should not error during worker discovery");
 
@@ -284,14 +291,10 @@ fn discover_worker_errors_on_non_utf8_path_entry() {
 #[test]
 fn discover_worker_uses_custom_worker_name() {
     let temp = tempdir().expect("create tempdir");
-    let worker_path = temp.path().join("my_custom_worker");
     let new_path = temp.path().to_string_lossy().to_string();
 
     let result = with_modified_path(&new_path, "my_custom_worker", || {
-        fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
-        let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&worker_path, perms).expect("set permissions");
+        create_executable_worker(temp.path(), "my_custom_worker");
     })
     .expect("should not error during worker discovery");
 
