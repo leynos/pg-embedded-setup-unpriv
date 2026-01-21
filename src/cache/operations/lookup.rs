@@ -17,6 +17,7 @@ const LOG_TARGET: &str = "pg_embed::cache";
 
 /// Result of a cache lookup operation.
 #[derive(Debug)]
+#[must_use]
 pub enum CacheLookupResult {
     /// Cache hit: binaries exist and are valid.
     Hit {
@@ -65,7 +66,6 @@ fn is_cache_entry_complete(version_dir: &Utf8Path) -> bool {
 ///     }
 /// }
 /// ```
-#[must_use]
 pub fn check_cache(cache_dir: &Utf8Path, version: &str) -> CacheLookupResult {
     let version_dir = cache_dir.join(version);
 

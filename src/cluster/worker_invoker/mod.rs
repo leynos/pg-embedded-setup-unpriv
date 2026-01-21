@@ -175,6 +175,16 @@ fn log_worker_dispatch(operation: WorkerOperation, worker_binary: Option<&str>, 
     );
 }
 
+/// Creates a timeout error with consistent formatting.
+///
+/// Used by both sync and async invokers to ensure consistent error messages.
+fn timeout_error(ctx: &'static str, timeout: std::time::Duration) -> BootstrapError {
+    BootstrapError::from(eyre!(
+        "{ctx}: operation timed out after {:.1}s",
+        timeout.as_secs_f64()
+    ))
+}
+
 // ============================================================================
 // Synchronous invoker
 // ============================================================================
@@ -309,12 +319,7 @@ impl<'a> WorkerInvoker<'a> {
     {
         self.runtime
             .block_on(async { tokio::time::timeout(timeout, future).await })
-            .map_err(|_| {
-                BootstrapError::from(eyre!(
-                    "{ctx}: operation timed out after {:.1}s",
-                    timeout.as_secs_f64()
-                ))
-            })?
+            .map_err(|_| timeout_error(ctx, timeout))?
             .context(ctx)
             .map_err(BootstrapError::from)
     }
@@ -441,12 +446,7 @@ where
 {
     tokio::time::timeout(timeout, future)
         .await
-        .map_err(|_| {
-            BootstrapError::from(eyre!(
-                "{ctx}: operation timed out after {:.1}s",
-                timeout.as_secs_f64()
-            ))
-        })?
+        .map_err(|_| timeout_error(ctx, timeout))?
         .context(ctx)
         .map_err(BootstrapError::from)
 }

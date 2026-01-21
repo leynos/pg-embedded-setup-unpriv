@@ -143,6 +143,7 @@ mod tests {
     use super::*;
     use crate::test_support::scoped_env;
     use camino::Utf8PathBuf;
+    use rstest::{fixture, rstest};
     use std::ffi::OsString;
     use tempfile::tempdir;
 
@@ -194,7 +195,8 @@ mod tests {
         data_path: Utf8PathBuf,
     }
 
-    /// Creates run test paths, returning None if running as root.
+    /// Fixture providing run test paths, returning `None` if running as root.
+    #[fixture]
     fn run_test_paths() -> Option<RunTestPaths> {
         if detect_execution_privileges() == ExecutionPrivileges::Root {
             tracing::warn!("skipping run test because root privileges require PG_EMBEDDED_WORKER");
@@ -216,9 +218,9 @@ mod tests {
         })
     }
 
-    #[test]
-    fn run_succeeds_with_customised_paths() {
-        let Some(paths) = run_test_paths() else {
+    #[rstest]
+    fn run_succeeds_with_customised_paths(run_test_paths: Option<RunTestPaths>) {
+        let Some(paths) = run_test_paths else {
             return;
         };
 
@@ -252,7 +254,8 @@ mod tests {
         cache_path: Utf8PathBuf,
     }
 
-    /// Creates bootstrap test paths, returning None if running as root.
+    /// Fixture providing bootstrap test paths, returning `None` if running as root.
+    #[fixture]
     fn bootstrap_paths() -> Option<BootstrapPaths> {
         if detect_execution_privileges() == ExecutionPrivileges::Root {
             tracing::warn!(
@@ -296,9 +299,9 @@ mod tests {
         orchestrate_bootstrap().expect("bootstrap to succeed")
     }
 
-    #[test]
-    fn orchestrate_bootstrap_propagates_binary_cache_dir() {
-        let Some(paths) = bootstrap_paths() else {
+    #[rstest]
+    fn orchestrate_bootstrap_propagates_binary_cache_dir(bootstrap_paths: Option<BootstrapPaths>) {
+        let Some(paths) = bootstrap_paths else {
             return;
         };
 

@@ -88,12 +88,37 @@ fn read_postmaster_port_with_retry(pid_path: &Path) -> BootstrapResult<Option<u1
 #[cfg(feature = "async-api")]
 async fn read_postmaster_port_with_retry_async(pid_path: &Path) -> BootstrapResult<Option<u16>> {
     for _ in 0..POSTMASTER_PORT_ATTEMPTS {
-        if let Some(port) = read_postmaster_port(pid_path)? {
+        if let Some(port) = read_postmaster_port_async(pid_path).await? {
             return Ok(Some(port));
         }
         tokio::time::sleep(POSTMASTER_PORT_DELAY).await;
     }
     Ok(None)
+}
+
+/// Reads the port from a postmaster.pid file (async).
+///
+/// Returns `Ok(None)` for retryable conditions: file not found, missing port line,
+/// or unparseable port value. Returns `Err` only for unexpected I/O errors.
+#[cfg(feature = "async-api")]
+async fn read_postmaster_port_async(pid_path: &Path) -> BootstrapResult<Option<u16>> {
+    let Some(contents) = read_pid_file_contents_async(pid_path).await? else {
+        return Ok(None);
+    };
+    Ok(parse_port_from_pid_contents(&contents, pid_path))
+}
+
+/// Reads the contents of a postmaster.pid file if it exists (async).
+#[cfg(feature = "async-api")]
+async fn read_pid_file_contents_async(pid_path: &Path) -> BootstrapResult<Option<String>> {
+    match tokio::fs::read_to_string(pid_path).await {
+        Ok(contents) => Ok(Some(contents)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(crate::error::BootstrapError::from(eyre!(
+            "failed to read postmaster pid at {}: {err}",
+            pid_path.display()
+        ))),
+    }
 }
 
 /// Reads the port from a postmaster.pid file.

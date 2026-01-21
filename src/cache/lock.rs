@@ -97,9 +97,19 @@ impl CacheLock {
         // because `file` was opened via `OpenOptions::open` and remains owned by
         // this scope until after the `flock` call completes. No other code moves
         // or closes the descriptor while this block runs.
-        let result = unsafe { libc::flock(file.as_raw_fd(), flock_arg) };
-        if result != 0 {
-            return Err(io::Error::last_os_error());
+        //
+        // Retry loop handles EINTR, which can occur when the process receives a
+        // signal while blocked on flock.
+        loop {
+            let result = unsafe { libc::flock(file.as_raw_fd(), flock_arg) };
+            if result == 0 {
+                break;
+            }
+            let err = io::Error::last_os_error();
+            if err.kind() != io::ErrorKind::Interrupted {
+                return Err(err);
+            }
+            // EINTR: signal interrupted syscall, retry.
         }
 
         Ok(Self { _file: file })
@@ -210,5 +220,35 @@ mod tests {
         // Different versions should not block each other
         drop(lock1);
         drop(lock2);
+    }
+
+    #[rstest]
+    #[case::parent_dir_exclusive("..")]
+    #[case::parent_dir_shared("..")]
+    #[case::path_separator_exclusive("foo/bar")]
+    #[case::path_separator_shared("foo/bar")]
+    #[case::parent_in_path_exclusive("../17.4.0")]
+    #[case::absolute_path_exclusive("/etc/passwd")]
+    fn acquire_rejects_invalid_version_strings(
+        cache_fixture: (TempDir, camino::Utf8PathBuf),
+        #[case] invalid_version: &str,
+    ) {
+        let (_temp, cache_dir) = cache_fixture;
+
+        let exclusive_err = CacheLock::acquire_exclusive(&cache_dir, invalid_version)
+            .expect_err("acquire_exclusive should reject invalid version");
+        assert_eq!(
+            exclusive_err.kind(),
+            io::ErrorKind::InvalidInput,
+            "error kind should be InvalidInput for: {invalid_version}"
+        );
+
+        let shared_err = CacheLock::acquire_shared(&cache_dir, invalid_version)
+            .expect_err("acquire_shared should reject invalid version");
+        assert_eq!(
+            shared_err.kind(),
+            io::ErrorKind::InvalidInput,
+            "error kind should be InvalidInput for: {invalid_version}"
+        );
     }
 }

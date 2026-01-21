@@ -65,7 +65,8 @@ fn try_stage_worker_binary(original: &OsString) -> io::Result<OsString> {
         io::Error::new(io::ErrorKind::InvalidInput, "worker path missing filename")
     })?;
 
-    // Compute staging directory in /tmp and find target directory for pointer file
+    // Compute staging directory in the system temporary directory and find target
+    // directory for the pointer file.
     let (staged_dir, target_profile_dir) = find_staging_directory(&source);
 
     // Security: Create staging directory with validation against symlink attacks
@@ -251,7 +252,8 @@ fn compute_path_hash(source: &std::path::Path) -> String {
 
 /// Writes a pointer file to the target directory for discoverability and cleanup.
 ///
-/// The pointer file contains the full path to the staged binary in `/tmp`.
+/// The pointer file contains the full path to the staged binary in the system
+/// temporary directory.
 #[cfg(unix)]
 fn write_pointer_file(
     target_dir: &std::path::Path,

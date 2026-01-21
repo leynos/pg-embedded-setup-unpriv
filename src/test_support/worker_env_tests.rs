@@ -78,14 +78,13 @@ fn staged_worker_is_world_executable_and_in_temp_dir(debug_target_dir: tempfile:
         "staged worker should be executable by others"
     );
 
-    // Verify the temp directory has the expected permissions: world-writable with sticky bit.
-    // The sticky bit restricts deletion/renaming of files by other users, but does
-    // not prevent read or execute access to the directory itself.
+    // The system temp directory (typically /tmp) is usually world-writable with sticky bit
+    // (mode 1777). We only assert world-executable (0o001) since that's what's required
+    // for the nobody user to traverse the directory and access the staged binary.
     let tmp_meta = fs::metadata(&temp_dir).expect("temp dir must exist for staging to work");
     assert!(tmp_meta.is_dir(), "temp dir must be a directory");
     let tmp_mode = tmp_meta.permissions().mode();
 
-    // World-executable (anyone can traverse the directory)
     assert_ne!(
         tmp_mode & 0o001,
         0,
