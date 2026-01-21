@@ -402,6 +402,7 @@ fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::env::ENV_LOCK;
     use std::ffi::OsStr;
     use std::fs;
     use tempfile::tempdir;
@@ -458,13 +459,20 @@ mod tests {
     /// Executes `discover_worker_from_path()` with a modified PATH, restoring
     /// the original value afterwards. The `setup` closure runs after PATH is
     /// changed but before discovery, allowing custom test setup.
+    ///
+    /// Acquires `ENV_LOCK` to prevent races with other tests that modify
+    /// environment variables.
     fn with_modified_path<F>(new_path: &str, setup: F) -> Option<Utf8PathBuf>
     where
         F: FnOnce(),
     {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
         let original_path = std::env::var_os("PATH");
         unsafe {
-            // SAFETY: test is single-threaded for this env modification
+            // SAFETY: ENV_LOCK serialises access to environment variables
             std::env::set_var("PATH", new_path);
         }
 
