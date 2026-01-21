@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use color_eyre::eyre::{Context, Report, Result, ensure, eyre};
 use pg_embedded_setup_unpriv::test_support::capture_info_logs_with_spans;
-use pg_embedded_setup_unpriv::{BootstrapResult, TestCluster};
+use pg_embedded_setup_unpriv::{BootstrapResult, TestCluster, WorkerOperation};
 use rstest::fixture;
 use rstest_bdd_macros::{given, scenario, then, when};
 
@@ -178,11 +178,10 @@ fn then_logs_cover_lifecycle(world: &WorldFixture) -> Result<()> {
     assert_env_application_logged(&world_ref.logs)?;
     assert_env_summary_logged(&world_ref.logs)?;
 
-    let install = world_ref.sandbox.install_dir().to_string();
-    assert_directory_mutation_logged(&world_ref.logs, &install)?;
+    assert_directory_mutation_logged(&world_ref.logs, world_ref.sandbox.install_dir())?;
 
-    assert_lifecycle_operation_logged(&world_ref.logs, "setup")?;
-    assert_lifecycle_operation_logged(&world_ref.logs, "start")?;
+    assert_lifecycle_operation_logged(&world_ref.logs, WorkerOperation::Setup)?;
+    assert_lifecycle_operation_logged(&world_ref.logs, WorkerOperation::Start)?;
     assert_stop_logged(&world_ref.logs)?;
     Ok(())
 }
@@ -227,12 +226,18 @@ fn then_logs_capture_failure(world: &WorldFixture) -> Result<()> {
     Ok(())
 }
 
-fn matches_lifecycle_operation(line: &str, operation: &str) -> bool {
-    let operation_marker = format!("operation=\"{operation}\"");
-    (line.contains("lifecycle operation completed")
+fn matches_lifecycle_operation(line: &str, operation: WorkerOperation) -> bool {
+    let operation_marker = format!("operation=\"{}\"", operation.as_str());
+    let matches_span = (line.contains("lifecycle operation completed")
         || line.contains("lifecycle_operation")
         || line.contains("worker operation completed successfully"))
-        && line.contains(&operation_marker)
+        && line.contains(&operation_marker);
+
+    // Stop operation is logged via cluster drop path, not the lifecycle_operation span.
+    let matches_stop_log = matches!(operation, WorkerOperation::Stop)
+        && line.contains("stopping embedded postgres cluster");
+
+    matches_span || matches_stop_log
 }
 
 fn assert_env_application_logged(logs: &[String]) -> Result<()> {
@@ -254,10 +259,11 @@ fn assert_env_summary_logged(logs: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn assert_directory_mutation_logged(logs: &[String], install_dir: &str) -> Result<()> {
+fn assert_directory_mutation_logged(logs: &[String], install_dir: &Utf8Path) -> Result<()> {
+    let install_dir_str = install_dir.as_str();
     ensure!(
         logs.iter().any(|line| {
-            line.contains("ensured directory exists") && line.contains(install_dir)
+            line.contains("ensured directory exists") && line.contains(install_dir_str)
         }),
         "expected directory mutation log for install dir, got {:?}",
         logs
@@ -265,38 +271,19 @@ fn assert_directory_mutation_logged(logs: &[String], install_dir: &str) -> Resul
     Ok(())
 }
 
-fn assert_lifecycle_operation_logged(logs: &[String], operation: &str) -> Result<()> {
-    match operation {
-        "setup" => ensure!(
-            logs.iter()
-                .any(|line| matches_lifecycle_operation(line, operation)),
-            "expected setup lifecycle log or span, got {:?}",
-            logs
-        ),
-        "start" => ensure!(
-            logs.iter()
-                .any(|line| matches_lifecycle_operation(line, operation)),
-            "expected start lifecycle log or span, got {:?}",
-            logs
-        ),
-        _ => ensure!(
-            logs.iter()
-                .any(|line| matches_lifecycle_operation(line, operation)),
-            "expected lifecycle log or span, got {:?}",
-            logs
-        ),
-    }
+fn assert_lifecycle_operation_logged(logs: &[String], operation: WorkerOperation) -> Result<()> {
+    ensure!(
+        logs.iter()
+            .any(|line| matches_lifecycle_operation(line, operation)),
+        "expected {} lifecycle log or span, got {:?}",
+        operation.as_str(),
+        logs
+    );
     Ok(())
 }
 
 fn assert_stop_logged(logs: &[String]) -> Result<()> {
-    ensure!(
-        logs.iter()
-            .any(|line| line.contains("stopping embedded postgres cluster")),
-        "expected stop log, got {:?}",
-        logs
-    );
-    Ok(())
+    assert_lifecycle_operation_logged(logs, WorkerOperation::Stop)
 }
 
 fn permission_denied_in_chain(report: &Report) -> bool {
