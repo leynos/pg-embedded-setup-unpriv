@@ -3,6 +3,7 @@
 use postgresql_embedded::{Settings, VersionReq};
 use std::collections::HashMap;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
@@ -89,6 +90,7 @@ pub fn write_pg_ctl_stub(bin_dir: &Path) -> Result<(), std::io::Error> {
     let pg_ctl_path = bin_dir.join("pg_ctl");
     fs::write(&pg_ctl_path, PG_CTL_STUB)?;
     let mut permissions = fs::metadata(&pg_ctl_path)?.permissions();
+    #[cfg(unix)]
     permissions.set_mode(0o755);
     fs::set_permissions(&pg_ctl_path, permissions)?;
     Ok(())
