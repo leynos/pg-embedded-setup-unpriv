@@ -11,8 +11,10 @@ use tempfile::TempDir;
 
 use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
 
+/// Boxed error type for test helpers: dyn `std::error::Error` + Send + Sync
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// Shell script stub used to simulate `pg_ctl` in tests
 pub const PG_CTL_STUB: &str = include_str!("fixtures/pg_ctl_stub.sh");
 
 /// Trait for environment variable operations, allowing mock implementations in tests.
@@ -29,6 +31,24 @@ pub struct MockEnvironment {
 }
 
 impl MockEnvironment {
+    /// Retrieves an environment variable by key.
+    ///
+    /// Returns `Some(String)` if the variable exists in this mock environment,
+    /// or `None` if it is absent. This method is thread-safe and will panic if
+    /// the internal mutex is poisoned.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex guarding the environment map is poisoned.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let env = MockEnvironment::default();
+    /// env.set_var("HOME", "/home/test");
+    /// assert_eq!(env.get("HOME"), Some("/home/test".to_string()));
+    /// assert_eq!(env.get("NONEXISTENT"), None);
+    /// ```
     pub fn get(&self, key: &str) -> Option<String> {
         self.vars
             .lock()
