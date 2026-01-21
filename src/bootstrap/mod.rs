@@ -3,6 +3,8 @@
 //! Provides [`bootstrap_for_tests`] so suites can retrieve structured settings and
 //! prepared environment variables without reimplementing bootstrap orchestration.
 mod env;
+#[cfg(test)]
+mod env_tests;
 mod mode;
 mod prepare;
 
