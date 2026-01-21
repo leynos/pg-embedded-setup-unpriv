@@ -183,9 +183,8 @@ fn extract_data_dir(settings: &postgresql_embedded::Settings) -> Result<Utf8Path
         .map_err(|_| WorkerError::SettingsConversion("data_dir must be valid UTF-8".into()))
 }
 
-fn has_valid_data_dir(_pg: &PostgreSQL, data_dir: &Utf8Path) -> bool {
-    let pg_version = data_dir.join("PG_VERSION");
-    pg_version.exists()
+fn has_valid_data_dir(data_dir: &Utf8Path) -> bool {
+    data_dir.is_dir() && data_dir.join("PG_VERSION").exists()
 }
 
 #[expect(
@@ -196,12 +195,12 @@ async fn ensure_postgres_setup(
     pg: &mut PostgreSQL,
     data_dir: &Utf8Path,
 ) -> Result<(), WorkerError> {
-    if has_valid_data_dir(pg, data_dir) {
+    if has_valid_data_dir(data_dir) {
         info!("PostgreSQL setup already complete, skipping redundant setup");
         return Ok(());
     }
 
-    info!("PostgreSQL data directory not initialised, running setup");
+    info!("PostgreSQL data directory not initialized, running setup");
     pg.setup()
         .await
         .map_err(|e| WorkerError::PostgresOperation(format!("setup failed: {e}")))

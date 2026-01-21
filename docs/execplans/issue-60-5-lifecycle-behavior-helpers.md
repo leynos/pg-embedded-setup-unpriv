@@ -26,38 +26,23 @@ The `postgresql_embedded` crate provides a `Status` enum:
 
 ### 1. Helper Functions
 
-#### `has_valid_data_dir(pg: &PostgreSQL, data_dir: &Utf8Path) -> bool`
+#### `has_valid_data_dir(data_dir: &Utf8Path) -> bool`
 
 **Purpose**: Check if the data directory is a valid PostgreSQL data directory.
 
 **Implementation**:
 
 - Check if the directory exists
-- Check if `PG_VERSION` file exists (indicates initialised PostgreSQL data
+- Check if `PG_VERSION` file exists (indicates initialized PostgreSQL data
   directory)
 - Optionally check if `postmaster.pid` exists (indicates running server)
 - Return `true` only if directory exists and contains `PG_VERSION`
 
 **Rationale**:
 
-- `PG_VERSION` is canonical marker for a PostgreSQL data directory
+- `PG_VERSION` is a canonical marker for a PostgreSQL data directory
 - Created during `pg.setup()` and persists through start/stop cycles
 - This aligns with PostgreSQL's own data directory validation
-
-#### `reset_data_dir(data_dir: &Utf8Path) -> Result<(), BoxError>`
-
-**Purpose**: Remove the data directory to force a fresh setup.
-
-**Implementation**:
-
-- Use `fs::remove_dir_all()` to recursively remove the directory
-- Handle `NotFound` errors gracefully (directory already removed)
-- Return appropriate errors for permission issues or other IO errors
-
-**Rationale**:
-
-- Needed when data directory is corrupted or needs re-initialisation
-- Follows pattern used in `tests/support/cap_fs_bootstrap.rs::remove_tree()`
 
 #### `ensure_postgres_setup(pg: &mut PostgreSQL, data_dir: &Utf8Path)
 
@@ -69,8 +54,7 @@ The `postgresql_embedded` crate provides a `Status` enum:
 
 - Call `has_valid_data_dir()` to check if setup is needed
 - If not valid:
-  - Call `reset_data_dir()` to remove any incomplete or corrupted data
-  - Call `pg.setup().await` to initialise the data directory
+  - Call `pg.setup().await` to initialize the data directory
   - Return any errors with descriptive context
 - If already valid:
   - Log that setup is being skipped (using `tracing::info!`)
@@ -171,18 +155,17 @@ flowchart TD
     subgraph SetupPath [ensure_postgres_setup]
         B --> C[Call has_valid_data_dir]
         C -->|true| D[Log skip setup]
-        C -->|false| E[Call reset_data_dir]
-        E --> F[Call pg.setup]
-        F --> G[Return from ensure_postgres_setup]
-        D --> G
+        C -->|false| E[Call pg.setup]
+        E --> F[Return from ensure_postgres_setup]
+        D --> F
     end
-    G --> H[Call pg.status]
-    H --> I{Status == Started}
-    I -->|yes| J[Log skip start]
-    I -->|no| K[Call pg.start]
-    J --> L[Return Ok from ensure_postgres_started]
-    K --> L
-    L --> M[End ensure_postgres_started]
+    F --> G[Call pg.status]
+    G --> H{Status == Started}
+    H -->|yes| I[Log skip start]
+    H -->|no| J[Call pg.start]
+    I --> K[Return Ok from ensure_postgres_started]
+    J --> K
+    K --> L[End ensure_postgres_started]
 ```
 
 **Figure:** Lifecycle flow for `ensure_postgres_started` showing setup
@@ -192,12 +175,11 @@ validation and idempotent start logic.
 
 1. Add imports (`Utf8Path`, `tracing::info`)
 2. Implement `has_valid_data_dir()` helper
-3. Implement `reset_data_dir()` helper
-4. Implement `ensure_postgres_setup()` helper
-5. Implement `ensure_postgres_started()` helper
-6. Add `extract_data_dir()` helper
-7. Update `run_worker()` to extract data_dir and pass to helpers
-8. Update operation dispatch to use new helpers
+3. Implement `ensure_postgres_setup()` helper
+4. Implement `ensure_postgres_started()` helper
+5. Add `extract_data_dir()` helper
+6. Update `run_worker()` to extract data_dir and pass to helpers
+7. Update operation dispatch to use new helpers
 
 ## Testing Considerations
 
@@ -211,7 +193,6 @@ validation and idempotent start logic.
 - Calling `setup` twice should succeed (idempotent)
 - Calling `start` twice should succeed (idempotent)
 - Calling `start` without prior `setup` should succeed (helper ensures setup)
-- Corrupted data directory should be cleaned and re-initialised
 
 ## Error Messages
 
@@ -240,30 +221,25 @@ info!("PostgreSQL already started, skipping redundant start");
 
 ### Internal patterns (already available)
 
-- `fs::remove_dir_all()` for directory removal
 - `std::path::Path` for path operations
 
 ## Open Questions
 
-1. **Should `reset_data_dir` be exposed publicly?**
-   - Currently private helper only used internally
-   - Future tests might need to force a clean state
+1. **Should we check for `postmaster.pid` in `has_valid_data_dir`?**
+    - Only `PG_VERSION` needed to detect initialized data dir
+    - `postmaster.pid` indicates running state (not validity)
 
-2. **Should we check for `postmaster.pid` in `has_valid_data_dir`?**
-   - Only `PG_VERSION` needed to detect initialised data dir
-   - `postmaster.pid` indicates running state (not validity)
-
-3. **Log level for idempotent skips?**
-   - `info` level as currently planned
-   - Alternative: `debug` level to reduce noise
+2. **Log level for idempotent skips?**
+    - `info` level as currently planned
+    - Alternative: `debug` level to reduce noise
 
 ## Notes
 
 - The `postgresql_embedded::setup()` method already checks if data directory
-  exists and skips initialisation if present
-- However, we still need `has_valid_data_dir()` to detect partial/corrupted
+  exists and skips initialization if present
+- However, `has_valid_data_dir()` is still needed to detect partial/corrupted
   setups
-- The `Status::Stopped` variant indicates data dir is initialised but server
+- The `Status::Stopped` variant indicates data dir is initialized but server
   not running
 - This implementation ensures robust state management across all operation
   sequences
