@@ -23,7 +23,7 @@ for arg in "$@"; do
     --pgdata=*)
       data_dir="${arg#--pgdata=}"
       ;;
-    start|stop|status)
+    initdb|start|stop|status)
       command="$arg"
       ;;
   esac
@@ -35,17 +35,26 @@ if [ -z "$data_dir" ]; then
 fi
 
 case "$command" in
+  initdb)
+    mkdir -p "$data_dir"
+    echo "16" > "$data_dir/PG_VERSION"
+    echo "pg_ctl_stub initdb: created PG_VERSION in $data_dir" >&2
+    ;;
   start)
     mkdir -p "$data_dir"
     echo "12345" > "$data_dir/postmaster.pid"
+    echo "pg_ctl_stub start: created postmaster.pid in $data_dir" >&2
     ;;
   stop)
     rm -f "$data_dir/postmaster.pid"
+    echo "pg_ctl_stub stop: removed postmaster.pid from $data_dir" >&2
     ;;
   status)
     if [ -f "$data_dir/postmaster.pid" ]; then
+      echo "pg_ctl_stub status: running (found postmaster.pid in $data_dir)" >&2
       exit 0
     else
+      echo "pg_ctl_stub status: not running (no postmaster.pid in $data_dir)" >&2
       exit 3
     fi
     ;;
