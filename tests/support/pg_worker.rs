@@ -226,63 +226,21 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
 }
 
 #[cfg(test)]
+#[path = "pg_worker_helpers.rs"]
+mod pg_worker_helpers;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use postgresql_embedded::{Settings, VersionReq};
-    use std::collections::HashMap;
     use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::PermissionsExt;
-    use std::path::Path;
-    use std::time::Duration;
-    use tempfile::{TempDir, tempdir};
+    use tempfile::tempdir;
 
-    const PG_CTL_STUB: &str = include_str!("fixtures/pg_ctl_stub.sh");
-
-    /// Trait for environment variable operations, allowing mock implementations in tests.
-    trait EnvironmentOperations {
-        fn set_var(&self, key: &str, value: &str);
-        fn remove_var(&self, key: &str);
-    }
-
-    /// Mock environment implementation for tests that tracks environment operations
-    /// without actually mutating the process environment.
-    #[derive(Debug, Default)]
-    struct MockEnvironment {
-        vars: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
-    }
-
-    impl MockEnvironment {
-        fn get(&self, key: &str) -> Option<String> {
-            self.vars.lock().ok()?.get(key).cloned()
-        }
-    }
-
-    impl EnvironmentOperations for MockEnvironment {
-        fn set_var(&self, key: &str, value: &str) {
-            let mut vars = self.vars.lock().expect("mock env mutex poisoned");
-            vars.insert(key.to_owned(), value.to_owned());
-        }
-
-        fn remove_var(&self, key: &str) {
-            let mut vars = self.vars.lock().expect("mock env mutex poisoned");
-            vars.remove(key);
-        }
-    }
-
-    /// Applies environment overrides using the provided operations implementation.
-    fn apply_worker_environment_with<E>(env_ops: &E, environment: &[(String, Option<PlainSecret>)])
-    where
-        E: EnvironmentOperations,
-    {
-        for (key, value) in environment {
-            match value {
-                Some(env_value) => env_ops.set_var(key, env_value.expose()),
-                None => env_ops.remove_var(key),
-            }
-        }
-    }
+    use pg_worker_helpers::{
+        MockEnvironment, apply_worker_environment_with, build_settings, write_pg_ctl_stub,
+        write_worker_config,
+    };
 
     #[test]
     fn rejects_extra_argument() {
@@ -369,45 +327,5 @@ mod tests {
                 "expected WorkerError::InvalidArgs for non-UTF-8 config path, got: {other:?}"
             ),
         }
-    }
-
-    fn write_pg_ctl_stub(bin_dir: &Path) -> Result<(), std::io::Error> {
-        fs::create_dir_all(bin_dir)?;
-        let pg_ctl_path = bin_dir.join("pg_ctl");
-        fs::write(&pg_ctl_path, PG_CTL_STUB)?;
-        let mut permissions = fs::metadata(&pg_ctl_path)?.permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&pg_ctl_path, permissions)?;
-        Ok(())
-    }
-
-    fn build_settings(
-        temp_root: &TempDir,
-        install_dir: PathBuf,
-        data_dir: PathBuf,
-    ) -> Result<Settings, BoxError> {
-        Ok(Settings {
-            releases_url: "https://example.invalid/releases".into(),
-            version: VersionReq::parse("=16.4.0")?,
-            installation_dir: install_dir,
-            password_file: temp_root.path().join("pgpass"),
-            data_dir,
-            host: "127.0.0.1".into(),
-            port: 54_321,
-            username: "postgres".into(),
-            password: "postgres".into(),
-            temporary: false,
-            timeout: Some(Duration::from_secs(5)),
-            configuration: HashMap::new(),
-            trust_installation_dir: true,
-        })
-    }
-
-    fn write_worker_config(temp_root: &TempDir, settings: &Settings) -> Result<PathBuf, BoxError> {
-        let payload = WorkerPayload::new(settings, Vec::new())?;
-        let config_path = temp_root.path().join("config.json");
-        let config_bytes = serde_json::to_vec(&payload)?;
-        fs::write(&config_path, config_bytes)?;
-        Ok(config_path)
     }
 }
