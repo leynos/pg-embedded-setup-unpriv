@@ -48,6 +48,7 @@ fn to_settings_roundtrip() -> color_eyre::Result<()> {
         runtime_dir: Some(Utf8PathBuf::from("/tmp/runtime")),
         locale: Some("en_US".into()),
         encoding: Some("UTF8".into()),
+        binary_cache_dir: None,
     };
     let settings = cfg.to_settings()?;
     let expected_version = VersionReq::parse("=16.4.0").map_err(|err| eyre!(err))?;
@@ -80,6 +81,11 @@ fn to_settings_roundtrip() -> color_eyre::Result<()> {
             .is_some_and(|value| value == "UTF8"),
         "encoding should be recorded in the configuration map",
     );
+
+    // Note: binary_cache_dir is not propagated through to_settings() as it is
+    // specific to this crate's cache system, not postgresql_embedded::Settings.
+    // See bootstrap module tests for binary_cache_dir propagation coverage.
+
     Ok(())
 }
 

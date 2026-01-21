@@ -47,6 +47,11 @@ pub struct TestBootstrapSettings {
     pub start_timeout: Duration,
     /// Grace period granted to `PostgreSQL` during drop before teardown proceeds regardless.
     pub shutdown_timeout: Duration,
+    /// Optional override for the binary cache directory.
+    ///
+    /// When set, `TestCluster` uses this directory instead of the default
+    /// resolved from environment variables.
+    pub binary_cache_dir: Option<camino::Utf8PathBuf>,
 }
 
 /// Bootstraps an embedded `PostgreSQL` instance, branching between root and unprivileged flows.
@@ -129,15 +134,28 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
         setup_timeout: DEFAULT_SETUP_TIMEOUT,
         start_timeout: DEFAULT_START_TIMEOUT,
         shutdown_timeout,
+        binary_cache_dir: cfg.binary_cache_dir,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::scoped_env;
     use camino::Utf8PathBuf;
-    use temp_env::with_vars;
+    use rstest::{fixture, rstest};
+    use std::ffi::OsString;
     use tempfile::tempdir;
+
+    /// Converts string key-value pairs to `OsString` pairs for `scoped_env`.
+    fn env_vars<const N: usize>(
+        pairs: [(&str, Option<&str>); N],
+    ) -> Vec<(OsString, Option<OsString>)> {
+        pairs
+            .into_iter()
+            .map(|(k, v)| (OsString::from(k), v.map(OsString::from)))
+            .collect()
+    }
 
     #[test]
     fn orchestrate_bootstrap_respects_env_overrides() {
@@ -155,27 +173,34 @@ mod tests {
         let data_path =
             Utf8PathBuf::from_path_buf(data.path().to_path_buf()).expect("data dir utf8");
 
-        let settings = with_vars(
-            [
-                ("PG_RUNTIME_DIR", Some(runtime_path.as_str())),
-                ("PG_DATA_DIR", Some(data_path.as_str())),
-                ("PG_SUPERUSER", Some("bootstrap_test")),
-                ("PG_PASSWORD", Some("bootstrap_test_pw")),
-                ("PG_EMBEDDED_WORKER", None),
-            ],
-            || orchestrate_bootstrap().expect("bootstrap to succeed"),
-        );
+        let _guard = scoped_env(env_vars([
+            ("PG_RUNTIME_DIR", Some(runtime_path.as_str())),
+            ("PG_DATA_DIR", Some(data_path.as_str())),
+            ("PG_SUPERUSER", Some("bootstrap_test")),
+            ("PG_PASSWORD", Some("bootstrap_test_pw")),
+            ("PG_EMBEDDED_WORKER", None),
+        ]));
+        let settings = orchestrate_bootstrap().expect("bootstrap to succeed");
 
         assert_paths(&settings, &runtime_path, &data_path);
         assert_identity(&settings, "bootstrap_test", "bootstrap_test_pw");
         assert_environment(&settings, &runtime_path);
     }
 
-    #[test]
-    fn run_succeeds_with_customised_paths() {
+    /// Holds temporary directories for `run()` tests.
+    struct RunTestPaths {
+        _runtime: tempfile::TempDir,
+        _data: tempfile::TempDir,
+        runtime_path: Utf8PathBuf,
+        data_path: Utf8PathBuf,
+    }
+
+    /// Fixture providing run test paths, returning `None` if running as root.
+    #[fixture]
+    fn run_test_paths() -> Option<RunTestPaths> {
         if detect_execution_privileges() == ExecutionPrivileges::Root {
             tracing::warn!("skipping run test because root privileges require PG_EMBEDDED_WORKER");
-            return;
+            return None;
         }
 
         let runtime = tempdir().expect("runtime dir");
@@ -185,22 +210,107 @@ mod tests {
         let data_path =
             Utf8PathBuf::from_path_buf(data.path().to_path_buf()).expect("data dir utf8");
 
-        with_vars(
-            [
-                ("PG_RUNTIME_DIR", Some(runtime_path.as_str())),
-                ("PG_DATA_DIR", Some(data_path.as_str())),
-                ("PG_SUPERUSER", Some("bootstrap_run")),
-                ("PG_PASSWORD", Some("bootstrap_run_pw")),
-                ("PG_EMBEDDED_WORKER", None),
-            ],
-            || {
-                run().expect("run should bootstrap successfully");
+        Some(RunTestPaths {
+            _runtime: runtime,
+            _data: data,
+            runtime_path,
+            data_path,
+        })
+    }
 
-                let cache_dir = runtime_path.join("cache");
-                let run_dir = runtime_path.join("run");
-                assert!(cache_dir.exists(), "cache directory should be created");
-                assert!(run_dir.exists(), "runtime directory should be created");
-            },
+    #[rstest]
+    fn run_succeeds_with_customised_paths(run_test_paths: Option<RunTestPaths>) {
+        let Some(paths) = run_test_paths else {
+            return;
+        };
+
+        let _guard = scoped_env(env_vars([
+            ("PG_RUNTIME_DIR", Some(paths.runtime_path.as_str())),
+            ("PG_DATA_DIR", Some(paths.data_path.as_str())),
+            ("PG_SUPERUSER", Some("bootstrap_run")),
+            ("PG_PASSWORD", Some("bootstrap_run_pw")),
+            ("PG_EMBEDDED_WORKER", None),
+        ]));
+
+        run().expect("run should bootstrap successfully");
+
+        assert!(
+            paths.runtime_path.join("cache").exists(),
+            "cache directory should be created"
+        );
+        assert!(
+            paths.runtime_path.join("run").exists(),
+            "runtime directory should be created"
+        );
+    }
+
+    /// Holds temporary directories and their UTF-8 paths for bootstrap tests.
+    struct BootstrapPaths {
+        _runtime: tempfile::TempDir,
+        _data: tempfile::TempDir,
+        _cache: tempfile::TempDir,
+        runtime_path: Utf8PathBuf,
+        data_path: Utf8PathBuf,
+        cache_path: Utf8PathBuf,
+    }
+
+    /// Fixture providing bootstrap test paths, returning `None` if running as root.
+    #[fixture]
+    fn bootstrap_paths() -> Option<BootstrapPaths> {
+        if detect_execution_privileges() == ExecutionPrivileges::Root {
+            tracing::warn!(
+                "skipping orchestrate test because root privileges require PG_EMBEDDED_WORKER"
+            );
+            return None;
+        }
+
+        let runtime = tempdir().expect("runtime dir");
+        let data = tempdir().expect("data dir");
+        let cache = tempdir().expect("cache dir");
+        let runtime_path =
+            Utf8PathBuf::from_path_buf(runtime.path().to_path_buf()).expect("runtime dir utf8");
+        let data_path =
+            Utf8PathBuf::from_path_buf(data.path().to_path_buf()).expect("data dir utf8");
+        let cache_path =
+            Utf8PathBuf::from_path_buf(cache.path().to_path_buf()).expect("cache dir utf8");
+
+        Some(BootstrapPaths {
+            _runtime: runtime,
+            _data: data,
+            _cache: cache,
+            runtime_path,
+            data_path,
+            cache_path,
+        })
+    }
+
+    /// Runs `orchestrate_bootstrap` with cache-related environment variables set.
+    ///
+    /// Uses the mutex-protected `scoped_env` to avoid racing with other tests.
+    fn orchestrate_with_cache_env(paths: &BootstrapPaths) -> TestBootstrapSettings {
+        let _guard = scoped_env(env_vars([
+            ("PG_RUNTIME_DIR", Some(paths.runtime_path.as_str())),
+            ("PG_DATA_DIR", Some(paths.data_path.as_str())),
+            ("PG_BINARY_CACHE_DIR", Some(paths.cache_path.as_str())),
+            ("PG_SUPERUSER", Some("cache_test")),
+            ("PG_PASSWORD", Some("cache_test_pw")),
+            ("PG_EMBEDDED_WORKER", None),
+        ]));
+        orchestrate_bootstrap().expect("bootstrap to succeed")
+    }
+
+    #[rstest]
+    fn orchestrate_bootstrap_propagates_binary_cache_dir(bootstrap_paths: Option<BootstrapPaths>) {
+        let Some(paths) = bootstrap_paths else {
+            return;
+        };
+
+        let settings = orchestrate_with_cache_env(&paths);
+
+        assert_eq!(
+            settings.binary_cache_dir,
+            Some(paths.cache_path.clone()),
+            "binary_cache_dir should propagate from PG_BINARY_CACHE_DIR"
         );
     }
 
