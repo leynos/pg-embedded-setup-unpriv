@@ -38,7 +38,7 @@
 #![cfg(unix)]
 
 use camino::{Utf8Path, Utf8PathBuf};
-use cap_std::{ambient_authority, fs::Dir};
+use pg_embedded_setup_unpriv::test_support::ambient_dir_and_path;
 use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
 use postgresql_embedded::PostgreSQL;
 use std::env;
@@ -159,22 +159,6 @@ fn read_config_file(path: &Utf8Path) -> Result<Vec<u8>, BoxError> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
     Ok(bytes)
-}
-
-fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf), BoxError> {
-    if path.is_absolute() {
-        let Some(parent) = path.parent() else {
-            return Err(format!("cannot resolve absolute path without parent: {path}").into());
-        };
-        let dir = Dir::open_ambient_dir(parent.as_std_path(), ambient_authority())?;
-        let relative = path
-            .file_name()
-            .ok_or_else(|| format!("path has no file name component: {path}"))?;
-        Ok((dir, Utf8PathBuf::from(relative)))
-    } else {
-        let dir = Dir::open_ambient_dir(".", ambient_authority())?;
-        Ok((dir, path.to_path_buf()))
-    }
 }
 
 fn build_runtime() -> Result<tokio::runtime::Runtime, WorkerError> {
