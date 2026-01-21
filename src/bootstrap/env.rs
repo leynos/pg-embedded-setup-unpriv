@@ -142,6 +142,36 @@ pub(crate) fn parse_worker_path_from_env(raw: &std::ffi::OsStr) -> BootstrapResu
     Ok(path)
 }
 
+/// Processes a single PATH directory, returning Ok(Some(path)) if a valid worker
+/// is found, Ok(None) if the directory should be skipped, or Err if the
+/// directory is malformed (non-UTF-8).
+fn try_find_worker_in_directory(
+    dir: std::path::PathBuf,
+    worker_name: &str,
+) -> BootstrapResult<Option<Utf8PathBuf>> {
+    let dir_str = Utf8PathBuf::from_path_buf(dir.clone()).map_err(|_| {
+        let invalid_dir = dir.to_string_lossy().to_string();
+        BootstrapError::from(color_eyre::eyre::eyre!(
+            "PATH contains non-UTF-8 directory: {invalid_dir:?}. \
+             Provide UTF-8 encoded paths or set PG_EMBEDDED_WORKER explicitly."
+        ))
+    })?;
+
+    if !is_trusted_path_directory(dir_str.as_std_path()) {
+        return Ok(None);
+    }
+
+    let candidate = dir_str.join(worker_name);
+    #[cfg(windows)]
+    let candidate = candidate.with_extension("exe");
+
+    if is_executable(candidate.as_std_path()) {
+        Ok(Some(candidate))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Searches `PATH` environment variable for specified worker binary.
 ///
 /// Returns first valid UTF-8 path to an existing executable worker file,
@@ -165,40 +195,14 @@ pub(crate) fn discover_worker_from_path(worker_name: &str) -> BootstrapResult<Op
         None => return Ok(None),
     };
 
-    let mut error = None;
-
     for dir in env::split_paths(&path_var) {
-        let dir_str = match Utf8PathBuf::from_path_buf(dir.clone()) {
-            Ok(p) => p,
-            Err(_) => {
-                let invalid_dir = dir.to_string_lossy().to_string();
-                error = Some(BootstrapError::from(color_eyre::eyre::eyre!(
-                    "PATH contains non-UTF-8 directory: {invalid_dir:?}. \
-                     Provide UTF-8 encoded paths or set PG_EMBEDDED_WORKER explicitly."
-                )));
-                continue;
-            }
-        };
-
-        if !is_trusted_path_directory(dir_str.as_std_path()) {
-            continue;
-        }
-
-        let candidate = dir_str.join(worker_name);
-        #[cfg(windows)]
-        let candidate = candidate.with_extension("exe");
-
-        if is_executable(candidate.as_std_path()) {
-            if let Some(err) = error {
-                return Err(err);
-            }
-            return Ok(Some(candidate));
+        match try_find_worker_in_directory(dir, worker_name) {
+            Ok(Some(worker)) => return Ok(Some(worker)),
+            Ok(None) => continue,
+            Err(e) => return Err(e),
         }
     }
 
-    if let Some(err) = error {
-        return Err(err);
-    }
     Ok(None)
 }
 
