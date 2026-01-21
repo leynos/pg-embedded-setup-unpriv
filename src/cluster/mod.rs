@@ -52,7 +52,9 @@ mod delegation;
 mod installation;
 mod lifecycle;
 mod runtime;
+mod runtime_mode;
 mod shutdown;
+mod startup;
 mod temporary_database;
 mod worker_invoker;
 mod worker_operation;
@@ -66,42 +68,17 @@ pub use self::worker_invoker::WorkerInvoker;
 pub use self::worker_operation::WorkerOperation;
 
 use self::runtime::build_runtime;
+use self::runtime_mode::ClusterRuntime;
 #[cfg(feature = "async-api")]
-use self::worker_invoker::AsyncInvoker;
-use self::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
+use self::startup::start_postgres_async;
+use self::startup::{cache_config_from_bootstrap, start_postgres};
 use crate::bootstrap_for_tests;
-use crate::cache::BinaryCacheConfig;
 use crate::env::ScopedEnv;
 use crate::error::BootstrapResult;
 use crate::observability::LOG_TARGET;
-use crate::{ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings};
+use crate::{TestBootstrapEnvironment, TestBootstrapSettings};
 use postgresql_embedded::{PostgreSQL, Settings};
-use tokio::runtime::Runtime;
 use tracing::{info, info_span};
-
-/// Encodes the runtime mode for a `TestCluster`.
-///
-/// This enum eliminates the need for separate `runtime: Option<Runtime>` and
-/// `is_async_mode: bool` fields, preventing invalid states where the two could
-/// disagree.
-#[derive(Debug)]
-enum ClusterRuntime {
-    /// Synchronous mode: the cluster owns its own Tokio runtime.
-    Sync(Runtime),
-    /// Async mode: the cluster runs on the caller's runtime.
-    #[cfg_attr(
-        not(feature = "async-api"),
-        expect(dead_code, reason = "used when async-api feature is enabled")
-    )]
-    Async,
-}
-
-impl ClusterRuntime {
-    /// Returns `true` if this is async mode.
-    const fn is_async(&self) -> bool {
-        matches!(self, Self::Async)
-    }
-}
 
 /// Embedded `PostgreSQL` instance whose lifecycle follows Rust's drop semantics.
 #[derive(Debug)]
@@ -116,12 +93,6 @@ pub struct TestCluster {
     _env_guard: ScopedEnv,
     // Keeps the cluster span alive for the lifetime of the guard.
     _cluster_span: tracing::Span,
-}
-
-struct StartupOutcome {
-    bootstrap: TestBootstrapSettings,
-    postgres: Option<PostgreSQL>,
-    is_managed_via_worker: bool,
 }
 
 impl TestCluster {
@@ -140,12 +111,11 @@ impl TestCluster {
         let (runtime, env_vars, env_guard, outcome) = {
             let _entered = span.enter();
             let initial_bootstrap = bootstrap_for_tests()?;
-            let cache_config = Self::cache_config_from_bootstrap(&initial_bootstrap);
+            let cache_config = cache_config_from_bootstrap(&initial_bootstrap);
             let runtime = build_runtime()?;
             let env_vars = initial_bootstrap.environment.to_env();
             let env_guard = ScopedEnv::apply(&env_vars);
-            let outcome =
-                Self::start_postgres(&runtime, initial_bootstrap, &env_vars, &cache_config)?;
+            let outcome = start_postgres(&runtime, initial_bootstrap, &env_vars, &cache_config)?;
             (runtime, env_vars, env_guard, outcome)
         };
 
@@ -159,118 +129,6 @@ impl TestCluster {
             _env_guard: env_guard,
             _cluster_span: span,
         })
-    }
-
-    /// Creates a `BinaryCacheConfig` from bootstrap settings.
-    ///
-    /// Uses the explicitly configured `binary_cache_dir` if set, otherwise
-    /// falls back to the default resolution from environment variables.
-    fn cache_config_from_bootstrap(bootstrap: &TestBootstrapSettings) -> BinaryCacheConfig {
-        bootstrap
-            .binary_cache_dir
-            .as_ref()
-            .map_or_else(BinaryCacheConfig::new, |dir| {
-                BinaryCacheConfig::with_dir(dir.clone())
-            })
-    }
-
-    #[expect(
-        clippy::cognitive_complexity,
-        reason = "privilege-aware lifecycle setup requires explicit branching for observability"
-    )]
-    fn start_postgres(
-        runtime: &Runtime,
-        mut bootstrap: TestBootstrapSettings,
-        env_vars: &[(String, Option<String>)],
-        cache_config: &BinaryCacheConfig,
-    ) -> BootstrapResult<StartupOutcome> {
-        let privileges = bootstrap.privileges;
-        info!(
-            target: LOG_TARGET,
-            privileges = ?privileges,
-            mode = ?bootstrap.execution_mode,
-            "starting embedded postgres lifecycle"
-        );
-
-        // Try to use cached binaries before starting the lifecycle
-        let version_req = bootstrap.settings.version.clone();
-        let cache_hit =
-            cache_integration::try_use_binary_cache(cache_config, &version_req, &mut bootstrap);
-
-        let (is_managed_via_worker, postgres) = if privileges == ExecutionPrivileges::Root {
-            Self::invoke_lifecycle_root(runtime, &mut bootstrap, env_vars)?;
-            (true, None)
-        } else {
-            let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
-            Self::invoke_lifecycle(runtime, &mut bootstrap, env_vars, &mut embedded)?;
-            (
-                false,
-                Self::prepare_postgres_handle(false, &mut bootstrap, embedded),
-            )
-        };
-
-        // Populate cache after successful setup if it was a cache miss
-        if !cache_hit {
-            cache_integration::try_populate_binary_cache(cache_config, &bootstrap.settings);
-        }
-
-        info!(
-            target: LOG_TARGET,
-            privileges = ?privileges,
-            worker_managed = is_managed_via_worker,
-            cache_hit,
-            "embedded postgres started"
-        );
-        Ok(StartupOutcome {
-            bootstrap,
-            postgres,
-            is_managed_via_worker,
-        })
-    }
-
-    fn prepare_postgres_handle(
-        is_managed_via_worker: bool,
-        bootstrap: &mut TestBootstrapSettings,
-        embedded: PostgreSQL,
-    ) -> Option<PostgreSQL> {
-        if is_managed_via_worker {
-            None
-        } else {
-            bootstrap.settings = embedded.settings().clone();
-            Some(embedded)
-        }
-    }
-
-    fn invoke_lifecycle_root(
-        runtime: &Runtime,
-        bootstrap: &mut TestBootstrapSettings,
-        env_vars: &[(String, Option<String>)],
-    ) -> BootstrapResult<()> {
-        let setup_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-        setup_invoker.invoke_as_root(worker_operation::WorkerOperation::Setup)?;
-        installation::refresh_worker_installation_dir(bootstrap);
-        let start_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-        start_invoker.invoke_as_root(worker_operation::WorkerOperation::Start)?;
-        installation::refresh_worker_port(bootstrap)
-    }
-
-    fn invoke_lifecycle(
-        runtime: &Runtime,
-        bootstrap: &mut TestBootstrapSettings,
-        env_vars: &[(String, Option<String>)],
-        embedded: &mut PostgreSQL,
-    ) -> BootstrapResult<()> {
-        // Scope ensures the setup invoker releases its borrows before we refresh the settings.
-        let setup_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-        setup_invoker.invoke(worker_operation::WorkerOperation::Setup, async {
-            embedded.setup().await
-        })?;
-        installation::refresh_worker_installation_dir(bootstrap);
-        let start_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-        start_invoker.invoke(worker_operation::WorkerOperation::Start, async {
-            embedded.start().await
-        })?;
-        installation::refresh_worker_port(bootstrap)
     }
 
     /// Boots a `PostgreSQL` instance asynchronously for use in `#[tokio::test]` contexts.
@@ -312,13 +170,13 @@ impl TestCluster {
         // Resolve cache directory BEFORE applying test environment.
         // Otherwise, the test sandbox's XDG_CACHE_HOME would be used.
         let initial_bootstrap = bootstrap_for_tests()?;
-        let cache_config = Self::cache_config_from_bootstrap(&initial_bootstrap);
+        let cache_config = cache_config_from_bootstrap(&initial_bootstrap);
         let env_vars = initial_bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
 
         // Async postgres startup, instrumented with the span.
         // Box::pin to avoid large future on the stack.
-        let outcome = Box::pin(Self::start_postgres_async(
+        let outcome = Box::pin(start_postgres_async(
             initial_bootstrap,
             &env_vars,
             &cache_config,
@@ -336,126 +194,6 @@ impl TestCluster {
             _env_guard: env_guard,
             _cluster_span: span,
         })
-    }
-
-    /// Async variant of `start_postgres` that runs on the caller's runtime.
-    #[cfg(feature = "async-api")]
-    async fn start_postgres_async(
-        mut bootstrap: TestBootstrapSettings,
-        env_vars: &[(String, Option<String>)],
-        cache_config: &BinaryCacheConfig,
-    ) -> BootstrapResult<StartupOutcome> {
-        let privileges = bootstrap.privileges;
-        Self::log_lifecycle_start(privileges, &bootstrap);
-
-        // Try to use cached binaries before starting the lifecycle
-        let version_req = bootstrap.settings.version.clone();
-        let cache_hit =
-            cache_integration::try_use_binary_cache(cache_config, &version_req, &mut bootstrap);
-
-        let (is_managed_via_worker, postgres) = if privileges == ExecutionPrivileges::Root {
-            Box::pin(Self::invoke_lifecycle_root_async(&mut bootstrap, env_vars)).await?;
-            (true, None)
-        } else {
-            let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
-            Box::pin(Self::invoke_lifecycle_async(
-                &mut bootstrap,
-                env_vars,
-                &mut embedded,
-            ))
-            .await?;
-            (
-                false,
-                Self::prepare_postgres_handle(false, &mut bootstrap, embedded),
-            )
-        };
-
-        // Populate cache after successful setup if it was a cache miss
-        if !cache_hit {
-            cache_integration::try_populate_binary_cache(cache_config, &bootstrap.settings);
-        }
-
-        Self::log_lifecycle_complete(privileges, is_managed_via_worker, cache_hit);
-        Ok(StartupOutcome {
-            bootstrap,
-            postgres,
-            is_managed_via_worker,
-        })
-    }
-
-    #[cfg(feature = "async-api")]
-    fn log_lifecycle_start(privileges: ExecutionPrivileges, bootstrap: &TestBootstrapSettings) {
-        info!(
-            target: LOG_TARGET,
-            privileges = ?privileges,
-            mode = ?bootstrap.execution_mode,
-            async_mode = true,
-            "starting embedded postgres lifecycle"
-        );
-    }
-
-    #[cfg(feature = "async-api")]
-    fn log_lifecycle_complete(
-        privileges: ExecutionPrivileges,
-        is_managed_via_worker: bool,
-        cache_hit: bool,
-    ) {
-        info!(
-            target: LOG_TARGET,
-            privileges = ?privileges,
-            worker_managed = is_managed_via_worker,
-            cache_hit = cache_hit,
-            async_mode = true,
-            "embedded postgres started"
-        );
-    }
-
-    /// Async variant of `invoke_lifecycle`.
-    #[cfg(feature = "async-api")]
-    async fn invoke_lifecycle_async(
-        bootstrap: &mut TestBootstrapSettings,
-        env_vars: &[(String, Option<String>)],
-        embedded: &mut PostgreSQL,
-    ) -> BootstrapResult<()> {
-        let invoker = AsyncInvoker::new(bootstrap, env_vars);
-        Box::pin(
-            invoker.invoke(worker_operation::WorkerOperation::Setup, async {
-                embedded.setup().await
-            }),
-        )
-        .await?;
-        installation::refresh_worker_installation_dir(bootstrap);
-        let start_invoker = AsyncInvoker::new(bootstrap, env_vars);
-        Box::pin(
-            start_invoker.invoke(worker_operation::WorkerOperation::Start, async {
-                embedded.start().await
-            }),
-        )
-        .await?;
-        installation::refresh_worker_port_async(bootstrap).await
-    }
-
-    #[cfg(feature = "async-api")]
-    async fn invoke_lifecycle_root_async(
-        bootstrap: &mut TestBootstrapSettings,
-        env_vars: &[(String, Option<String>)],
-    ) -> BootstrapResult<()> {
-        let setup_invoker = AsyncInvoker::new(bootstrap, env_vars);
-        Box::pin(
-            setup_invoker.invoke(worker_operation::WorkerOperation::Setup, async {
-                Ok::<(), postgresql_embedded::Error>(())
-            }),
-        )
-        .await?;
-        installation::refresh_worker_installation_dir(bootstrap);
-        let start_invoker = AsyncInvoker::new(bootstrap, env_vars);
-        Box::pin(
-            start_invoker.invoke(worker_operation::WorkerOperation::Start, async {
-                Ok::<(), postgresql_embedded::Error>(())
-            }),
-        )
-        .await?;
-        installation::refresh_worker_port_async(bootstrap).await
     }
 
     /// Extends the cluster lifetime to cover additional scoped environment guards.
@@ -598,59 +336,7 @@ impl TestCluster {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::ffi::OsString;
-
-    use super::*;
-    use crate::ExecutionPrivileges;
-    use crate::test_support::{dummy_settings, scoped_env};
-
-    #[test]
-    fn with_worker_guard_restores_environment() {
-        const KEY: &str = "PG_EMBEDDED_WORKER_GUARD_TEST";
-        let baseline = std::env::var(KEY).ok();
-        let guard = scoped_env(vec![(OsString::from(KEY), Some(OsString::from("guarded")))]);
-        let cluster = dummy_cluster().with_worker_guard(Some(guard));
-        assert_eq!(
-            std::env::var(KEY).as_deref(),
-            Ok("guarded"),
-            "worker guard should remain active whilst the cluster runs",
-        );
-        drop(cluster);
-        match baseline {
-            Some(value) => assert_eq!(
-                std::env::var(KEY).as_deref(),
-                Ok(value.as_str()),
-                "worker guard should restore the previous value"
-            ),
-            None => assert!(
-                std::env::var(KEY).is_err(),
-                "worker guard should unset the variable once the cluster drops"
-            ),
-        }
-    }
-
-    fn dummy_cluster() -> TestCluster {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("test runtime");
-        let span = info_span!(target: LOG_TARGET, "test_cluster");
-        let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
-        let env_vars = bootstrap.environment.to_env();
-        let env_guard = ScopedEnv::apply(&env_vars);
-        TestCluster {
-            runtime: ClusterRuntime::Sync(runtime),
-            postgres: None,
-            bootstrap,
-            is_managed_via_worker: false,
-            env_vars,
-            worker_guard: None,
-            _env_guard: env_guard,
-            _cluster_span: span,
-        }
-    }
-}
+mod mod_tests;
 
 #[cfg(all(test, feature = "cluster-unit-tests"))]
 mod drop_logging_tests {
