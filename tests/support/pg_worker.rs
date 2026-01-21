@@ -43,7 +43,7 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::runtime::Builder;
 
 /// Boxed error type for the main result.
@@ -119,10 +119,10 @@ impl Operation {
 }
 
 fn main() -> Result<(), BoxError> {
-    run_worker(env::args_os())
+    run_worker(env::args_os()).map_err(Into::into)
 }
 
-fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), BoxError> {
+fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
     let (operation, config_path) = parse_args(args)?;
     let payload = load_payload(&config_path)?;
     let settings = payload
@@ -169,7 +169,7 @@ fn parse_args(
     Ok((operation, config_path))
 }
 
-fn load_payload(config_path: &PathBuf) -> Result<WorkerPayload, WorkerError> {
+fn load_payload(config_path: &Path) -> Result<WorkerPayload, WorkerError> {
     let config_bytes = fs::read(config_path).map_err(WorkerError::ConfigRead)?;
     serde_json::from_slice(&config_bytes).map_err(WorkerError::ConfigParse)
 }
