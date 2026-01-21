@@ -44,7 +44,6 @@ use postgresql_embedded::{PostgreSQL, Status};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
-use std::io::ErrorKind;
 use std::path::PathBuf;
 use thiserror::Error;
 use tokio::runtime::Builder;
@@ -189,14 +188,10 @@ fn has_valid_data_dir(_pg: &PostgreSQL, data_dir: &Utf8Path) -> bool {
     pg_version.exists()
 }
 
-fn reset_data_dir(data_dir: &Utf8Path) -> Result<(), BoxError> {
-    match fs::remove_dir_all(data_dir.as_std_path()) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err.into()),
-    }
-}
-
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "function has simple conditional with single early return and async call"
+)]
 async fn ensure_postgres_setup(
     pg: &mut PostgreSQL,
     data_dir: &Utf8Path,
@@ -206,9 +201,7 @@ async fn ensure_postgres_setup(
         return Ok(());
     }
 
-    reset_data_dir(data_dir)
-        .map_err(|e| WorkerError::PostgresOperation(format!("data dir reset failed: {e}")))?;
-
+    info!("PostgreSQL data directory not initialised, running setup");
     pg.setup()
         .await
         .map_err(|e| WorkerError::PostgresOperation(format!("setup failed: {e}")))
