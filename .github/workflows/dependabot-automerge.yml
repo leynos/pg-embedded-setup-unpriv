@@ -1,5 +1,9 @@
 name: dependabot-automerge
 
+# Uses pull_request_target to enable auto-merge with write permissions.
+# Safe because the reusable workflow never checks out or executes PR code;
+# it only reads event metadata and makes GitHub API calls.
+
 on:
   pull_request_target:
     branches: [main]
