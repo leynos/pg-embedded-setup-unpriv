@@ -41,6 +41,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use pg_embedded_setup_unpriv::test_support::ambient_dir_and_path;
 use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
 use postgresql_embedded::{PostgreSQL, Status};
+use std::collections::HashMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
@@ -73,6 +74,73 @@ enum WorkerError {
     )]
     #[error("data dir recovery: {0}")]
     DataDirRecovery(String),
+}
+
+/// Abstracts environment variable mutation for testability.
+pub trait EnvStore {
+    /// Sets an environment variable to the given value.
+    fn set(&mut self, key: &str, value: &str);
+
+    /// Removes an environment variable.
+    fn remove(&mut self, key: &str);
+}
+
+/// Wraps the real process environment for production use.
+pub struct ProcessEnvStore;
+
+impl EnvStore for ProcessEnvStore {
+    fn set(&mut self, key: &str, value: &str) {
+        unsafe {
+            // SAFETY: the worker is single-threaded; environment updates
+            // cannot race.
+            env::set_var(key, value);
+        }
+    }
+
+    fn remove(&mut self, key: &str) {
+        unsafe {
+            // SAFETY: the worker is single-threaded; environment updates
+            // cannot race.
+            env::remove_var(key);
+        }
+    }
+}
+
+/// In-memory environment store for deterministic testing.
+pub struct TestEnvStore {
+    env: HashMap<String, Option<String>>,
+}
+
+impl TestEnvStore {
+    /// Creates a new in-memory environment store.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            env: HashMap::new(),
+        }
+    }
+
+    /// Returns the value for a key, or `None` if unset or removed.
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.env.get(key).and_then(|v| v.as_deref())
+    }
+}
+
+impl Default for TestEnvStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EnvStore for TestEnvStore {
+    fn set(&mut self, key: &str, value: &str) {
+        self.env.insert(key.to_owned(), Some(value.to_owned()));
+    }
+
+    fn remove(&mut self, key: &str) {
+        self.env.insert(key.to_owned(), None);
+    }
 }
 
 #[derive(Debug)]
@@ -109,7 +177,8 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
     let data_dir = extract_data_dir(&settings)?;
 
     let runtime = build_runtime()?;
-    apply_worker_environment(&payload.environment);
+    let mut env_store = ProcessEnvStore;
+    apply_worker_environment(&mut env_store, &payload.environment);
     let mut pg = Some(PostgreSQL::new(settings));
     runtime.block_on(async {
         match operation {
@@ -243,17 +312,14 @@ fn handle_stop_result(result: Result<(), postgresql_embedded::Error>) -> Result<
 }
 
 /// Applies the worker environment overrides to the current process.
-fn apply_worker_environment(environment: &[(String, Option<PlainSecret>)]) {
+fn apply_worker_environment(
+    store: &mut dyn EnvStore,
+    environment: &[(String, Option<PlainSecret>)],
+) {
     for (key, value) in environment {
         match value {
-            Some(env_value) => unsafe {
-                // SAFETY: the worker is single-threaded; environment updates cannot race.
-                env::set_var(key, env_value.expose());
-            },
-            None => unsafe {
-                // SAFETY: the worker is single-threaded; environment updates cannot race.
-                env::remove_var(key);
-            },
+            Some(env_value) => store.set(key, env_value.expose()),
+            None => store.remove(key),
         }
     }
 }
@@ -369,5 +435,17 @@ mod tests {
                 "expected WorkerError::InvalidArgs for non-UTF-8 config path, got: {other:?}"
             ),
         }
+    }
+
+    #[test]
+    fn test_env_store_test_impl_get_set_and_remove() {
+        let mut store = TestEnvStore::new();
+
+        store.set("KEY", "value");
+        store.remove("OTHER_KEY");
+
+        assert_eq!(store.get("KEY"), Some("value"));
+        assert_eq!(store.get("OTHER_KEY"), None);
+        assert_eq!(store.get("UNSET"), None);
     }
 }
