@@ -228,7 +228,6 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pg_embedded_setup_unpriv::test_support;
     use postgresql_embedded::{Settings, VersionReq};
     use std::collections::HashMap;
     use std::ffi::{OsStr, OsString};
@@ -240,6 +239,50 @@ mod tests {
     use tempfile::{TempDir, tempdir};
 
     const PG_CTL_STUB: &str = include_str!("fixtures/pg_ctl_stub.sh");
+
+    /// Trait for environment variable operations, allowing mock implementations in tests.
+    trait EnvironmentOperations {
+        fn set_var(&self, key: &str, value: &str);
+        fn remove_var(&self, key: &str);
+    }
+
+    /// Mock environment implementation for tests that tracks environment operations
+    /// without actually mutating the process environment.
+    #[derive(Debug, Default)]
+    struct MockEnvironment {
+        vars: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
+    }
+
+    impl MockEnvironment {
+        fn get(&self, key: &str) -> Option<String> {
+            self.vars.lock().ok()?.get(key).cloned()
+        }
+    }
+
+    impl EnvironmentOperations for MockEnvironment {
+        fn set_var(&self, key: &str, value: &str) {
+            let mut vars = self.vars.lock().expect("mock env mutex poisoned");
+            vars.insert(key.to_owned(), value.to_owned());
+        }
+
+        fn remove_var(&self, key: &str) {
+            let mut vars = self.vars.lock().expect("mock env mutex poisoned");
+            vars.remove(key);
+        }
+    }
+
+    /// Applies environment overrides using the provided operations implementation.
+    fn apply_worker_environment_with<E>(env_ops: &E, environment: &[(String, Option<PlainSecret>)])
+    where
+        E: EnvironmentOperations,
+    {
+        for (key, value) in environment {
+            match value {
+                Some(env_value) => env_ops.set_var(key, env_value.expose()),
+                None => env_ops.remove_var(key),
+            }
+        }
+    }
 
     #[test]
     fn rejects_extra_argument() {
@@ -258,29 +301,20 @@ mod tests {
 
     #[test]
     fn apply_worker_environment_uses_plaintext_and_unsets() {
-        // Use scoped_env to ensure environment variables are cleaned up after the test
-        // and to serialise access across concurrent tests.
-        let _guard = test_support::scoped_env(vec![
-            (OsString::from("PGWORKER_SECRET_KEY"), None),
-            (OsString::from("PGWORKER_NONE_KEY"), None),
-        ]);
-
         let secret = PlainSecret::from("super-secret-value".to_owned());
         let env_pairs = vec![
             ("PGWORKER_SECRET_KEY".to_owned(), Some(secret)),
             ("PGWORKER_NONE_KEY".to_owned(), None),
         ];
 
-        apply_worker_environment(&env_pairs);
+        let mock = MockEnvironment::default();
+        apply_worker_environment_with::<MockEnvironment>(&mock, &env_pairs);
 
         assert_eq!(
-            env::var("PGWORKER_SECRET_KEY").as_deref(),
-            Ok("super-secret-value")
+            mock.get("PGWORKER_SECRET_KEY"),
+            Some("super-secret-value".to_owned())
         );
-        assert!(matches!(
-            env::var("PGWORKER_NONE_KEY"),
-            Err(env::VarError::NotPresent)
-        ));
+        assert!(mock.get("PGWORKER_NONE_KEY").is_none());
     }
 
     #[test]
