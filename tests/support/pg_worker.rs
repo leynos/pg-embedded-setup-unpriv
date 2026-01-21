@@ -56,8 +56,8 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 enum WorkerError {
     #[error("invalid arguments: {0}")]
     InvalidArgs(String),
-    #[error("failed to read worker config")]
-    ConfigRead(#[source] std::io::Error),
+    #[error("failed to read worker config: {0}")]
+    ConfigRead(#[source] BoxError),
     #[error("failed to parse worker config: {0}")]
     ConfigParse(#[source] serde_json::Error),
     #[error("settings conversion failed: {0}")]
@@ -149,8 +149,7 @@ fn parse_args(
 }
 
 fn load_payload(config_path: &Utf8Path) -> Result<WorkerPayload, WorkerError> {
-    let config_bytes = read_config_file(config_path)
-        .map_err(|e| WorkerError::ConfigRead(std::io::Error::other(e)))?;
+    let config_bytes = read_config_file(config_path).map_err(WorkerError::ConfigRead)?;
     serde_json::from_slice(&config_bytes).map_err(WorkerError::ConfigParse)
 }
 
@@ -164,16 +163,14 @@ fn read_config_file(path: &Utf8Path) -> Result<Vec<u8>, BoxError> {
 
 fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf), BoxError> {
     if path.is_absolute() {
-        if let Some(parent) = path.parent() {
-            let dir = Dir::open_ambient_dir(parent.as_std_path(), ambient_authority())?;
-            let relative = path
-                .file_name()
-                .ok_or_else(|| format!("path has no file name component: {path}"))?;
-            Ok((dir, Utf8PathBuf::from(relative)))
-        } else {
-            let dir = Dir::open_ambient_dir(path.as_std_path(), ambient_authority())?;
-            Ok((dir, Utf8PathBuf::from(".")))
-        }
+        let Some(parent) = path.parent() else {
+            return Err(format!("cannot resolve absolute path without parent: {path}").into());
+        };
+        let dir = Dir::open_ambient_dir(parent.as_std_path(), ambient_authority())?;
+        let relative = path
+            .file_name()
+            .ok_or_else(|| format!("path has no file name component: {path}"))?;
+        Ok((dir, Utf8PathBuf::from(relative)))
     } else {
         let dir = Dir::open_ambient_dir(".", ambient_authority())?;
         Ok((dir, path.to_path_buf()))
