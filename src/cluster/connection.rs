@@ -217,6 +217,7 @@ mod tests {
             setup_timeout: Duration::from_secs(1),
             start_timeout: Duration::from_secs(1),
             shutdown_timeout: Duration::from_secs(1),
+            binary_cache_dir: None,
         }
     }
 

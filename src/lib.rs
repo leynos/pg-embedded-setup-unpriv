@@ -6,6 +6,7 @@
 //! under an unprivileged account.
 
 mod bootstrap;
+pub mod cache;
 mod cluster;
 mod env;
 mod error;
@@ -229,6 +230,17 @@ pub struct PgEnvCfg {
     pub locale: Option<String>,
     /// Encoding applied to `initdb` when specified.
     pub encoding: Option<String>,
+    /// Directory for sharing downloaded `PostgreSQL` binaries across test runs.
+    ///
+    /// When `Some`, this explicit path is used directly by `TestCluster`, bypassing
+    /// the automatic resolution chain. When `None`, the cache directory is resolved
+    /// in the following order:
+    ///
+    /// 1. `PG_BINARY_CACHE_DIR` environment variable (if set and non-empty)
+    /// 2. `$XDG_CACHE_HOME/pg-embedded/binaries` (if `XDG_CACHE_HOME` is set)
+    /// 3. `$HOME/.cache/pg-embedded/binaries` (if `HOME` is set)
+    /// 4. `/tmp/pg-embedded/binaries` (final fallback)
+    pub binary_cache_dir: Option<Utf8PathBuf>,
 }
 
 impl PgEnvCfg {
@@ -253,7 +265,15 @@ impl PgEnvCfg {
     /// # Errors
     /// Returns an error when the semantic version requirement cannot be parsed.
     pub fn to_settings(&self) -> Result<Settings> {
-        let mut s = Settings::default();
+        // Disable the internal postgresql_embedded timeout. This crate wraps lifecycle
+        // operations with tokio::time::timeout using setup_timeout/start_timeout from
+        // TestBootstrapSettings, providing consistent timeout behaviour for both
+        // privileged (subprocess) and unprivileged (in-process) execution paths.
+        // The default 5-second timeout is too short for initdb on slower systems.
+        let mut s = Settings {
+            timeout: None,
+            ..Settings::default()
+        };
 
         self.apply_version(&mut s)?;
         self.apply_connection(&mut s);

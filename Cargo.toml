@@ -95,7 +95,7 @@ path = "tests/settings.rs"
 postgresql_embedded = { version = "0.20.0", features = ["tokio"] }
 nix = { version = "0.28", default-features = false, features = ["user", "fs"] }
 color-eyre = "0.6"
-tokio = { version = "1", features = ["rt", "macros", "time"] }
+tokio = { version = "1", features = ["rt", "macros", "time", "fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_with = "3"
 diesel = { version = "2", default-features = false, features = ["postgres"], optional = true }
@@ -112,6 +112,7 @@ thiserror = "1"
 serde_json = "1"
 secrecy = { version = "0.10", features = ["serde"] }
 tempfile = "3"
+filetime = "0.2.27"
 libc = "0.2"
 loom = { version = "0.7.2", optional = true }
 wait-timeout = "0.2"
@@ -121,6 +122,7 @@ openssl-sys = { version = "0.9.110", features = ["vendored"] }
 pq-sys = { version = "0.7.4", optional = true, features = ["bundled"] }
 rstest = "0.18"
 dashmap = "6.1.0"
+dirs = "6.0"
 sha2 = "0.10"
 
 [features]

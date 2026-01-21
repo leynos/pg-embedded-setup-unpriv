@@ -52,7 +52,9 @@ jobs:
       - name: Install cargo-nextest and test (root)
         if: ${{ matrix.privilege == 'root' }}
         run: |
+          # Worker binary path - staging logic will copy it to /tmp for nobody access
           export PG_EMBEDDED_WORKER="$PWD/target/debug/pg_worker"
+
           run_as_root() {
             : "${RUSTUP_HOME:=$HOME/.rustup}"
             : "${CARGO_HOME:=$HOME/.cargo}"

@@ -1,8 +1,9 @@
 //! Unit tests covering `TestCluster` privilege dispatch behaviour.
 #![cfg(unix)]
 
+use serial_test::serial;
 use std::sync::{
-    Arc, Mutex, OnceLock,
+    Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 #[cfg(feature = "privileged-tests")]
@@ -35,17 +36,6 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 #[cfg(feature = "privileged-tests")]
 use tempfile::tempdir;
-
-/// Serialises tests that install the run-root-operation hook.
-///
-/// The hook is a global singleton, so tests installing it must not run concurrently
-/// to avoid `AlreadyInstalled` errors.
-fn serialise_hook_tests() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
 
 #[test]
 fn unprivileged_operations_run_in_process() -> Result<()> {
@@ -97,8 +87,8 @@ fn unprivileged_operation_errors_propagate() -> Result<()> {
 }
 
 #[test]
+#[serial(worker_hook)]
 fn root_operation_errors_surface_worker_failure() -> Result<()> {
-    let _serial = serialise_hook_tests();
     let runtime = test_runtime()?;
     let bootstrap = dummy_settings(ExecutionPrivileges::Root);
     let env_vars = bootstrap.environment.to_env();
@@ -124,8 +114,8 @@ fn root_operation_errors_surface_worker_failure() -> Result<()> {
 }
 
 #[test]
+#[serial(worker_hook)]
 fn root_operations_delegate_to_worker() -> Result<()> {
-    let _serial = serialise_hook_tests();
     let runtime = test_runtime()?;
     let bootstrap = dummy_settings(ExecutionPrivileges::Root);
     let env_vars = bootstrap.environment.to_env();
@@ -162,8 +152,8 @@ fn root_operations_delegate_to_worker() -> Result<()> {
 }
 
 #[test]
+#[serial(worker_hook)]
 fn installing_hook_twice_returns_error() -> Result<()> {
-    let _serial = serialise_hook_tests();
     drop(drain_hook_install_logs());
     let initial_guard = install_run_root_operation_hook(|_, _, _| Ok(()))
         .map_err(|install_err: RunRootOperationHookInstallError| eyre!(install_err))?;
