@@ -90,6 +90,8 @@ downloads without blocking test execution.
 
 ## Environment variables
 
+Table: Environment variables used by the binary cache.
+
 | Variable              | Description                           |
 | --------------------- | ------------------------------------- |
 | `PG_BINARY_CACHE_DIR` | Override the cache directory location |

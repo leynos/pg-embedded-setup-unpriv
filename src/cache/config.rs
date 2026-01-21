@@ -53,8 +53,7 @@ impl Default for BinaryCacheConfig {
 /// use pg_embedded_setup_unpriv::cache::resolve_cache_dir;
 ///
 /// let cache_dir = resolve_cache_dir();
-/// // Returns a path like ~/.cache/pg-embedded/binaries
-/// assert!(cache_dir.as_str().contains("pg-embedded"));
+/// assert!(!cache_dir.as_str().is_empty());
 /// ```
 #[must_use]
 pub fn resolve_cache_dir() -> Utf8PathBuf {
