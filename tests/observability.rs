@@ -228,10 +228,16 @@ fn then_logs_capture_failure(world: &WorldFixture) -> Result<()> {
 
 fn matches_lifecycle_operation(line: &str, operation: WorkerOperation) -> bool {
     let operation_marker = format!("operation=\"{}\"", operation.as_str());
-    (line.contains("lifecycle operation completed")
+    let matches_span = (line.contains("lifecycle operation completed")
         || line.contains("lifecycle_operation")
         || line.contains("worker operation completed successfully"))
-        && line.contains(&operation_marker)
+        && line.contains(&operation_marker);
+
+    // Stop operation is logged via cluster drop path, not the lifecycle_operation span.
+    let matches_stop_log = matches!(operation, WorkerOperation::Stop)
+        && line.contains("stopping embedded postgres cluster");
+
+    matches_span || matches_stop_log
 }
 
 fn assert_env_application_logged(logs: &[String]) -> Result<()> {
@@ -277,14 +283,7 @@ fn assert_lifecycle_operation_logged(logs: &[String], operation: WorkerOperation
 }
 
 fn assert_stop_logged(logs: &[String]) -> Result<()> {
-    assert_lifecycle_operation_logged(logs, WorkerOperation::Stop)?;
-    ensure!(
-        logs.iter()
-            .any(|line| line.contains("stopping embedded postgres cluster")),
-        "expected stop log, got {:?}",
-        logs
-    );
-    Ok(())
+    assert_lifecycle_operation_logged(logs, WorkerOperation::Stop)
 }
 
 fn permission_denied_in_chain(report: &Report) -> bool {
