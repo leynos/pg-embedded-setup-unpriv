@@ -521,19 +521,7 @@ mod tests {
 
     #[test]
     fn discover_worker_returns_none_for_empty_path() {
-        let original_path = std::env::var_os("PATH");
-        unsafe {
-            // SAFETY: test is single-threaded for this env modification
-            std::env::set_var("PATH", "");
-        }
-
-        let result = discover_worker_from_path();
-
-        // Restore PATH
-        match original_path {
-            Some(p) => unsafe { std::env::set_var("PATH", p) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
+        let result = with_modified_path("", || {});
 
         assert!(result.is_none(), "empty PATH should return None");
     }
