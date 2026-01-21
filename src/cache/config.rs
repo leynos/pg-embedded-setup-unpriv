@@ -158,6 +158,10 @@ mod tests {
 
     #[test]
     fn binary_cache_config_default_uses_resolved_dir() {
+        let _guard = scoped_env([
+            (OsString::from("PG_BINARY_CACHE_DIR"), None),
+            (OsString::from("XDG_CACHE_HOME"), None),
+        ]);
         let config = BinaryCacheConfig::default();
         assert!(config.cache_dir.as_str().contains("pg-embedded"));
     }

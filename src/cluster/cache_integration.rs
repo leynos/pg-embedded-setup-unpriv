@@ -15,13 +15,96 @@ use tracing::{debug, info, warn};
 
 use super::installation;
 
+/// Sets the exact version requirement in settings to skip GitHub API resolution.
+fn set_exact_version(settings: &mut Settings, version: &str) {
+    let exact_version = format!("={version}");
+    match VersionReq::parse(&exact_version) {
+        Ok(exact_req) => settings.version = exact_req,
+        Err(err) => {
+            debug!(
+                target: LOG_TARGET,
+                version = %version,
+                error = %err,
+                "failed to parse exact version requirement"
+            );
+        }
+    }
+}
+
+/// Copies binaries from cache and updates installation directory.
+///
+/// Returns the target version directory on success, or `None` on failure.
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "error handling branches for UTF-8 validation and copy operation"
+)]
+fn copy_cached_binaries(
+    source_dir: &Utf8PathBuf,
+    version: &str,
+    settings: &mut Settings,
+) -> Option<Utf8PathBuf> {
+    let Ok(target) = Utf8PathBuf::from_path_buf(settings.installation_dir.clone()) else {
+        warn!(
+            target: LOG_TARGET,
+            "installation_dir is not valid UTF-8, skipping cache"
+        );
+        return None;
+    };
+
+    let target_version_dir = target.join(version);
+
+    if let Err(err) = copy_from_cache(source_dir, &target_version_dir) {
+        warn!(
+            target: LOG_TARGET,
+            version = %version,
+            error = %err,
+            "cache copy failed, falling back to download"
+        );
+        return None;
+    }
+
+    settings.installation_dir = target_version_dir.clone().into();
+    settings.trust_installation_dir = true;
+
+    Some(target_version_dir)
+}
+
+/// Applies cached binaries to the bootstrap settings.
+///
+/// Copies binaries from the cache source directory to the target installation directory,
+/// updates bootstrap settings to use the cached version, and logs success.
+fn apply_cached_binaries(
+    source_dir: &Utf8PathBuf,
+    version: &str,
+    version_req: &VersionReq,
+    bootstrap: &mut TestBootstrapSettings,
+) -> bool {
+    let Some(target_version_dir) =
+        copy_cached_binaries(source_dir, version, &mut bootstrap.settings)
+    else {
+        return false;
+    };
+
+    set_exact_version(&mut bootstrap.settings, version);
+
+    info!(
+        target: LOG_TARGET,
+        version_req = %version_req,
+        matched_version = %version,
+        source = %source_dir,
+        target = %target_version_dir,
+        "using cached binaries"
+    );
+    true
+}
+
 /// Attempts to use cached binaries for the given version requirement.
 ///
 /// Returns `true` if binaries were successfully copied from cache, `false` otherwise.
 /// On cache hit, sets `trust_installation_dir = true` to skip re-validation in setup.
 #[expect(
     clippy::cognitive_complexity,
-    reason = "cache lookup flow with lock acquisition and error handling is readable as-is"
+    reason = "cache lookup flow with lock acquisition and multiple early returns"
 )]
 pub(super) fn try_use_binary_cache(
     config: &BinaryCacheConfig,
@@ -52,51 +135,7 @@ pub(super) fn try_use_binary_cache(
     // Double-check the cache is still valid after acquiring the lock
     match check_cache(&config.cache_dir, &version) {
         CacheLookupResult::Hit { source_dir } => {
-            let Ok(target) =
-                Utf8PathBuf::from_path_buf(bootstrap.settings.installation_dir.clone())
-            else {
-                warn!(
-                    target: LOG_TARGET,
-                    "installation_dir is not valid UTF-8, skipping cache"
-                );
-                return false;
-            };
-
-            // The cache stores binaries in {cache_dir}/{version}/
-            // We need to copy to {installation_dir}/{version}/ to match expected layout
-            let target_version_dir = target.join(&version);
-
-            if let Err(err) = copy_from_cache(&source_dir, &target_version_dir) {
-                warn!(
-                    target: LOG_TARGET,
-                    version = %version,
-                    error = %err,
-                    "cache copy failed, falling back to download"
-                );
-                return false;
-            }
-
-            // Update installation_dir to point to the versioned directory where binaries were copied.
-            // postgresql_embedded expects installation_dir to contain bin/postgres directly.
-            bootstrap.settings.installation_dir = target_version_dir.clone().into();
-            bootstrap.settings.trust_installation_dir = true;
-
-            // Set exact version to skip GitHub API version resolution.
-            // This avoids rate limiting when running many tests.
-            let exact_version = format!("={version}");
-            if let Ok(exact_req) = VersionReq::parse(&exact_version) {
-                bootstrap.settings.version = exact_req;
-            }
-
-            info!(
-                target: LOG_TARGET,
-                version_req = %version_req,
-                matched_version = %version,
-                source = %source_dir,
-                target = %target_version_dir,
-                "using cached binaries"
-            );
-            true
+            apply_cached_binaries(&source_dir, &version, version_req, bootstrap)
         }
         CacheLookupResult::Miss => {
             // Cache entry was removed after initial lookup

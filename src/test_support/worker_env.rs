@@ -52,9 +52,10 @@ fn stage_worker_binary(original: OsString) -> OsString {
     original
 }
 
-/// Stages the worker binary to `/tmp` for accessibility by privilege-dropped processes.
+/// Stages the worker binary to the system temporary directory for accessibility by
+/// privilege-dropped processes.
 ///
-/// The binary is staged to `/tmp/pg-worker-{profile}-{hash}/pg_worker` where the hash
+/// The binary is staged to `{temp_dir}/pg-worker-{profile}-{hash}/pg_worker` where the hash
 /// ensures uniqueness per source path. A pointer file is written to `target/{profile}/`
 /// for discoverability and cleanup.
 #[cfg(unix)]
