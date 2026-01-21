@@ -49,14 +49,14 @@ use thiserror::Error;
 use tokio::runtime::Builder;
 
 /// Boxed error type for the main result.
-type BoxError = Box<dyn std::error::Error>;
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Errors that can occur during worker operations.
 #[derive(Debug, Error)]
 enum WorkerError {
     #[error("invalid arguments: {0}")]
     InvalidArgs(String),
-    #[error("failed to read worker config: {0}")]
+    #[error("failed to read worker config")]
     ConfigRead(#[source] std::io::Error),
     #[error("failed to parse worker config: {0}")]
     ConfigParse(#[source] serde_json::Error),
@@ -74,6 +74,7 @@ enum WorkerError {
     DataDirRecovery(String),
 }
 
+#[derive(Debug)]
 enum Operation {
     Setup,
     Start,
@@ -149,7 +150,7 @@ fn parse_args(
 
 fn load_payload(config_path: &Utf8Path) -> Result<WorkerPayload, WorkerError> {
     let config_bytes = read_config_file(config_path)
-        .map_err(|e| WorkerError::ConfigRead(std::io::Error::other(e.to_string())))?;
+        .map_err(|e| WorkerError::ConfigRead(std::io::Error::other(e)))?;
     serde_json::from_slice(&config_bytes).map_err(WorkerError::ConfigParse)
 }
 
@@ -162,16 +163,17 @@ fn read_config_file(path: &Utf8Path) -> Result<Vec<u8>, BoxError> {
 }
 
 fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf), BoxError> {
-    if path.has_root() {
-        let (dir_path, relative) = match path.parent() {
-            Some(parent) => {
-                let relative = path.strip_prefix(parent)?.to_path_buf();
-                (parent, relative)
-            }
-            None => (path, Utf8PathBuf::new()),
-        };
-        let dir = Dir::open_ambient_dir(dir_path.as_std_path(), ambient_authority())?;
-        Ok((dir, relative))
+    if path.is_absolute() {
+        if let Some(parent) = path.parent() {
+            let dir = Dir::open_ambient_dir(parent.as_std_path(), ambient_authority())?;
+            let relative = path
+                .file_name()
+                .ok_or_else(|| format!("path has no file name component: {path}"))?;
+            Ok((dir, Utf8PathBuf::from(relative)))
+        } else {
+            let dir = Dir::open_ambient_dir(path.as_std_path(), ambient_authority())?;
+            Ok((dir, Utf8PathBuf::from(".")))
+        }
     } else {
         let dir = Dir::open_ambient_dir(".", ambient_authority())?;
         Ok((dir, path.to_path_buf()))
@@ -248,8 +250,9 @@ mod tests {
     use pg_embedded_setup_unpriv::test_support;
     use postgresql_embedded::{Settings, VersionReq};
     use std::collections::HashMap;
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     use std::fs;
+    use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::time::Duration;
@@ -323,6 +326,34 @@ mod tests {
             pid_path.is_file(),
             "expected pid file to persist at {pid_path:?}"
         );
+    }
+
+    #[test]
+    fn parse_args_rejects_non_utf8_config_path() {
+        let program = OsString::from("pg_worker");
+        let operation = OsString::from("setup");
+        let non_utf8 = OsStr::from_bytes(&[0x80]).to_os_string();
+
+        let args = vec![program, operation, non_utf8].into_iter();
+
+        let result = parse_args(args);
+
+        match result {
+            Err(WorkerError::InvalidArgs(msg)) => {
+                let msg_lc = msg.to_lowercase();
+                assert!(
+                    msg_lc.contains("utf-8"),
+                    "error message should mention UTF-8, got: {msg}"
+                );
+                assert!(
+                    msg_lc.contains("config"),
+                    "error message should mention config path, got: {msg}"
+                );
+            }
+            other => panic!(
+                "expected WorkerError::InvalidArgs for non-UTF-8 config path, got: {other:?}"
+            ),
+        }
     }
 
     fn write_pg_ctl_stub(bin_dir: &Path) -> Result<(), std::io::Error> {
