@@ -40,9 +40,6 @@ mod tests;
 use state::ThreadState;
 use summary::{MAX_ENV_CHANGES_SUMMARY_LEN, truncate_env_changes_summary};
 
-#[cfg(test)]
-pub(crate) use state::ENV_LOCK;
-
 thread_local! {
     static THREAD_STATE: RefCell<ThreadState> = const { RefCell::new(ThreadState::new()) };
 }

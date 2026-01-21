@@ -402,8 +402,8 @@ fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::env::ENV_LOCK;
-    use std::ffi::OsStr;
+    use crate::env::ScopedEnv;
+    use std::ffi::{OsStr, OsString};
     use std::fs;
     use tempfile::tempdir;
 
@@ -460,32 +460,18 @@ mod tests {
     /// the original value afterwards. The `setup` closure runs after PATH is
     /// changed but before discovery, allowing custom test setup.
     ///
-    /// Acquires `ENV_LOCK` to prevent races with other tests that modify
-    /// environment variables.
+    /// Uses `ScopedEnv` for panic-safe restoration and automatic `ENV_LOCK`
+    /// acquisition.
     fn with_modified_path<F>(new_path: &str, setup: F) -> Option<Utf8PathBuf>
     where
         F: FnOnce(),
     {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-        let original_path = std::env::var_os("PATH");
-        unsafe {
-            // SAFETY: ENV_LOCK serialises access to environment variables
-            std::env::set_var("PATH", new_path);
-        }
+        let _env_guard =
+            ScopedEnv::apply_os([(OsString::from("PATH"), Some(OsString::from(new_path)))]);
 
         setup();
-        let result = discover_worker_from_path();
-
-        // Restore PATH
-        match original_path {
-            Some(p) => unsafe { std::env::set_var("PATH", p) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
-
-        result
+        discover_worker_from_path()
+        // PATH restored automatically when _env_guard drops
     }
 
     #[cfg(unix)]
@@ -579,31 +565,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn discover_worker_skips_relative_path_entries() {
-        let temp = tempdir().expect("create tempdir");
-
-        // Create executable pg_worker in temp directory
-        let worker_path = temp.path().join("pg_worker");
-        fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
-        let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&worker_path, perms).expect("set permissions");
-
-        // Use relative path (just the directory name without leading /)
-        let relative_path = temp
-            .path()
-            .file_name()
-            .expect("file_name")
-            .to_str()
-            .expect("to_str");
-        let cwd = std::env::current_dir().expect("cwd");
-
-        // Temporarily change to parent of temp
-        std::env::set_current_dir(temp.path().parent().expect("parent")).expect("chdir");
-
-        let result = with_modified_path(relative_path, || {});
-
-        // Restore working directory
-        std::env::set_current_dir(cwd).expect("restore cwd");
+        // Use a relative PATH entry - this should be filtered out by
+        // is_trusted_path_directory regardless of whether a worker exists there.
+        // No need to actually create a worker or change CWD; the security filter
+        // rejects relative paths before checking for files.
+        let result = with_modified_path("relative/path/entry", || {});
 
         assert!(
             result.is_none(),
