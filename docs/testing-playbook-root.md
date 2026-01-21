@@ -17,9 +17,9 @@ elevated privileges on Linux, where the helper prepares directories for the
 ### Full bootstrap with automatic startup
 
 The bootstrap command prepares the installation and data directories, applies
-correct ownership for the sandbox user, and initialises the PostgreSQL cluster
-with the configured credentials. Root executions automatically delegate setup to
-the worker subprocess.
+correct ownership for the sandbox user, and initializes the PostgreSQL cluster
+with the configured credentials. Root executions automatically delegate setup
+to the worker subprocess.
 
 ```bash
 # Set required environment variables
@@ -29,15 +29,15 @@ export PG_DATA_DIR="/var/tmp/pg-embedded-testing/data"
 export PG_SUPERUSER="postgres"
 export PG_PASSWORD="postgres_pass"
 
-# Optional: customise sandbox user (defaults to 'nobody')
+# Optional: customize sandbox user (defaults to 'nobody')
 export PG_EMBEDDED_SANDBOX_USER="nobody"
 
-# Run the bootstrap - this performs setup and initialisation
+# Run the bootstrap - this performs setup and initialization
 cargo run --release --bin pg_embedded_setup_unpriv
 ```
 
 The command returns connection parameters in the output, including host, port,
-and authentication details for the initialised cluster.
+and authentication details for the initialized cluster.
 
 ### Using the RAII helper from code
 
@@ -60,11 +60,11 @@ let conn_str = cluster.connection_string();
 
 ### Incremental setup and start
 
-Separate setup and start steps allow customisation between initialisation and
+Separate setup and start steps allow customization between initialization and
 launching the server process.
 
 ```bash
-# Bootstrap (install and initialise)
+# Bootstrap (install and initialize)
 export PG_VERSION_REQ="=16.4.0"
 export PG_RUNTIME_DIR="/var/tmp/pg-embedded-testing/install"
 export PG_DATA_DIR="/var/tmp/pg-embedded-testing/data"
@@ -148,7 +148,7 @@ sqlx::query("INSERT INTO products (name, price) VALUES ($1, $2)")
 ### Loading fixture data from file
 
 For repeatable test fixtures, prepare SQL files and load them after cluster
-initialisation.
+initialization.
 
 ```bash
 # Create fixture directory structure
@@ -222,7 +222,7 @@ std::fs::remove_dir_all("/var/tmp/pg-embedded-testing/data")?;
 The bootstrap command is idempotent and may be executed multiple times safely.
 
 ```bash
-# First bootstrap - creates directories and initialises
+# First bootstrap - creates directories and initializes
 cargo run --release --bin pg_embedded_setup_unpriv
 
 # Subsequent runs - verifies setup and skips redundant work
@@ -234,8 +234,8 @@ guarantee the sandbox user can access the prepared directories.
 
 ### Idempotent start and stop
 
-The lifecycle helpers prevent redundant operations while ensuring correct
-state transitions.
+The lifecycle helpers prevent redundant operations while ensuring correct state
+transitions.
 
 ```bash
 # Start multiple times - idempotent, no errors
@@ -247,15 +247,15 @@ cargo run --release --bin pg_embedded_setup_unpriv -- stop
 cargo run --release --bin pg_embedded_setup_unpriv -- stop
 ```
 
-The `ensure_postgres_started()` helper guarantees setup runs before start,
-and both operations log when redundant invocations are skipped.
+The `ensure_postgres_started()` helper guarantees setup runs before start, and
+both operations log when redundant invocations are skipped.
 
 ## Troubleshooting
 
 ### Permission denied errors
 
-If permission errors occur, verify the sandbox user has correct ownership of the
-prepared directories.
+If permission errors occur, verify the sandbox user has correct ownership of
+the prepared directories.
 
 ```bash
 export PG_EMBEDDED_SANDBOX_USER="nobody"
