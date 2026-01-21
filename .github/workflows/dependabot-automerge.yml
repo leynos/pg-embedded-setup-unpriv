@@ -1,0 +1,27 @@
+name: dependabot-automerge
+
+# Uses pull_request_target to enable auto-merge with write permissions.
+# Safe because the reusable workflow never checks out or executes PR code;
+# it only reads event metadata and makes GitHub API calls.
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, labeled, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pull-request-number:
+        type: number
+        required: true
+
+jobs:
+  automerge:
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+      statuses: read
+    if: ${{ github.event_name == 'workflow_dispatch' || github.actor == 'dependabot[bot]' }}
+    uses: leynos/shared-actions/.github/workflows/dependabot-automerge.yml@235d2d07b9a321364a742310873f6732d7228e72
+    with:
+      pull-request-number: ${{ inputs.pull-request-number || github.event.pull_request.number }}
