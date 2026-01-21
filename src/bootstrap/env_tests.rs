@@ -97,22 +97,29 @@ fn create_executable_worker(dir: &std::path::Path, worker_name: &str) {
     fs::set_permissions(&worker_path, perms).expect("set permissions");
 }
 
+/// Runs a test that verifies worker discovery with the given worker name.
 #[cfg(unix)]
-#[test]
-fn discover_worker_finds_binary_in_path() {
+fn assert_worker_discovered_with_name(worker_name: &str) {
     let temp = tempdir().expect("create tempdir");
     let new_path = temp.path().to_string_lossy().to_string();
 
-    let result = with_modified_path(&new_path, "pg_worker", || {
-        create_executable_worker(temp.path(), "pg_worker");
+    let result = with_modified_path(&new_path, worker_name, || {
+        create_executable_worker(temp.path(), worker_name);
     })
     .expect("should not error during worker discovery");
 
-    let found = result.expect("should find worker in PATH");
+    let expected_msg = format!("should find {worker_name}");
+    let found = result.expect(&expected_msg);
     assert!(
-        found.as_str().contains("pg_worker"),
-        "found path should contain pg_worker: {found}"
+        found.as_str().contains(worker_name),
+        "found path should contain {worker_name}: {found}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn discover_worker_finds_binary_in_path() {
+    assert_worker_discovered_with_name("pg_worker");
 }
 
 #[test]
@@ -290,17 +297,5 @@ fn discover_worker_errors_on_non_utf8_path_entry() {
 #[cfg(unix)]
 #[test]
 fn discover_worker_uses_custom_worker_name() {
-    let temp = tempdir().expect("create tempdir");
-    let new_path = temp.path().to_string_lossy().to_string();
-
-    let result = with_modified_path(&new_path, "my_custom_worker", || {
-        create_executable_worker(temp.path(), "my_custom_worker");
-    })
-    .expect("should not error during worker discovery");
-
-    let found = result.expect("should find custom worker name");
-    assert!(
-        found.as_str().contains("my_custom_worker"),
-        "found path should contain custom worker name: {found}"
-    );
+    assert_worker_discovered_with_name("my_custom_worker");
 }
