@@ -232,9 +232,14 @@ pub struct PgEnvCfg {
     pub encoding: Option<String>,
     /// Directory for sharing downloaded `PostgreSQL` binaries across test runs.
     ///
-    /// When set (via `PG_BINARY_CACHE_DIR`), binaries are cached in this directory
-    /// and reused by subsequent `TestCluster` instances. Defaults to
-    /// `$XDG_CACHE_HOME/pg-embedded/binaries` (or platform equivalent) when unset.
+    /// When `Some`, this explicit path is used directly by `TestCluster`, bypassing
+    /// the automatic resolution chain. When `None`, the cache directory is resolved
+    /// in the following order:
+    ///
+    /// 1. `PG_BINARY_CACHE_DIR` environment variable (if set and non-empty)
+    /// 2. `$XDG_CACHE_HOME/pg-embedded/binaries` (if `XDG_CACHE_HOME` is set)
+    /// 3. `$HOME/.cache/pg-embedded/binaries` (if `HOME` is set)
+    /// 4. `/tmp/pg-embedded/binaries` (final fallback)
     pub binary_cache_dir: Option<Utf8PathBuf>,
 }
 

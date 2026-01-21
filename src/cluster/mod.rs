@@ -218,7 +218,7 @@ impl TestCluster {
             target: LOG_TARGET,
             privileges = ?privileges,
             worker_managed = is_managed_via_worker,
-            cache_hit = cache_hit,
+            cache_hit,
             "embedded postgres started"
         );
         Ok(StartupOutcome {
