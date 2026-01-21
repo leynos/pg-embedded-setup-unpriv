@@ -20,7 +20,6 @@ path = "src/main.rs"
 [[bin]]
 name = "pg_worker"
 path = "src/bin/pg_worker.rs"
-required-features = ["dev-worker"]
 
 [[bin]]
 name = "pg_worker_hang"

@@ -8,7 +8,6 @@
 
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod errors;
-#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod filesystem;
 mod fixtures;
 mod hash;
@@ -24,10 +23,9 @@ mod fixtures_docs;
 
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use errors::{bootstrap_error, privilege_error};
+pub use filesystem::ambient_dir_and_path;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
-pub use filesystem::{
-    CapabilityTempDir, ambient_dir_and_path, ensure_dir_exists, metadata, set_permissions,
-};
+pub use filesystem::{CapabilityTempDir, ensure_dir_exists, metadata, set_permissions};
 pub use fixtures::{
     dummy_environment, dummy_settings, ensure_worker_env, shared_cluster, test_runtime,
 };

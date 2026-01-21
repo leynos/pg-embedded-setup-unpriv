@@ -13,6 +13,33 @@ use crate::fs::ambient_dir_and_path;
 #[cfg(unix)]
 use cap_std::fs::PermissionsExt;
 
+/// Attempts to locate the worker binary using environment configuration.
+///
+/// Checks `PG_EMBEDDED_WORKER` environment variable first, then searches
+/// `PATH` for a binary matching `worker_name`. Returns `None` if the worker
+/// is not found.
+///
+/// # Arguments
+///
+/// * `worker_name` - Optional name of the worker binary to search for.
+///   Defaults to `pg_worker` if not provided.
+///
+/// # Returns
+///
+/// * `Ok(Some(path))` - Path to the worker binary if found and validated.
+/// * `Ok(None)` - Worker binary not found in environment or PATH.
+/// * `Err(...)` - Error locating or validating the worker binary.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// * `PG_EMBEDDED_WORKER` is set but contains a non-UTF-8 value
+/// * `PG_EMBEDDED_WORKER` is set but is not an absolute path
+/// * `PG_EMBEDDED_WORKER` points to a non-existent location
+/// * `PG_EMBEDDED_WORKER` points to a directory instead of a file
+/// * `PG_EMBEDDED_WORKER` points to a non-executable file (Unix only)
+/// * A PATH directory contains a non-UTF-8 name
+/// * A PATH directory is world-writable and validation fails
 pub(super) fn worker_binary_from_env(
     worker_name: Option<&str>,
 ) -> BootstrapResult<Option<Utf8PathBuf>> {
@@ -32,6 +59,27 @@ pub(super) fn worker_binary_from_env(
     Ok(None)
 }
 
+/// Parses and validates a worker binary path from an environment variable value.
+///
+/// Validates that the path is UTF-8 encoded, non-empty, does not point to
+/// the filesystem root, and is an absolute path.
+///
+/// # Arguments
+///
+/// * `raw` - Raw OS string from the environment variable.
+///
+/// # Returns
+///
+/// * `Ok(path)` - Validated UTF-8 absolute path.
+/// * `Err(...)` - Error if the path is invalid.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// * The path contains non-UTF-8 bytes
+/// * The path is empty
+/// * The path is `/` (the filesystem root)
+/// * The path is relative rather than absolute
 pub(crate) fn parse_worker_path_from_env(raw: &std::ffi::OsStr) -> BootstrapResult<Utf8PathBuf> {
     let path = Utf8PathBuf::from_path_buf(std::path::PathBuf::from(raw)).map_err(|_| {
         let invalid_value = raw.to_string_lossy().to_string();
@@ -82,6 +130,34 @@ fn try_find_worker_in_directory(
     }
 }
 
+/// Searches for the worker binary in directories listed in the `PATH` environment variable.
+///
+/// Iterates through each directory in `PATH`, skipping entries that fail
+/// validation (non-UTF-8, non-absolute, world-writable). Returns the first
+/// executable worker binary found.
+///
+/// # Arguments
+///
+/// * `worker_name` - Name of the worker binary to search for.
+///
+/// # Returns
+///
+/// * `Ok(Some(path))` - Path to the worker binary if found.
+/// * `Ok(None)` - Worker binary not found in any PATH directory.
+/// * `Err(...)` - Error if a PATH directory cannot be processed.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// * A PATH directory name contains non-UTF-8 bytes
+/// * Accessing filesystem metadata for a PATH directory fails
+///
+/// # Platform-specific behavior
+///
+/// * On Unix, searches for `worker_name` with the executable bit set
+/// * On Windows, searches for `worker_name.exe`
+/// * On Unix, skips world-writable directories for security
+/// * On non-Unix platforms, only checks that the path is absolute
 pub(crate) fn discover_worker_from_path(worker_name: &str) -> BootstrapResult<Option<Utf8PathBuf>> {
     let Some(path_var) = std::env::var_os("PATH") else {
         return Ok(None);

@@ -14,7 +14,7 @@
 //!
 //! This installs both `pg_embedded_setup_unpriv` (the main setup helper) and
 //! `pg_worker` (this binary). The library discovers `pg_worker` automatically
-//! if it is in your `PATH`, or you can set `PG_EMBEDDED_WORKER` explicitly.
+//! if it is in `PATH`, or `PG_EMBEDDED_WORKER` can be set explicitly.
 //!
 //! # Usage
 //!

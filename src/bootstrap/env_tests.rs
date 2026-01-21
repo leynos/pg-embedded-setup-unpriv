@@ -32,12 +32,14 @@ use std::os::unix::fs::PermissionsExt;
     "",
     Some("/usr/local/bin/pg_worker")
 )]
-#[cfg(unix)]
-#[case(
-    OsStr::from_bytes(b"/path/with/invalid/\xff/bytes"),
-    true,
-    "non-UTF-8 value",
-    None
+#[cfg_attr(
+    unix,
+    case(
+        OsStr::from_bytes(b"/path/with/invalid/\xff/bytes"),
+        true,
+        "non-UTF-8 value",
+        None
+    )
 )]
 fn parse_worker_path_cases(
     #[case] input: &OsStr,
@@ -86,27 +88,24 @@ where
     // PATH restored automatically when _env_guard drops
 }
 
-/// Creates an executable worker file with the given name in the specified directory.
-/// On Unix, sets executable permissions (0o755).
 #[cfg(unix)]
-fn create_executable_worker(dir: &std::path::Path, worker_name: &str) {
-    let worker_path = dir.join(worker_name);
+#[test]
+fn discover_worker_finds_binary_in_path() {
+    let temp = tempdir().expect("create tempdir");
+    let worker_name = "pg_worker";
+
+    let worker_path = temp.path().join(worker_name);
     fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
     let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&worker_path, perms).expect("set permissions");
-}
 
-/// Runs a test that verifies worker discovery with the given worker name.
-#[cfg(unix)]
-fn assert_worker_discovered_with_name(worker_name: &str) {
-    let temp = tempdir().expect("create tempdir");
-    let new_path = temp.path().to_string_lossy().to_string();
+    let key = OsString::from("PATH");
+    let value = Some(OsString::from(temp.path().to_string_lossy().to_string()));
+    let _env_guard = ScopedEnv::apply_os([(key, value)]);
 
-    let result = with_modified_path(&new_path, worker_name, || {
-        create_executable_worker(temp.path(), worker_name);
-    })
-    .expect("should not error during worker discovery");
+    let result =
+        discover_worker_from_path(worker_name).expect("should not error during worker discovery");
 
     let expected_msg = format!("should find {worker_name}");
     let found = result.expect(&expected_msg);
@@ -116,16 +115,13 @@ fn assert_worker_discovered_with_name(worker_name: &str) {
     );
 }
 
-#[cfg(unix)]
-#[test]
-fn discover_worker_finds_binary_in_path() {
-    assert_worker_discovered_with_name("pg_worker");
-}
-
 #[test]
 fn discover_worker_returns_none_for_empty_path() {
-    let result =
-        with_modified_path("", "pg_worker", || {}).expect("should not error on empty PATH");
+    let key = OsString::from("PATH");
+    let value = Some(OsString::from(""));
+    let _env_guard = ScopedEnv::apply_os([(key, value)]);
+
+    let result = discover_worker_from_path("pg_worker").expect("should not error on empty PATH");
 
     assert!(result.is_none(), "empty PATH should return None");
 }
@@ -135,12 +131,14 @@ fn discover_worker_returns_none_for_empty_path() {
 fn discover_worker_skips_directories() {
     let temp = tempdir().expect("create tempdir");
     let worker_dir = temp.path().join("pg_worker");
-    let new_path = temp.path().to_string_lossy().to_string();
+    fs::create_dir(&worker_dir).expect("create directory");
 
-    let result = with_modified_path(&new_path, "pg_worker", || {
-        fs::create_dir(&worker_dir).expect("create directory");
-    })
-    .expect("should not error during worker discovery");
+    let key = OsString::from("PATH");
+    let value = Some(OsString::from(temp.path().to_string_lossy().to_string()));
+    let _env_guard = ScopedEnv::apply_os([(key, value)]);
+
+    let result =
+        discover_worker_from_path("pg_worker").expect("should not error during worker discovery");
 
     assert!(
         result.is_none(),
@@ -151,10 +149,13 @@ fn discover_worker_skips_directories() {
 #[test]
 fn discover_worker_returns_none_when_not_found() {
     let temp = tempdir().expect("create tempdir");
-    let new_path = temp.path().to_string_lossy().to_string();
 
-    let result = with_modified_path(&new_path, "pg_worker", || {})
-        .expect("should not error during worker discovery");
+    let key = OsString::from("PATH");
+    let value = Some(OsString::from(temp.path().to_string_lossy().to_string()));
+    let _env_guard = ScopedEnv::apply_os([(key, value)]);
+
+    let result =
+        discover_worker_from_path("pg_worker").expect("should not error during worker discovery");
 
     assert!(result.is_none(), "should return None when worker not found");
 }
@@ -170,7 +171,6 @@ fn discover_worker_skips_non_executable_and_finds_later_entry() {
     // Create non-executable pg_worker in first directory
     let non_exec = temp1.path().join("pg_worker");
     fs::write(&non_exec, b"#!/bin/sh\nexit 0\n").expect("write non-exec");
-    // Leave permissions at default (no execute bit)
 
     // Create executable pg_worker in second directory
     let exec = temp2.path().join("pg_worker");
@@ -181,8 +181,12 @@ fn discover_worker_skips_non_executable_and_finds_later_entry() {
 
     let new_path = format!("{}:{}", temp1.path().display(), temp2.path().display());
 
-    let result = with_modified_path(&new_path, "pg_worker", || {})
-        .expect("should not error during worker discovery");
+    let key = OsString::from("PATH");
+    let value = Some(OsString::from(&new_path));
+    let _env_guard = ScopedEnv::apply_os([(key, value)]);
+
+    let result =
+        discover_worker_from_path("pg_worker").expect("should not error during worker discovery");
 
     let found = result.expect("should find executable worker in second directory");
     assert!(
@@ -196,12 +200,12 @@ fn discover_worker_skips_non_executable_and_finds_later_entry() {
 #[cfg(unix)]
 #[test]
 fn discover_worker_skips_relative_path_entries() {
-    // Use a relative PATH entry - this should be filtered out by
-    // is_trusted_path_directory regardless of whether a worker exists there.
-    // No need to actually create a worker or change CWD; the security filter
-    // rejects relative paths before checking for files.
-    let result = with_modified_path("relative/path/entry", "pg_worker", || {})
-        .expect("should not error during worker discovery");
+    let key = OsString::from("PATH");
+    let value = Some(OsString::from("relative/path/entry"));
+    let _env_guard = ScopedEnv::apply_os([(key, value)]);
+
+    let result =
+        discover_worker_from_path("pg_worker").expect("should not error during worker discovery");
 
     assert!(
         result.is_none(),
@@ -230,8 +234,12 @@ fn discover_worker_skips_world_writable_directories() {
 
     let new_path = temp.path().to_string_lossy().to_string();
 
-    let result = with_modified_path(&new_path, "pg_worker", || {})
-        .expect("should not error during worker discovery");
+    let key = OsString::from("PATH");
+    let value = Some(OsString::from(&new_path));
+    let _env_guard = ScopedEnv::apply_os([(key, value)]);
+
+    let result =
+        discover_worker_from_path("pg_worker").expect("should not error during worker discovery");
 
     assert!(
         result.is_none(),
@@ -263,18 +271,16 @@ fn is_trusted_path_directory_rejects_relative_paths() {
     );
 }
 
-// FIXME: re-enable when rustc E0277 is resolved — temporarily disabled due to rustc E0277
-// See: https://github.com/leynos/pg-embedded-setup-unpriv/issues/78
-/*
 #[cfg(unix)]
 #[test]
+#[ignore = "rustc E0277 — https://github.com/leynos/pg-embedded-setup-unpriv/issues/78"]
 fn discover_worker_errors_on_non_utf8_path_entry() {
     let temp = tempdir().expect("create tempdir");
     let valid_dir = temp.path().join("valid_dir");
     let worker_path = temp.path().join("pg_worker");
-    let new_path = format!("{}:{}", temp.path().display(), valid_dir.display());
+    let _new_path = format!("{}:{}", temp.path().display(), valid_dir.display());
 
-    let non_utf8_dir_name = b"non_\xff_utf8";
+    let non_utf8_dir_name = OsStr::from_bytes(b"non_\xff_utf8");
     let non_utf8_dir = temp.path().join(non_utf8_dir_name);
     let new_path_with_non_utf8 = format!("{}:{}", temp.path().display(), non_utf8_dir.display());
 
@@ -292,10 +298,30 @@ fn discover_worker_errors_on_non_utf8_path_entry() {
         "error should mention non-UTF-8 PATH: {err}"
     );
 }
-*/
 
 #[cfg(unix)]
 #[test]
 fn discover_worker_uses_custom_worker_name() {
-    assert_worker_discovered_with_name("my_custom_worker");
+    let temp = tempdir().expect("create tempdir");
+    let worker_name = "my_custom_worker";
+
+    let worker_path = temp.path().join(worker_name);
+    fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
+    let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&worker_path, perms).expect("set permissions");
+
+    let key = OsString::from("PATH");
+    let value = Some(OsString::from(temp.path().to_string_lossy().to_string()));
+    let _env_guard = ScopedEnv::apply_os([(key, value)]);
+
+    let result =
+        discover_worker_from_path(worker_name).expect("should not error during worker discovery");
+
+    let expected_msg = format!("should find {worker_name}");
+    let found = result.expect(&expected_msg);
+    assert!(
+        found.as_str().contains(worker_name),
+        "found path should contain {worker_name}: {found}"
+    );
 }
