@@ -236,8 +236,7 @@ fn provision_password_file_for_nobody(
     let user = User::from_name("nobody")
         .context("resolve user 'nobody'")?
         .ok_or_else(|| eyre!("user 'nobody' not found"))?;
-    fchown(&pgpass, Some(user.uid), Some(user.gid))
-        .context("chown password file to nobody")?;
+    fchown(&pgpass, Some(user.uid), Some(user.gid)).context("chown password file to nobody")?;
     Ok(())
 }
 
