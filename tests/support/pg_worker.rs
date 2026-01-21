@@ -41,62 +41,35 @@ use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
 use postgresql_embedded::PostgreSQL;
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
 use tokio::runtime::Builder;
 
 /// Boxed error type for the main result.
 type BoxError = Box<dyn std::error::Error>;
 
 /// Errors that can occur during worker operations.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 enum WorkerError {
-    /// Invalid command-line arguments.
+    #[error("invalid arguments: {0}")]
     InvalidArgs(String),
-    /// Failed to read configuration file.
-    ConfigRead(std::io::Error),
-    /// Failed to parse configuration JSON.
-    ConfigParse(serde_json::Error),
-    /// Failed to convert settings snapshot to `PostgreSQL` settings.
+    #[error("failed to read worker config: {0}")]
+    ConfigRead(#[source] std::io::Error),
+    #[error("failed to parse worker config: {0}")]
+    ConfigParse(#[source] serde_json::Error),
+    #[error("settings conversion failed: {0}")]
     SettingsConversion(String),
-    /// Failed to initialise the Tokio runtime.
-    RuntimeInit(std::io::Error),
-    /// `PostgreSQL` operation failed.
+    #[error("runtime init failed: {0}")]
+    RuntimeInit(#[source] std::io::Error),
+    #[error("postgres operation failed: {0}")]
     PostgresOperation(String),
-    /// Data directory recovery issue (e.g., missing PID file during stop).
     #[expect(
         dead_code,
         reason = "variant reserved for future data directory recovery errors"
     )]
+    #[error("data dir recovery: {0}")]
     DataDirRecovery(String),
-}
-
-impl fmt::Display for WorkerError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidArgs(msg) => write!(f, "invalid arguments: {msg}"),
-            Self::ConfigRead(err) => write!(f, "config read failed: {err}"),
-            Self::ConfigParse(err) => write!(f, "config parse failed: {err}"),
-            Self::SettingsConversion(msg) => write!(f, "settings conversion failed: {msg}"),
-            Self::RuntimeInit(err) => write!(f, "runtime init failed: {err}"),
-            Self::PostgresOperation(msg) => write!(f, "postgres operation failed: {msg}"),
-            Self::DataDirRecovery(msg) => write!(f, "data dir recovery: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for WorkerError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::ConfigRead(err) | Self::RuntimeInit(err) => Some(err),
-            Self::ConfigParse(err) => Some(err),
-            Self::InvalidArgs(_)
-            | Self::SettingsConversion(_)
-            | Self::PostgresOperation(_)
-            | Self::DataDirRecovery(_) => None,
-        }
-    }
 }
 
 enum Operation {
