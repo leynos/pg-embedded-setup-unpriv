@@ -10,7 +10,7 @@ use std::os::unix::ffi::OsStrExt;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::{fs, io};
 
@@ -98,7 +98,7 @@ fn try_stage_worker_binary(original: &OsString) -> io::Result<OsString> {
 /// 2. If the path already exists, it is owned by the current user
 /// 3. After creation, the directory is not a symlink and is owned by current user
 #[cfg(unix)]
-fn create_staging_directory_secure(staged_dir: &PathBuf) -> io::Result<()> {
+fn create_staging_directory_secure(staged_dir: &Path) -> io::Result<()> {
     use nix::unistd::geteuid;
     use std::os::unix::fs::MetadataExt;
 

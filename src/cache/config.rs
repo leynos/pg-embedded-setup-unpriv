@@ -134,22 +134,16 @@ mod tests {
         #[case] xdg_cache_home: Option<&str>,
         #[case] expected: &str,
     ) {
-        let mut env_vars: Vec<(OsString, Option<OsString>)> = vec![];
-
-        match pg_cache_dir {
-            Some(val) => env_vars.push((
+        let env_vars = vec![
+            (
                 OsString::from("PG_BINARY_CACHE_DIR"),
-                Some(OsString::from(val)),
-            )),
-            None => env_vars.push((OsString::from("PG_BINARY_CACHE_DIR"), None)),
-        }
-
-        match xdg_cache_home {
-            Some(val) => {
-                env_vars.push((OsString::from("XDG_CACHE_HOME"), Some(OsString::from(val))));
-            }
-            None => env_vars.push((OsString::from("XDG_CACHE_HOME"), None)),
-        }
+                pg_cache_dir.map(OsString::from),
+            ),
+            (
+                OsString::from("XDG_CACHE_HOME"),
+                xdg_cache_home.map(OsString::from),
+            ),
+        ];
 
         let _guard = scoped_env(env_vars);
         let result = resolve_cache_dir();

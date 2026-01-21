@@ -39,10 +39,6 @@ pub(super) fn cache_config_from_bootstrap(bootstrap: &TestBootstrapSettings) -> 
 }
 
 /// Starts the `PostgreSQL` instance with privilege-aware lifecycle handling.
-#[expect(
-    clippy::cognitive_complexity,
-    reason = "privilege-aware lifecycle setup requires explicit branching for observability"
-)]
 pub(super) fn start_postgres(
     runtime: &Runtime,
     mut bootstrap: TestBootstrapSettings,
@@ -50,35 +46,41 @@ pub(super) fn start_postgres(
     cache_config: &BinaryCacheConfig,
 ) -> BootstrapResult<StartupOutcome> {
     let privileges = bootstrap.privileges;
+    log_lifecycle_start_sync(privileges, &bootstrap);
+
+    let version_req = bootstrap.settings.version.clone();
+    let cache_hit =
+        cache_integration::try_use_binary_cache(cache_config, &version_req, &mut bootstrap);
+
+    let (is_managed_via_worker, postgres) =
+        handle_privilege_lifecycle(privileges, runtime, &mut bootstrap, env_vars)?;
+
+    populate_cache_on_miss(cache_hit, cache_config, &bootstrap);
+    log_lifecycle_complete_sync(privileges, is_managed_via_worker, cache_hit);
+
+    Ok(StartupOutcome {
+        bootstrap,
+        postgres,
+        is_managed_via_worker,
+    })
+}
+
+/// Logs the start of the sync lifecycle.
+fn log_lifecycle_start_sync(privileges: ExecutionPrivileges, bootstrap: &TestBootstrapSettings) {
     info!(
         target: LOG_TARGET,
         privileges = ?privileges,
         mode = ?bootstrap.execution_mode,
         "starting embedded postgres lifecycle"
     );
+}
 
-    // Try to use cached binaries before starting the lifecycle
-    let version_req = bootstrap.settings.version.clone();
-    let cache_hit =
-        cache_integration::try_use_binary_cache(cache_config, &version_req, &mut bootstrap);
-
-    let (is_managed_via_worker, postgres) = if privileges == ExecutionPrivileges::Root {
-        invoke_lifecycle_root(runtime, &mut bootstrap, env_vars)?;
-        (true, None)
-    } else {
-        let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
-        invoke_lifecycle(runtime, &mut bootstrap, env_vars, &mut embedded)?;
-        (
-            false,
-            prepare_postgres_handle(false, &mut bootstrap, embedded),
-        )
-    };
-
-    // Populate cache after successful setup if it was a cache miss
-    if !cache_hit {
-        cache_integration::try_populate_binary_cache(cache_config, &bootstrap.settings);
-    }
-
+/// Logs completion of the sync lifecycle.
+fn log_lifecycle_complete_sync(
+    privileges: ExecutionPrivileges,
+    is_managed_via_worker: bool,
+    cache_hit: bool,
+) {
     info!(
         target: LOG_TARGET,
         privileges = ?privileges,
@@ -86,11 +88,38 @@ pub(super) fn start_postgres(
         cache_hit,
         "embedded postgres started"
     );
-    Ok(StartupOutcome {
-        bootstrap,
-        postgres,
-        is_managed_via_worker,
-    })
+}
+
+/// Populates the cache after successful setup if it was a cache miss.
+fn populate_cache_on_miss(
+    cache_hit: bool,
+    cache_config: &BinaryCacheConfig,
+    bootstrap: &TestBootstrapSettings,
+) {
+    if !cache_hit {
+        cache_integration::try_populate_binary_cache(cache_config, &bootstrap.settings);
+    }
+}
+
+/// Handles the privilege-aware lifecycle invocation.
+///
+/// Returns a tuple of `(is_managed_via_worker, postgres_handle)` where:
+/// - Root execution: worker-managed (true, None)
+/// - Unprivileged execution: in-process (false, Some(embedded))
+fn handle_privilege_lifecycle(
+    privileges: ExecutionPrivileges,
+    runtime: &Runtime,
+    bootstrap: &mut TestBootstrapSettings,
+    env_vars: &[(String, Option<String>)],
+) -> BootstrapResult<(bool, Option<PostgreSQL>)> {
+    if privileges == ExecutionPrivileges::Root {
+        invoke_lifecycle_root(runtime, bootstrap, env_vars)?;
+        Ok((true, None))
+    } else {
+        let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
+        invoke_lifecycle(runtime, bootstrap, env_vars, &mut embedded)?;
+        Ok((false, prepare_postgres_handle(false, bootstrap, embedded)))
+    }
 }
 
 /// Prepares the `PostgreSQL` handle based on whether it's worker-managed.
