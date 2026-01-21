@@ -45,7 +45,7 @@ impl Default for BinaryCacheConfig {
 /// 1. `PG_BINARY_CACHE_DIR` environment variable if set and valid UTF-8
 /// 2. `$XDG_CACHE_HOME/pg-embedded/binaries` if `XDG_CACHE_HOME` is set
 /// 3. `~/.cache/pg-embedded/binaries` as fallback
-/// 4. `/tmp/pg-embedded/binaries` as last resort
+/// 4. `std::env::temp_dir()/pg-embedded/binaries` as last resort (platform-dependent)
 ///
 /// # Examples
 ///

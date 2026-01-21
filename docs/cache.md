@@ -13,11 +13,13 @@ The cache directory is resolved using the following priority:
 1. `PG_BINARY_CACHE_DIR` environment variable (when set and non-empty)
 2. `$XDG_CACHE_HOME/pg-embedded/binaries` (when `XDG_CACHE_HOME` is set)
 3. `~/.cache/pg-embedded/binaries` (home directory fallback)
-4. `/tmp/pg-embedded/binaries` (last resort when none of the above are
-   available)
+4. `{temp_dir}/pg-embedded/binaries` (platform temporary directory as last
+   resort)
 
-The `/tmp` fallback ensures the cache functions in restricted environments such
-as CI containers where the home directory may be inaccessible.
+The implementation uses the platform's portable temporary directory
+(`std::env::temp_dir()`) rather than hardcoding `/tmp`, ensuring the cache
+functions correctly across different operating systems and in restricted
+environments such as CI containers where the home directory may be inaccessible.
 
 ## Cache structure
 

@@ -164,7 +164,6 @@ pub(super) fn invoke_lifecycle(
     env_vars: &[(String, Option<String>)],
     embedded: &mut PostgreSQL,
 ) -> BootstrapResult<()> {
-    // Scope ensures the setup invoker releases its borrows before we refresh the settings.
     let setup_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
     setup_invoker.invoke(worker_operation::WorkerOperation::Setup, async {
         embedded.setup().await
@@ -213,11 +212,7 @@ pub(super) async fn start_postgres_async(
         )
     };
 
-    // Populate cache after successful setup if it was a cache miss
-    if !cache_hit {
-        cache_integration::try_populate_binary_cache(cache_config, &bootstrap.settings);
-    }
-
+    populate_cache_on_miss(cache_hit, cache_config, &bootstrap);
     log_lifecycle_complete(privileges, is_managed_via_worker, cache_hit, true);
     Ok(StartupOutcome {
         bootstrap,
