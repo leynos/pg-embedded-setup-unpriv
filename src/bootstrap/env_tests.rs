@@ -7,6 +7,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 
 use camino::Utf8PathBuf;
+use rstest::rstest;
 use tempfile::tempdir;
 
 use crate::bootstrap::env::{
@@ -21,44 +22,42 @@ use std::os::unix::fs::PermissionsExt;
 
 // Tests for parse_worker_path_from_env
 
-#[test]
-fn parse_worker_path_rejects_empty_string() {
-    let result = parse_worker_path_from_env(OsStr::new(""));
-    let err = result.expect_err("empty path should be rejected");
-    assert!(
-        err.to_string().contains("must not be empty"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn parse_worker_path_rejects_root_path() {
-    let result = parse_worker_path_from_env(OsStr::new("/"));
-    let err = result.expect_err("root path should be rejected");
-    assert!(
-        err.to_string()
-            .contains("must not point at the filesystem root"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn parse_worker_path_accepts_valid_path() {
-    let result = parse_worker_path_from_env(OsStr::new("/usr/local/bin/pg_worker"));
-    let path = result.expect("valid path should be accepted");
-    assert_eq!(path.as_str(), "/usr/local/bin/pg_worker");
-}
-
+#[rstest]
+#[case(OsStr::new(""), true, "must not be empty", None)]
+#[case(OsStr::new("/"), true, "must not point at the filesystem root", None)]
+#[case(
+    OsStr::new("/usr/local/bin/pg_worker"),
+    false,
+    "",
+    Some("/usr/local/bin/pg_worker")
+)]
 #[cfg(unix)]
-#[test]
-fn parse_worker_path_rejects_non_utf8() {
-    let non_utf8 = OsStr::from_bytes(b"/path/with/invalid/\xff/bytes");
-    let result = parse_worker_path_from_env(non_utf8);
-    let err = result.expect_err("non-UTF-8 path should be rejected");
-    assert!(
-        err.to_string().contains("non-UTF-8 value"),
-        "unexpected error: {err}"
-    );
+#[case(
+    OsStr::from_bytes(b"/path/with/invalid/\xff/bytes"),
+    true,
+    "non-UTF-8 value",
+    None
+)]
+fn parse_worker_path_cases(
+    #[case] input: &OsStr,
+    #[case] should_fail: bool,
+    #[case] expected_msg: &str,
+    #[case] expected_path: Option<&str>,
+) {
+    let result = parse_worker_path_from_env(input);
+
+    if should_fail {
+        let err = result.expect_err(&format!("should reject input: {input:?}"));
+        assert!(
+            err.to_string().contains(expected_msg),
+            "expected error containing '{expected_msg}', got: {err}"
+        );
+    } else {
+        let msg = format!("should accept input: {input:?}");
+        let path = result.expect(&msg);
+        let expected = expected_path.expect("expected_path must be provided for success cases");
+        assert_eq!(path.as_str(), expected);
+    }
 }
 
 // Tests for discover_worker_from_path
