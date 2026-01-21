@@ -153,7 +153,7 @@ fn then_bootstrap_reports_missing_worker(sandbox: &BootstrapSandboxFixture) -> R
         .last_error()
         .ok_or_else(|| eyre!("missing bootstrap error message"))?;
     ensure!(
-        message.contains("PG_EMBEDDED_WORKER must be set"),
+        message.contains("pg_worker binary not found"),
         "unexpected missing-worker error: {message}",
     );
     Ok(())
