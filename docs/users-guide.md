@@ -18,8 +18,10 @@ tool and integrate it into automated test flows.
 
 ## Platform expectations
 
-- Linux supports both privilege branches. Root executions require
-  `PG_EMBEDDED_WORKER` so the helper can drop to `nobody` for filesystem work.
+- Linux supports both privilege branches. Root executions use `pg_worker` to
+  drop to `nobody` for filesystem work. The library discovers the worker
+  automatically if it is in `PATH`, or you can set `PG_EMBEDDED_WORKER`
+  explicitly.
 - macOS runs the unprivileged path; root executions are expected to fail fast
   because privilege dropping is not supported on that target.
 - Windows always behaves as unprivileged, so the helper runs in-process and
@@ -585,12 +587,31 @@ let temp_db = cluster.temporary_database_from_template("test_db", "migrated_temp
 When authoring end-to-end tests that exercise PostgreSQL while the harness is
 still running as `root`, follow these steps:
 
+### Install the worker binary
+
+Install both binaries via Cargo:
+
+```bash
+cargo install pg-embed-setup-unpriv
+```
+
+This installs `pg_embedded_setup_unpriv` (the main setup helper) and `pg_worker`
+(the privilege-dropping worker). Ensure `~/.cargo/bin` (or your Cargo install
+directory) is in `PATH`. The library will automatically discover `pg_worker`
+when running as root.
+
+Alternatively, set `PG_EMBEDDED_WORKER` to the absolute path of the worker
+binary if it is installed elsewhere:
+
+```bash
+export PG_EMBEDDED_WORKER=/opt/custom/bin/pg_worker
+```
+
+### Configure the test environment
+
 - Invoke `pg_embedded_setup_unpriv` before handing control to less-privileged
   workers. This prepares file ownership, caches the binaries, and records the
   superuser password in a location accessible to `nobody`.
-- Export the `PG_EMBEDDED_WORKER` environment variable with the absolute path
-  to the `pg_worker` helper binary. The library invokes this helper when it
-  needs to execute PostgreSQL lifecycle commands as `nobody`.
 - Keep the test process running as `root`; the helper binary demotes itself
   before calling into `postgresql_embedded` so the main process never changes
   UID mid-test.

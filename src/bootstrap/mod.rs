@@ -338,7 +338,8 @@ mod tests {
         assert_eq!(settings.settings.password, expected_password);
         assert_eq!(settings.privileges, ExecutionPrivileges::Unprivileged);
         assert_eq!(settings.execution_mode, ExecutionMode::InProcess);
-        assert!(settings.worker_binary.is_none());
+        // Note: worker_binary may be Some if pg_worker is in PATH, even when
+        // running unprivileged. The binary is discovered but not used.
     }
 
     fn assert_environment(settings: &TestBootstrapSettings, runtime_path: &Utf8PathBuf) {

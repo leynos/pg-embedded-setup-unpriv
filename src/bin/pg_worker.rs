@@ -1,6 +1,22 @@
-//! Invokes `PostgreSQL` bootstrap operations inside a privileged worker process.
+//! `PostgreSQL` lifecycle worker for privileged execution.
 //!
-//! Usage:
+//! This binary handles `setup`, `start`, and `stop` operations when the library
+//! runs as root. The main process spawns this worker with reduced privileges
+//! (`nobody`) so filesystem mutations occur without root access.
+//!
+//! # Installation
+//!
+//! Install via Cargo:
+//!
+//! ```bash
+//! cargo install pg-embed-setup-unpriv
+//! ```
+//!
+//! This installs both `pg_embedded_setup_unpriv` (the main setup helper) and
+//! `pg_worker` (this binary). The library discovers `pg_worker` automatically
+//! if it is in your `PATH`, or you can set `PG_EMBEDDED_WORKER` explicitly.
+//!
+//! # Usage
 //!
 //! ```text
 //! pg_worker <operation> <config-path>

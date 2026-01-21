@@ -67,7 +67,9 @@ pub(super) fn determine_execution_mode(
             ExecutionPrivileges::Root => {
                 if worker_binary.is_none() {
                     Err(BootstrapError::from(color_eyre::eyre::eyre!(
-                        "PG_EMBEDDED_WORKER must be set when running with root privileges"
+                        "pg_worker binary not found. Install with \
+                         'cargo install pg-embed-setup-unpriv' and ensure pg_worker is in PATH, \
+                         or set PG_EMBEDDED_WORKER to its absolute path."
                     )))
                 } else {
                     Ok(ExecutionMode::Subprocess)
@@ -98,7 +100,7 @@ mod tests {
             .expect_err("root execution without worker must error");
         let message = err.to_string();
         assert!(
-            message.contains("PG_EMBEDDED_WORKER must be set"),
+            message.contains("pg_worker binary not found"),
             "unexpected error message: {message}",
         );
     }

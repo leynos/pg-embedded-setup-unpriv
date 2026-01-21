@@ -101,11 +101,24 @@ pub(super) fn shutdown_timeout_from_env() -> BootstrapResult<Duration> {
 }
 
 pub(super) fn worker_binary_from_env() -> BootstrapResult<Option<Utf8PathBuf>> {
-    let Some(raw) = env::var_os("PG_EMBEDDED_WORKER") else {
-        return Ok(None);
-    };
+    // First: check explicit PG_EMBEDDED_WORKER environment variable
+    if let Some(raw) = env::var_os("PG_EMBEDDED_WORKER") {
+        let path = parse_worker_path_from_env(&raw)?;
+        validate_worker_binary(&path)?;
+        return Ok(Some(path));
+    }
 
-    let path = Utf8PathBuf::from_path_buf(PathBuf::from(&raw)).map_err(|_| {
+    // Second: search PATH for pg_worker binary
+    if let Some(path) = discover_worker_from_path() {
+        validate_worker_binary(&path)?;
+        return Ok(Some(path));
+    }
+
+    Ok(None)
+}
+
+fn parse_worker_path_from_env(raw: &std::ffi::OsStr) -> BootstrapResult<Utf8PathBuf> {
+    let path = Utf8PathBuf::from_path_buf(PathBuf::from(raw)).map_err(|_| {
         let invalid_value = raw.to_string_lossy().to_string();
         BootstrapError::from(color_eyre::eyre::eyre!(
             "PG_EMBEDDED_WORKER contains a non-UTF-8 value: {invalid_value:?}. \
@@ -113,6 +126,11 @@ pub(super) fn worker_binary_from_env() -> BootstrapResult<Option<Utf8PathBuf>> {
         ))
     })?;
 
+    validate_worker_path_not_empty_or_root(&path)?;
+    Ok(path)
+}
+
+fn validate_worker_path_not_empty_or_root(path: &Utf8PathBuf) -> BootstrapResult<()> {
     if path.as_str().is_empty() {
         return Err(BootstrapError::from(color_eyre::eyre::eyre!(
             "PG_EMBEDDED_WORKER must not be empty"
@@ -123,9 +141,36 @@ pub(super) fn worker_binary_from_env() -> BootstrapResult<Option<Utf8PathBuf>> {
             "PG_EMBEDDED_WORKER must not point at the filesystem root"
         )));
     }
+    Ok(())
+}
 
-    validate_worker_binary(&path)?;
-    Ok(Some(path))
+/// Searches the `PATH` environment variable for the `pg_worker` binary.
+///
+/// Returns the first valid UTF-8 path to an existing `pg_worker` file, or
+/// `None` if no candidate is found. This enables zero-configuration usage when
+/// the worker is installed via `cargo install`.
+fn discover_worker_from_path() -> Option<Utf8PathBuf> {
+    let path_var = env::var_os("PATH")?;
+    env::split_paths(&path_var).find_map(|dir| try_find_worker_in_dir(&dir))
+}
+
+fn try_find_worker_in_dir(dir: &std::path::Path) -> Option<Utf8PathBuf> {
+    let candidate = build_worker_candidate_path(dir);
+    is_valid_worker_candidate(&candidate)
+}
+
+fn build_worker_candidate_path(dir: &std::path::Path) -> PathBuf {
+    let candidate = dir.join("pg_worker");
+    #[cfg(windows)]
+    let candidate = candidate.with_extension("exe");
+    candidate
+}
+
+fn is_valid_worker_candidate(candidate: &std::path::Path) -> Option<Utf8PathBuf> {
+    if !candidate.is_file() {
+        return None;
+    }
+    Utf8PathBuf::from_path_buf(candidate.to_path_buf()).ok()
 }
 
 fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {

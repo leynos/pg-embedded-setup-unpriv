@@ -35,6 +35,50 @@ You may also provide these values through a configuration file named `pg.toml`,
 recognised by `ortho_config`, or through CLI flags if you wrap the binary
 inside your own launcher.
 
+## Root usage and the worker binary
+
+When running as `root`, the library delegates PostgreSQL lifecycle commands to
+an unprivileged helper binary (`pg_worker`) that executes as `nobody`. This
+separation ensures the main process never changes UID mid-execution.
+
+### Installation
+
+Install both binaries via Cargo:
+
+```bash
+cargo install pg-embed-setup-unpriv
+```
+
+This installs `pg_embedded_setup_unpriv` (the main setup helper) and `pg_worker`
+(the privilege-dropping worker).
+
+### Discovery
+
+The library locates the worker binary in this order:
+
+1. **`PG_EMBEDDED_WORKER` environment variable** – Explicit absolute path to the
+   worker binary. Takes precedence over PATH discovery.
+2. **PATH search** – If the environment variable is unset, the library searches
+   each directory in `PATH` for an executable named `pg_worker`.
+
+For most installations, no configuration is needed: ensure `~/.cargo/bin` is in
+your `PATH` and the library will find the worker automatically.
+
+### Manual configuration
+
+If the worker binary is installed to a non-standard location, set the
+environment variable explicitly:
+
+```bash
+export PG_EMBEDDED_WORKER=/opt/local/bin/pg_worker
+```
+
+The specified path must:
+
+- Be an absolute path to a regular file
+- Be executable (on Unix systems)
+- Not be empty or point to the filesystem root
+
 ## Running the setup helper
 
 1. Ensure the desired directories exist or can be created. They will be owned
