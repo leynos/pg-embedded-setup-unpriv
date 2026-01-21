@@ -24,6 +24,8 @@ use nix::unistd::{Uid, User, fchown, geteuid};
 use std::net::TcpListener;
 use tracing::debug;
 
+const PGPASS_MODE: u32 = 0o600;
+
 pub(super) fn prepare_bootstrap(
     privileges: super::mode::ExecutionPrivileges,
     settings: Settings,
@@ -226,7 +228,7 @@ fn ensure_dir_with_mode(path: &Utf8Path, mode: u32) -> BootstrapResult<()> {
 }
 
 fn ensure_pgpass_permissions(path: &Utf8PathBuf) -> BootstrapResult<()> {
-    match set_permissions(path, 0o600) {
+    match set_permissions(path, PGPASS_MODE) {
         Ok(()) => Ok(()),
         Err(err) => {
             if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
@@ -374,16 +376,20 @@ fn ensure_pgpass_for_user(path: &Utf8PathBuf, user: &User) -> BootstrapResult<()
         )));
     }
 
+    let uid = user.uid.as_raw();
+    let gid = user.gid.as_raw();
+
     fchown(&file, Some(user.uid), Some(user.gid)).map_err(|err| {
         BootstrapError::from(color_eyre::eyre::eyre!(
-            "fchown {} failed: {err}",
+            "fchown {} failed (uid={uid} gid={gid}): {err}",
             path.as_str()
         ))
     })?;
-    fchmod(&file, Mode::from_bits_truncate(0o600)).map_err(|err| {
+    fchmod(&file, Mode::from_bits_truncate(PGPASS_MODE)).map_err(|err| {
         BootstrapError::from(color_eyre::eyre::eyre!(
-            "fchmod {} failed: {err}",
-            path.as_str()
+            "fchmod {} failed (mode=0o{:03o}): {err}",
+            path.as_str(),
+            PGPASS_MODE
         ))
     })?;
     Ok(())
