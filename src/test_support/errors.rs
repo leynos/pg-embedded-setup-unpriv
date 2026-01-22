@@ -1,9 +1,12 @@
 //! Error conversion helpers that adapt `color-eyre` reports into the public
 //! [`crate::Error`] type for test scaffolding.
 
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use color_eyre::eyre::Report;
 
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use crate::Error;
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use crate::error::{BootstrapError, PrivilegeError};
 
 /// Converts a bootstrap error report into the library's public [`Error`] type.
@@ -19,6 +22,7 @@ use crate::error::{BootstrapError, PrivilegeError};
 /// let err = bootstrap_error(Report::msg("bootstrap failed"));
 /// assert!(matches!(err, Error::Bootstrap(_)));
 /// ```
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[must_use]
 pub fn bootstrap_error(err: Report) -> Error {
     Error::Bootstrap(BootstrapError::from(err))
@@ -37,6 +41,7 @@ pub fn bootstrap_error(err: Report) -> Error {
 /// let err = privilege_error(Report::msg("missing capability"));
 /// assert!(matches!(err, Error::Privilege(_)));
 /// ```
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[must_use]
 pub fn privilege_error(err: Report) -> Error {
     Error::Privilege(PrivilegeError::from(err))
