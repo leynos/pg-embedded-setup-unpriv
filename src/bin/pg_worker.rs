@@ -272,11 +272,14 @@ fn apply_worker_environment(environment: &[(String, Option<PlainSecret>)]) {
 }
 
 #[cfg(unix)]
-// TODO: Replace string matching with structured error variant when
-// postgresql_embedded distinguishes missing PID as a specific enum variant.
 fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
-    let message = err.to_string();
-    message.contains("postmaster.pid") && message.contains("does not exist")
+    match err {
+        postgresql_embedded::Error::DatabaseStopError(msg)
+        | postgresql_embedded::Error::IoError(msg) => {
+            msg.contains("postmaster.pid") && msg.contains("does not exist")
+        }
+        _ => false,
+    }
 }
 
 /// Stub main for non-Unix platforms.
