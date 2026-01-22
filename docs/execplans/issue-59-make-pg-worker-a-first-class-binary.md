@@ -104,6 +104,14 @@ After this change:
   mentions `PG_EMBEDDED_WORKER`. Impact: Must update to mention PATH discovery
   and installation instructions.
 
+- **Discovery**: (2026-01-22) Test-only functions in `test_support` module were
+  flagged as dead code by `cargo doc` with `-D dead_code`. Impact: Functions
+  like `bootstrap_error`, `privilege_error`, filesystem helpers, and
+  `CapabilityTempDir` are only used in test code (under `tests/`), which
+  documentation builds don't see. Solution: Add
+  `#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]`
+  attributes to align with how they're exported in `mod.rs`.
+
 ## Decision log
 
 - **Decision**: Create `src/bin/` directory for production binaries.
