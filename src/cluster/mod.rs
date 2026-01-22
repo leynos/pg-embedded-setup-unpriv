@@ -330,13 +330,14 @@ mod tests {
         let env_vars = bootstrap.environment.to_env();
         let env_guard = ScopedEnv::apply(&env_vars);
         TestCluster {
-            runtime,
+            runtime: ClusterRuntime::Sync(runtime),
             postgres: None,
             bootstrap,
             is_managed_via_worker: false,
             env_vars,
             worker_guard: None,
             _env_guard: env_guard,
+            _cluster_span: tracing::Span::current(),
         }
     }
 }
