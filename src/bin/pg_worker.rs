@@ -73,12 +73,6 @@ enum WorkerError {
     #[cfg(unix)]
     #[error("postgres operation failed: {0}")]
     PostgresOperation(String),
-    #[expect(
-        dead_code,
-        reason = "variant reserved for future data directory recovery errors"
-    )]
-    #[error("data dir recovery: {0}")]
-    DataDirRecovery(String),
 }
 
 #[derive(Debug)]
@@ -204,7 +198,7 @@ fn is_setup_complete(pg: &PostgreSQL, data_dir: &Utf8Path) -> bool {
 #[cfg(unix)]
 #[expect(
     clippy::cognitive_complexity,
-    reason = "function has simple conditional with early return and one async call"
+    reason = "simple conditional with early return; complexity from helper function is_inline"
 )]
 async fn ensure_postgres_setup(
     pg: &mut PostgreSQL,
@@ -278,6 +272,8 @@ fn apply_worker_environment(environment: &[(String, Option<PlainSecret>)]) {
 }
 
 #[cfg(unix)]
+// TODO: Replace string matching with structured error variant when
+// postgresql_embedded distinguishes missing PID as a specific enum variant.
 fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
     let message = err.to_string();
     message.contains("postmaster.pid") && message.contains("does not exist")

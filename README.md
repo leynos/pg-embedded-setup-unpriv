@@ -56,8 +56,8 @@ which pg_embedded_setup_unpriv pg_worker
 
 ### Worker discovery
 
-The library automatically discovers `pg_worker` from your PATH. If you need to
-use a custom worker, set the `PG_EMBEDDED_WORKER` environment variable:
+The library automatically discovers `pg_worker` from PATH. For custom workers,
+set the `PG_EMBEDDED_WORKER` environment variable:
 
 ```bash
 export PG_EMBEDDED_WORKER=/path/to/custom/worker

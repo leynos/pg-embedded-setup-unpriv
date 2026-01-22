@@ -10,7 +10,7 @@ Status: IN PROGRESS
 ## Purpose / big picture
 
 Promote `pg_worker` from a test-only helper to a first-class production binary.
-Currently `pg_worker` lives under `tests/support/pg_worker.rs` and is gated
+Currently, `pg_worker` lives under `tests/support/pg_worker.rs` and is gated
 behind the `dev-worker` feature, making it unavailable for standard
 installation with `cargo install --path .`. This creates friction for library
 consumers who need to run the library in root mode.
@@ -94,7 +94,7 @@ After this change:
 - **Discovery**: Tests have sophisticated worker discovery in
   `src/test_support/worker_env.rs` that searches the build directory and stages
   binaries in `/tmp` with hash-based paths. Impact: Test discovery is
-  independent from production code and will continue working after the move.
+  independent of production code and will continue working after the move.
 
 - **Discovery**: `pg_worker_hang` is a test-only binary for timeout testing.
   Impact: Should remain under the `dev-worker` feature gate and in
@@ -130,15 +130,28 @@ After this change:
 
 ### What was achieved
 
-TODO: Fill in after implementation.
+Successfully promoted `pg_worker` from a test-only helper to a first-class production binary:
+
+- Moved `pg_worker` from `tests/support/pg_worker.rs` to `src/bin/pg_worker.rs`.
+- Removed feature gate from `pg_worker` in `Cargo.toml`, making it available by default.
+- Implemented three-tier worker binary discovery (explicit config → PATH search → error).
+- Updated error messages to guide users on installation and PATH discovery.
+- Added "Root usage" sections to `docs/users-guide.md` and `README.md`.
+
+All tests pass with no regressions, and the binary builds and installs correctly.
 
 ### Metrics
 
-TODO: Fill in after implementation.
+- Files modified: 5 (below tolerance of 10)
+- Test iterations: All tests pass on first run
+- Linting: Zero clippy warnings, formatting compliant
+- Documentation: Two sections added with clear examples
 
 ### Lessons learned
 
-TODO: Fill in after implementation.
+- Test discovery (`CARGO_BIN_EXE_pg_worker`) and production discovery (`PATH`) are independent and can coexist without conflict.
+- Using `concat!()` for long string literals improves readability compared to backslash continuations.
+- Platform-specific code (`cfg(unix)`) requires careful handling to ensure cross-platform compatibility.
 
 ## Context and orientation
 
@@ -684,6 +697,8 @@ The test infrastructure has its own worker discovery mechanism in
 
 These are independent and serve different purposes:
 
+*Table: Worker discovery mechanisms by context*
+
 | Context    | Discovery mechanism             | Purpose                   |
 | ---------- | ------------------------------- | ------------------------- |
 | Tests      | Build directory search          | Find freshly built binary |
@@ -719,7 +734,7 @@ valid executable found:
 
    1. Append `pg_worker` (or `pg_worker.exe` on Windows).
    2. Check if the path exists and is a regular file.
-   3. Check if the file is executable (Unix only: mode has execute bits).
+   3. Check if the file is executable (Unix only: mode has the execute bits set).
    4. If all checks pass, return this path.
 3. If no valid binary is found, return `None`.
 
