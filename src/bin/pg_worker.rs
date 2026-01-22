@@ -36,12 +36,19 @@
 //! The helper mirrors `postgresql_embedded` lifecycle calls while allowing the
 //! caller to demote credentials before spawning a child process.
 
+#[cfg(unix)]
 use camino::{Utf8Path, Utf8PathBuf};
+#[cfg(unix)]
 use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
+#[cfg(unix)]
 use std::env;
+#[cfg(unix)]
 use std::ffi::{OsStr, OsString};
+#[cfg(unix)]
 use std::io::Read;
+#[cfg(unix)]
 use std::path::PathBuf;
+#[cfg(unix)]
 use thiserror::Error;
 
 #[cfg(unix)]
@@ -54,9 +61,11 @@ use tokio::runtime::Builder;
 use tracing::info;
 
 /// Boxed error type for the main result.
+#[cfg(unix)]
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Errors that can occur during worker operations.
+#[cfg(unix)]
 #[derive(Debug, Error)]
 enum WorkerError {
     #[error("invalid arguments: {0}")]
@@ -67,14 +76,13 @@ enum WorkerError {
     ConfigParse(#[source] serde_json::Error),
     #[error("settings conversion failed: {0}")]
     SettingsConversion(String),
-    #[cfg(unix)]
     #[error("runtime init failed: {0}")]
     RuntimeInit(#[source] std::io::Error),
-    #[cfg(unix)]
     #[error("postgres operation failed: {0}")]
     PostgresOperation(String),
 }
 
+#[cfg(unix)]
 #[derive(Debug)]
 enum Operation {
     Setup,
@@ -138,6 +146,7 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn parse_args(
     mut args: impl Iterator<Item = OsString>,
 ) -> Result<(Operation, Utf8PathBuf), WorkerError> {
@@ -273,6 +282,7 @@ fn handle_stop_result(result: Result<(), postgresql_embedded::Error>) -> Result<
 }
 
 /// Applies worker environment overrides to current process.
+#[cfg(unix)]
 fn apply_worker_environment(environment: &[(String, Option<PlainSecret>)]) {
     for (key, value) in environment {
         match value {
@@ -305,6 +315,6 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
 /// Unix-specific filesystem operations. This stub returns a runtime error on
 /// non-Unix platforms to prevent accidental use.
 #[cfg(not(unix))]
-fn main() -> Result<(), BoxError> {
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Err("pg_worker is not supported on non-Unix platforms".into())
 }
