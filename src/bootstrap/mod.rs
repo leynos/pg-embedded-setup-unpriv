@@ -120,7 +120,7 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
     let privileges = detect_execution_privileges();
     let cfg = PgEnvCfg::load().context("failed to load configuration via OrthoConfig")?;
     let settings = cfg.to_settings()?;
-    let worker_binary = worker_binary_from_env()?;
+    let worker_binary = worker_binary_from_env(privileges)?;
     let execution_mode = determine_execution_mode(privileges, worker_binary.as_ref())?;
     let shutdown_timeout = shutdown_timeout_from_env()?;
     let prepared = prepare_bootstrap(privileges, settings, &cfg)?;

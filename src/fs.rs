@@ -14,7 +14,7 @@ use tracing::{error, info, info_span};
 ///
 /// Absolute paths are opened relative to their parent directory; relative paths reuse the current
 /// working directory.
-pub(crate) fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
+pub fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
     if path.has_root() {
         let (dir_path, relative) = match path.parent() {
             Some(parent) => {

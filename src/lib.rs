@@ -10,7 +10,7 @@ pub mod cache;
 mod cluster;
 mod env;
 mod error;
-mod fs;
+pub mod fs;
 mod observability;
 #[cfg(all(
     unix,

@@ -77,18 +77,18 @@ After this change:
 
 ## Progress
 
-- [ ] (2026-01-22) Stage A: Preparation - read all affected files
-- [ ] (2026-01-22) Stage B: Move `pg_worker` to `src/bin/pg_worker.rs`
-- [ ] (2026-01-22) Stage C: Update `Cargo.toml` to remove feature gate
-- [ ] (2026-01-22) Stage D: Implement PATH-based autodiscovery
-- [ ] (2026-01-22) Stage E: Update error messages
-- [ ] (2026-01-22) Stage F: Update documentation (`docs/users-guide.md`)
-- [ ] (2026-01-22) Stage G: Update documentation (`README.md`)
-- [ ] (2026-01-22) Stage H: Final validation and testing
+- [x] (2026-01-22) Stage A: Preparation - read all affected files
+- [x] (2026-01-22) Stage B: Move `pg_worker` to `src/bin/pg_worker.rs`
+- [x] (2026-01-22) Stage C: Update `Cargo.toml` to remove feature gate
+- [x] (2026-01-22) Stage D: Implement PATH-based autodiscovery
+- [x] (2026-01-22) Stage E: Update error messages
+- [x] (2026-01-22) Stage F: Update documentation (`docs/users-guide.md`)
+- [x] (2026-01-22) Stage G: Update documentation (`README.md`)
+- [x] (2026-01-22) Stage H: Final validation and testing
 
 ## Surprises & discoveries
 
-- **Discovery**: The `src/bin/` directory does not exist yet. Impact: Create the
+- **Discovery**: The `src/bin/` directory does not exist yet. Impact: Create
   directory structure first, then move the file.
 
 - **Discovery**: Tests have sophisticated worker discovery in
@@ -388,7 +388,7 @@ In `src/bootstrap/env.rs`, ensure validation errors are clear and actionable.
 
 Proposed content for `docs/users-guide.md`:
 
-````markdown
+```markdown
 ## Root usage
 
 When running as `root`, the library uses a privileged worker binary
@@ -489,7 +489,7 @@ fn bootstrap_as_root() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
 Unprivileged users do not need to install the worker binary and can run
 `TestCluster` directly without any additional setup.
 
-````
+```
 
 ### Stage G: Update documentation (`README.md`)
 
@@ -498,7 +498,7 @@ update the troubleshooting section to include worker-related issues.
 
 Proposed content for `README.md`:
 
-````markdown
+```markdown
 ## Root usage and worker binary
 
 When running as `root`, the library requires a privileged worker binary
@@ -534,7 +534,7 @@ export PG_EMBEDDED_WORKER=/path/to/custom/worker
 
 Unprivileged users do not need to install the worker binary.
 
-````
+```
 
 ### Stage H: Final validation and testing
 
@@ -546,7 +546,7 @@ Unprivileged users do not need to install the worker binary.
 
    Expected: All tests pass with no failures.
 
-2. Run linting and formatting checks:
+1. Run linting and formatting checks:
 
    ```bash
    make check-fmt && make lint
@@ -554,7 +554,7 @@ Unprivileged users do not need to install the worker binary.
 
    Expected: No warnings or formatting issues.
 
-3. Test binary builds:
+2. Test binary builds:
 
    ```bash
    cargo build --release --bin pg_worker --bin pg_embedded_setup_unpriv
@@ -563,7 +563,7 @@ Unprivileged users do not need to install the worker binary.
 
    Expected: Both binaries exist.
 
-4. Test PATH-based autodiscovery (requires root):
+3. Test PATH-based autodiscovery (requires root):
 
    ```bash
    # Ensure pg_worker is in PATH

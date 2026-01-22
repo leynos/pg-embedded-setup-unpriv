@@ -110,7 +110,8 @@ fn spawn_worker_inner(
     {
         let worker = bootstrap.worker_binary.as_ref().ok_or_else(|| {
             BootstrapError::from(eyre!(
-                "PG_EMBEDDED_WORKER must be set when using ExecutionMode::Subprocess"
+                "pg_worker binary not found. Install it with 'cargo install --path . --bin pg_worker' \
+                 and ensure it is in PATH, or set PG_EMBEDDED_WORKER to its absolute path"
             ))
         })?;
 
