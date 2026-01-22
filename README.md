@@ -178,6 +178,7 @@ diagnostics to French via `rstest_bdd::select_localizations` and fails if the
 embedded assets are missing. Run `make test` (or the focused
 `cargo test localized_diagnostics`) in CI to ensure every target platform loads
 the lazy localization payload correctly.
+
 ## Next steps
 
 After the bootstrap completes you can start PostgreSQL with
