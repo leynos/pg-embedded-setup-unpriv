@@ -12,7 +12,7 @@ pub use errors::{bootstrap_error, privilege_error};
 #[cfg(not(doc))]
 pub use filesystem::ambient_dir_and_path;
 #[cfg(not(doc))]
-pub use filesystem::{ensure_dir_exists, metadata, set_permissions, CapabilityTempDir};
+pub use filesystem::{CapabilityTempDir, ensure_dir_exists, metadata, set_permissions};
 #[allow(unused_imports)]
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use fixtures::{
@@ -27,8 +27,8 @@ pub use hash::hash_directory;
 #[allow(unused_imports)]
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use hook::{
-    drain_hook_install_logs, install_run_root_operation_hook, invoke_with_privileges,
-    run_root_operation_hook, HookGuard, RunRootOperationHook, RunRootOperationHookInstallError,
+    HookGuard, RunRootOperationHook, RunRootOperationHookInstallError, drain_hook_install_logs,
+    install_run_root_operation_hook, invoke_with_privileges, run_root_operation_hook,
 };
 #[allow(unused_imports)]
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]

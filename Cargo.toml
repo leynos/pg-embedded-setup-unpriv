@@ -223,7 +223,3 @@ serial_test = { version = "3.0.0", features = ["file_locks"] }
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 mockall = "0.13"
 
-[[test]]
-name = "test_support"
-path = "src/test_support"
-

@@ -11,7 +11,7 @@ use cap_std::{
 };
 use color_eyre::eyre::{Context, Report, Result};
 
-use crate::{ExecutionPrivileges, detect_execution_privileges, fs};
+use crate::{detect_execution_privileges, fs, ExecutionPrivileges};
 
 /// Opens the ambient directory containing `path` and returns its relative component.
 ///
@@ -133,6 +133,7 @@ fn default_temp_base(privileges: ExecutionPrivileges) -> Result<Utf8PathBuf> {
     }
 }
 
+#[allow(dead_code)]
 fn target_temp_base() -> Result<Utf8PathBuf> {
     let cwd_path = std::env::current_dir().context("resolve current directory")?;
     let cwd = Utf8PathBuf::try_from(cwd_path)
@@ -148,12 +149,13 @@ pub struct CapabilityTempDir {
 }
 
 impl CapabilityTempDir {
-    /// Creates a new temporary directory rooted under the test temp location.
+    /// Creates a new temporary directory rooted under of test temp location.
     ///
     /// Uses `PG_EMBEDDED_TEST_TMPDIR` when set. Unprivileged tests prefer
     /// `CARGO_TARGET_DIR` (or `./target`) to avoid exhausting shared `/tmp`
     /// space; privileged tests default to `/var/tmp` so the unprivileged worker
-    /// can access the directory tree.
+    /// can access directory tree.
+    #[allow(dead_code)]
     pub fn new(prefix: &str) -> Result<Self> {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -197,6 +199,7 @@ impl CapabilityTempDir {
         &self.path
     }
 
+    #[allow(dead_code)]
     fn remove_dir(dir: Dir, path: &Utf8Path) {
         if let Err(err) = dir.remove_open_dir_all() {
             tracing::warn!("SKIP-CAP-TEMPDIR: failed to remove {}: {err}", path);
