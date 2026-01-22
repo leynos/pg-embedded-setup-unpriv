@@ -63,17 +63,25 @@ fn parse_worker_path_cases(
 
 // Tests for discover_worker_from_path
 
+/// Creates an executable worker file with the given name in the specified directory.
+/// On Unix, sets executable permissions (0o755).
 #[cfg(unix)]
-#[test]
-fn discover_worker_finds_binary_in_path() {
-    let temp = tempdir().expect("create tempdir");
-    let worker_name = "pg_worker";
+fn create_executable_worker(dir: &std::path::Path, worker_name: &str) {
+    use std::os::unix::fs::PermissionsExt;
 
-    let worker_path = temp.path().join(worker_name);
+    let worker_path = dir.join(worker_name);
     fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
     let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&worker_path, perms).expect("set permissions");
+}
+
+/// Tests that `discover_worker_from_path` finds a worker with the given name.
+#[cfg(unix)]
+fn assert_worker_discovered_with_name(worker_name: &str) {
+    let temp = tempdir().expect("create tempdir");
+
+    create_executable_worker(temp.path(), worker_name);
 
     let key = OsString::from("PATH");
     let value = Some(OsString::from(temp.path().to_string_lossy().to_string()));
@@ -88,6 +96,12 @@ fn discover_worker_finds_binary_in_path() {
         found.as_str().contains(worker_name),
         "found path should contain {worker_name}: {found}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn discover_worker_finds_binary_in_path() {
+    assert_worker_discovered_with_name("pg_worker");
 }
 
 #[test]
@@ -279,26 +293,5 @@ fn discover_worker_errors_on_non_utf8_path_entry() {
 #[cfg(unix)]
 #[test]
 fn discover_worker_uses_custom_worker_name() {
-    let temp = tempdir().expect("create tempdir");
-    let worker_name = "my_custom_worker";
-
-    let worker_path = temp.path().join(worker_name);
-    fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
-    let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&worker_path, perms).expect("set permissions");
-
-    let key = OsString::from("PATH");
-    let value = Some(OsString::from(temp.path().to_string_lossy().to_string()));
-    let _env_guard = ScopedEnv::apply_os([(key, value)]);
-
-    let result =
-        discover_worker_from_path(worker_name).expect("should not error during worker discovery");
-
-    let expected_msg = format!("should find {worker_name}");
-    let found = result.expect(&expected_msg);
-    assert!(
-        found.as_str().contains(worker_name),
-        "found path should contain {worker_name}: {found}"
-    );
+    assert_worker_discovered_with_name("my_custom_worker");
 }
