@@ -1,6 +1,7 @@
 //! Detects execution privileges and selects the appropriate orchestration mode.
 
 use camino::Utf8PathBuf;
+use color_eyre::eyre::eyre;
 
 use crate::error::{BootstrapError, BootstrapResult};
 
@@ -60,17 +61,19 @@ pub fn detect_execution_privileges() -> ExecutionPrivileges {
 pub(super) fn determine_execution_mode(
     privileges: ExecutionPrivileges,
     worker_binary: Option<&Utf8PathBuf>,
+    worker_name: Option<&str>,
 ) -> BootstrapResult<ExecutionMode> {
     #[cfg(unix)]
     {
         match privileges {
             ExecutionPrivileges::Root => {
                 if worker_binary.is_none() {
-                    Err(BootstrapError::from(color_eyre::eyre::eyre!(concat!(
-                        "pg_worker binary not found. Install with ",
-                        "'cargo install pg-embed-setup-unpriv' and ensure pg_worker is in PATH, ",
-                        "or set PG_EMBEDDED_WORKER to its absolute path."
-                    ))))
+                    let name = worker_name.unwrap_or("pg_worker");
+                    Err(BootstrapError::from(eyre!(
+                        "{} binary not found. Install with 'cargo install pg-embed-setup-unpriv' and ensure {} is in PATH, or set PG_EMBEDDED_WORKER to its absolute path.",
+                        name,
+                        name
+                    )))
                 } else {
                     Ok(ExecutionMode::Subprocess)
                 }
@@ -83,6 +86,7 @@ pub(super) fn determine_execution_mode(
     {
         let _ = worker_binary;
         let _ = privileges;
+        let _ = worker_name;
         Ok(ExecutionMode::InProcess)
     }
 }
@@ -96,7 +100,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn determine_execution_mode_requires_worker_when_root() {
-        let err = determine_execution_mode(ExecutionPrivileges::Root, None)
+        let err = determine_execution_mode(ExecutionPrivileges::Root, None, None)
             .expect_err("root execution without worker must error");
         let message = err.to_string();
         assert!(
@@ -109,7 +113,7 @@ mod tests {
     #[test]
     fn determine_execution_mode_allows_subprocess_with_worker() {
         let worker = Utf8PathBuf::from("/tmp/pg_worker");
-        let mode = determine_execution_mode(ExecutionPrivileges::Root, Some(&worker))
+        let mode = determine_execution_mode(ExecutionPrivileges::Root, Some(&worker), None)
             .expect("root execution with worker should succeed");
         assert_eq!(mode, ExecutionMode::Subprocess);
     }
@@ -117,7 +121,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn determine_execution_mode_in_process_when_unprivileged() {
-        let mode = determine_execution_mode(ExecutionPrivileges::Unprivileged, None)
+        let mode = determine_execution_mode(ExecutionPrivileges::Unprivileged, None, None)
             .expect("unprivileged execution should succeed");
         assert_eq!(mode, ExecutionMode::InProcess);
     }
@@ -126,7 +130,7 @@ mod tests {
     #[test]
     fn determine_execution_mode_ignores_worker_when_unprivileged() {
         let worker = Utf8PathBuf::from("/tmp/pg_worker");
-        let mode = determine_execution_mode(ExecutionPrivileges::Unprivileged, Some(&worker))
+        let mode = determine_execution_mode(ExecutionPrivileges::Unprivileged, Some(&worker), None)
             .expect("unprivileged execution should succeed with worker configured");
         assert_eq!(mode, ExecutionMode::InProcess);
     }
@@ -135,7 +139,7 @@ mod tests {
     #[test]
     fn determine_execution_mode_defaults_to_in_process() {
         let worker = Utf8PathBuf::from("/tmp/pg_worker");
-        let mode = determine_execution_mode(ExecutionPrivileges::Root, Some(&worker))
+        let mode = determine_execution_mode(ExecutionPrivileges::Root, Some(&worker), None)
             .expect("non-unix execution should succeed");
         assert_eq!(mode, ExecutionMode::InProcess);
     }

@@ -6,11 +6,9 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 
-use camino::Utf8PathBuf;
 use rstest::rstest;
 use tempfile::tempdir;
 
-use crate::BootstrapResult;
 use crate::bootstrap::worker_discovery::{
     discover_worker_from_path, is_trusted_path_directory, parse_worker_path_from_env,
 };
@@ -64,29 +62,6 @@ fn parse_worker_path_cases(
 }
 
 // Tests for discover_worker_from_path
-
-/// Executes `discover_worker_from_path()` with a modified PATH, restoring
-/// the original value afterwards. The `setup` closure runs after PATH is
-/// changed but before discovery, allowing custom test setup.
-///
-/// Uses `ScopedEnv` for panic-safe restoration and automatic `ENV_LOCK`
-/// acquisition.
-fn with_modified_path<F>(
-    new_path: &str,
-    worker_name: &str,
-    setup: F,
-) -> BootstrapResult<Option<Utf8PathBuf>>
-where
-    F: FnOnce(),
-{
-    let key = OsString::from("PATH");
-    let value = Some(OsString::from(new_path));
-    let _env_guard = ScopedEnv::apply_os([(key, value)]);
-
-    setup();
-    discover_worker_from_path(worker_name)
-    // PATH restored automatically when _env_guard drops
-}
 
 #[cfg(unix)]
 #[test]
@@ -276,20 +251,22 @@ fn is_trusted_path_directory_rejects_relative_paths() {
 #[ignore = "rustc E0277 — https://github.com/leynos/pg-embedded-setup-unpriv/issues/78"]
 fn discover_worker_errors_on_non_utf8_path_entry() {
     let temp = tempdir().expect("create tempdir");
-    let valid_dir = temp.path().join("valid_dir");
     let worker_path = temp.path().join("pg_worker");
-    let _new_path = format!("{}:{}", temp.path().display(), valid_dir.display());
 
     let non_utf8_dir_name = OsStr::from_bytes(b"non_\xff_utf8");
     let non_utf8_dir = temp.path().join(non_utf8_dir_name);
     let new_path_with_non_utf8 = format!("{}:{}", temp.path().display(), non_utf8_dir.display());
 
-    let result = with_modified_path(&new_path_with_non_utf8, "pg_worker", || {
-        fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
-        let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&worker_path, perms).expect("set permissions");
-    });
+    let key = OsString::from("PATH");
+    let value = Some(OsString::from(&new_path_with_non_utf8));
+    let _env_guard = ScopedEnv::apply_os([(key, value)]);
+
+    fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
+    let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&worker_path, perms).expect("set permissions");
+
+    let result = discover_worker_from_path("pg_worker");
 
     let err = result.expect_err("should error on non-UTF-8 PATH entry");
     assert!(

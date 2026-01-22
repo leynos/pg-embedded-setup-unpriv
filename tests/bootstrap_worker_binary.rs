@@ -201,10 +201,10 @@ fn bootstrap_fails_when_worker_not_in_path_or_env() -> Result<()> {
     // When running as unprivileged, the bootstrap succeeds without needing a worker
     if geteuid().is_root() {
         let err = outcome.expect_err("bootstrap should fail when worker is not found as root");
-        let message = err.to_string();
         ensure!(
-            message.contains("pg_worker binary not found"),
-            "expected missing-worker error when running as root, got: {message}"
+            err.kind() == BootstrapErrorKind::WorkerBinaryMissing,
+            "expected WorkerBinaryMissing error when running as root, got: {:?}",
+            err.kind()
         );
     } else {
         // Unprivileged execution doesn't require a worker, so bootstrap may succeed

@@ -190,6 +190,19 @@ fn is_executable(path: &std::path::Path) -> bool {
 }
 
 #[cfg(unix)]
+/// Validates that a PATH directory is absolute and not world-writable.
+///
+/// On Unix platforms, this ensures PATH entries are absolute paths and
+/// do not allow arbitrary code execution via world-writable directories.
+///
+/// # Arguments
+///
+/// * `dir` - A directory path from PATH to validate.
+///
+/// # Returns
+///
+/// * `true` if the directory is absolute and not world-writable.
+/// * `false` if the directory is relative or world-writable.
 pub(crate) fn is_trusted_path_directory(dir: &std::path::Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     if !dir.is_absolute() {
@@ -201,6 +214,19 @@ pub(crate) fn is_trusted_path_directory(dir: &std::path::Path) -> bool {
 }
 
 #[cfg(not(unix))]
+/// Validates that a PATH directory is absolute (non-Unix platforms).
+///
+/// On non-Unix platforms, this only ensures PATH entries are absolute paths.
+/// Additional security validations may be required for specific platforms.
+///
+/// # Arguments
+///
+/// * `dir` - A directory path from PATH to validate.
+///
+/// # Returns
+///
+/// * `true` if the directory path is absolute.
+/// * `false` if the directory path is relative.
 pub(crate) fn is_trusted_path_directory(dir: &std::path::Path) -> bool {
     dir.is_absolute()
 }
