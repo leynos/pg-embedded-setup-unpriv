@@ -7,7 +7,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::Report;
 
 use crate::error::{
-    error_chain_contains_not_found, BootstrapError, BootstrapErrorKind, BootstrapResult,
+    BootstrapError, BootstrapErrorKind, BootstrapResult, error_chain_contains_not_found,
 };
 use crate::fs::ambient_dir_and_path;
 
