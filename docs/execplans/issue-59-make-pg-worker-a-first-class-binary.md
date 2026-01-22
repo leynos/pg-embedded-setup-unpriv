@@ -145,9 +145,9 @@ TODO: Fill in after implementation.
 ### Key files
 
 - `tests/support/pg_worker.rs` (374 lines): Current location of worker binary.
-  Contains CLI argument parsing, worker operation execution, and privilege
-  dropping. Lines 1-38: module documentation. Lines 98-135: `run_worker()` main
-  function.
+  Contains command-line interface (CLI) argument parsing, worker operation execution,
+  and privilege dropping. Lines 1-38: module documentation. Lines 98-135:
+  `run_worker()` main function.
 
 - `Cargo.toml` (226 lines): Package configuration. Lines 20-28: binary
   definitions. Lines 128-137: feature flags. Line 135: `dev-worker` feature
@@ -304,8 +304,8 @@ In `src/bootstrap/env.rs`, add PATH-based autodiscovery.
    }
    ```
 
-   Note: `env::split_paths` already handles platform separators, so you do not
-   need `PATH_SEPARATOR`.
+   Note: `env::split_paths` already handles platform separators, so there is
+   no need to use `PATH_SEPARATOR`.
 
 2. Modify `worker_binary_from_env()` to implement three-tier discovery:
 
@@ -393,7 +393,8 @@ Proposed content for `docs/users-guide.md`:
 
 When running as `root`, the library uses a privileged worker binary
 (`pg_worker`) to execute PostgreSQL lifecycle operations as the `nobody` user.
-This ensures that all filesystem mutations occur with the correct UID/GID.
+This ensures that all filesystem mutations occur with the correct user and
+group identifiers (UID/GID).
 
 ### Installing the worker
 
@@ -403,7 +404,7 @@ The worker binary is installed alongside the main library:
 cargo install --path .
 ```
 
-This installs both `pg_embedded_setup_unpriv` and `pg_worker` to your Cargo
+This installs both `pg_embedded_setup_unpriv` and `pg_worker` to the Cargo
 binary directory. Verify installation:
 
 ```bash
@@ -424,7 +425,7 @@ The library automatically discovers the worker using a two-tier strategy:
    that absolute path. Use this for custom worker binaries or testing.
 
 2. **PATH search**: If `PG_EMBEDDED_WORKER` is not set, the library searches all
-   directories in your `PATH` environment variable for `pg_worker` (or
+   directories in the `PATH` environment variable for `pg_worker` (or
    `pg_worker.exe` on Windows).
 
 If the worker cannot be found, the library returns a helpful error with
@@ -441,7 +442,7 @@ cargo install --path . --bin pg_worker
 # Ensure it is in PATH (cargo install does this by default)
 export PATH="$HOME/.cargo/bin:$PATH"
 
-# Run your application as root
+# Run the application as root
 sudo -E your_application
 ```
 
@@ -450,7 +451,7 @@ sudo -E your_application
 ```bash
 export PG_EMBEDDED_WORKER="/custom/path/to/pg_worker"
 
-# Run your application as root
+# Run the application as root
 sudo -E your_application
 ```
 

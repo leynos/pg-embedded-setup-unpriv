@@ -34,19 +34,23 @@
 //! ```
 //!
 //! The helper mirrors `postgresql_embedded` lifecycle calls while allowing the
-//! caller to demote credentials before spawning the child process.
-#![cfg(unix)]
+//! caller to demote credentials before spawning a child process.
 
 use camino::{Utf8Path, Utf8PathBuf};
-use pg_embedded_setup_unpriv::fs::ambient_dir_and_path;
 use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
-use postgresql_embedded::{PostgreSQL, Status};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::PathBuf;
 use thiserror::Error;
+
+#[cfg(unix)]
+use pg_embedded_setup_unpriv::fs::ambient_dir_and_path;
+#[cfg(unix)]
+use postgresql_embedded::{PostgreSQL, Status};
+#[cfg(unix)]
 use tokio::runtime::Builder;
+#[cfg(unix)]
 use tracing::info;
 
 /// Boxed error type for the main result.
@@ -63,8 +67,10 @@ enum WorkerError {
     ConfigParse(#[source] serde_json::Error),
     #[error("settings conversion failed: {0}")]
     SettingsConversion(String),
+    #[cfg(unix)]
     #[error("runtime init failed: {0}")]
     RuntimeInit(#[source] std::io::Error),
+    #[cfg(unix)]
     #[error("postgres operation failed: {0}")]
     PostgresOperation(String),
     #[expect(
@@ -95,10 +101,12 @@ impl Operation {
     }
 }
 
+#[cfg(unix)]
 fn main() -> Result<(), BoxError> {
     run_worker(env::args_os()).map_err(Into::into)
 }
 
+#[cfg(unix)]
 fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
     let (operation, config_path) = parse_args(args)?;
     let payload = load_payload(&config_path)?;
@@ -124,8 +132,10 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
                     WorkerError::PostgresOperation("pg handle missing during start".into())
                 })?;
                 ensure_postgres_started(pg_handle, &data_dir).await?;
-                let handle = pg.take();
-                std::mem::forget(handle);
+
+                if let Some(pg_instance) = pg.take() {
+                    let _leaked = std::mem::ManuallyDrop::new(pg_instance);
+                }
                 Ok(())
             }
             Operation::Stop => execute_stop(&mut pg).await,
@@ -163,6 +173,7 @@ fn load_payload(config_path: &Utf8Path) -> Result<WorkerPayload, WorkerError> {
     serde_json::from_slice(&config_bytes).map_err(WorkerError::ConfigParse)
 }
 
+#[cfg(unix)]
 fn read_config_file(path: &Utf8Path) -> Result<Vec<u8>, BoxError> {
     let (dir, relative) = ambient_dir_and_path(path)?;
     let mut file = dir.open(relative.as_std_path())?;
@@ -171,6 +182,7 @@ fn read_config_file(path: &Utf8Path) -> Result<Vec<u8>, BoxError> {
     Ok(bytes)
 }
 
+#[cfg(unix)]
 fn build_runtime() -> Result<tokio::runtime::Runtime, WorkerError> {
     Builder::new_current_thread()
         .enable_all()
@@ -178,15 +190,18 @@ fn build_runtime() -> Result<tokio::runtime::Runtime, WorkerError> {
         .map_err(WorkerError::RuntimeInit)
 }
 
+#[cfg(unix)]
 fn extract_data_dir(settings: &postgresql_embedded::Settings) -> Result<Utf8PathBuf, WorkerError> {
     Utf8PathBuf::from_path_buf(settings.data_dir.clone())
         .map_err(|_| WorkerError::SettingsConversion("data_dir must be valid UTF-8".into()))
 }
 
+#[cfg(unix)]
 fn is_setup_complete(pg: &PostgreSQL, data_dir: &Utf8Path) -> bool {
     data_dir.is_dir() && data_dir.join("PG_VERSION").exists() && pg.status() != Status::NotInstalled
 }
 
+#[cfg(unix)]
 #[expect(
     clippy::cognitive_complexity,
     reason = "function has simple conditional with early return and one async call"
@@ -206,6 +221,7 @@ async fn ensure_postgres_setup(
         .map_err(|e| WorkerError::PostgresOperation(format!("setup failed: {e}")))
 }
 
+#[cfg(unix)]
 async fn ensure_postgres_started(
     pg: &mut PostgreSQL,
     data_dir: &Utf8Path,
@@ -214,6 +230,7 @@ async fn ensure_postgres_started(
     start_if_not_started(pg).await
 }
 
+#[cfg(unix)]
 async fn start_if_not_started(pg: &mut PostgreSQL) -> Result<(), WorkerError> {
     if pg.status() == Status::Started {
         info!("PostgreSQL already started, skipping redundant start");
@@ -225,6 +242,7 @@ async fn start_if_not_started(pg: &mut PostgreSQL) -> Result<(), WorkerError> {
         .map_err(|e| WorkerError::PostgresOperation(format!("start failed: {e}")))
 }
 
+#[cfg(unix)]
 async fn execute_stop(pg: &mut Option<PostgreSQL>) -> Result<(), WorkerError> {
     let pg_handle = pg
         .as_mut()
@@ -232,6 +250,7 @@ async fn execute_stop(pg: &mut Option<PostgreSQL>) -> Result<(), WorkerError> {
     handle_stop_result(pg_handle.stop().await)
 }
 
+#[cfg(unix)]
 fn handle_stop_result(result: Result<(), postgresql_embedded::Error>) -> Result<(), WorkerError> {
     match result {
         Ok(()) => Ok(()),
@@ -242,23 +261,34 @@ fn handle_stop_result(result: Result<(), postgresql_embedded::Error>) -> Result<
     }
 }
 
-/// Applies the worker environment overrides to the current process.
+/// Applies worker environment overrides to current process.
 fn apply_worker_environment(environment: &[(String, Option<PlainSecret>)]) {
     for (key, value) in environment {
         match value {
             Some(env_value) => unsafe {
-                // SAFETY: the worker is single-threaded; environment updates cannot race.
+                // SAFETY: worker is single-threaded; environment updates cannot race.
                 env::set_var(key, env_value.expose());
             },
             None => unsafe {
-                // SAFETY: the worker is single-threaded; environment updates cannot race.
+                // SAFETY: worker is single-threaded; environment updates cannot race.
                 env::remove_var(key);
             },
         }
     }
 }
 
+#[cfg(unix)]
 fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
     let message = err.to_string();
     message.contains("postmaster.pid") && message.contains("does not exist")
+}
+
+/// Stub main for non-Unix platforms.
+///
+/// The worker binary is Unix-only because it requires privilege dropping and
+/// Unix-specific filesystem operations. This stub provides a compile-time
+/// error on non-Unix platforms to prevent accidental use.
+#[cfg(not(unix))]
+fn main() -> Result<(), BoxError> {
+    Err("pg_worker is not supported on non-Unix platforms".into())
 }
