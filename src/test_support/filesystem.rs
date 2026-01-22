@@ -75,8 +75,7 @@ pub fn set_permissions(path: &Utf8Path, mode: u32) -> Result<()> {
 /// Retrieves metadata for the provided path using capability APIs.
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub fn metadata(path: &Utf8Path) -> std::io::Result<Metadata> {
-    let (dir, relative) =
-        ambient_dir_and_path(path).map_err(|err| std::io::Error::other(err.to_string()))?;
+    let (dir, relative) = ambient_dir_and_path(path).map_err(std::io::Error::other)?;
     if relative.as_str().is_empty() {
         dir.dir_metadata()
     } else {
