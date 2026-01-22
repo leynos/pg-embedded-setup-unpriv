@@ -10,8 +10,10 @@ pub mod cache;
 mod cluster;
 mod env;
 mod error;
-pub mod fs;
+mod fs;
 mod observability;
+
+pub use crate::fs::ambient_dir_and_path;
 #[cfg(all(
     unix,
     any(
