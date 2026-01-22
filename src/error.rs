@@ -108,6 +108,20 @@ pub struct PrivilegeError(#[from] Report);
 #[error(transparent)]
 pub struct ConfigError(#[from] Report);
 
+/// Checks whether an eyre error chain contains a specific IO error kind.
+#[must_use]
+pub fn error_chain_contains_kind(err: &Report, kind: std::io::ErrorKind) -> bool {
+    err.chain()
+        .filter_map(|source| source.downcast_ref::<std::io::Error>())
+        .any(|source| source.kind() == kind)
+}
+
+/// Checks whether an eyre error chain contains a `NotFound` IO error.
+#[must_use]
+pub fn error_chain_contains_not_found(err: &Report) -> bool {
+    error_chain_contains_kind(err, std::io::ErrorKind::NotFound)
+}
+
 #[cfg(test)]
 mod tests {
     //! Unit tests for error display formats.

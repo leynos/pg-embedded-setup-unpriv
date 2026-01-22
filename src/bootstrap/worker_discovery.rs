@@ -5,9 +5,10 @@
 
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::Report;
-use std::io::ErrorKind;
 
-use crate::error::{BootstrapError, BootstrapErrorKind, BootstrapResult};
+use crate::error::{
+    error_chain_contains_not_found, BootstrapError, BootstrapErrorKind, BootstrapResult,
+};
 use crate::fs::ambient_dir_and_path;
 
 #[cfg(unix)]
@@ -262,7 +263,7 @@ fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {
 }
 
 fn worker_binary_error(path: &Utf8Path, err: Report) -> BootstrapError {
-    let is_not_found = error_chain_has_not_found(&err);
+    let is_not_found = error_chain_contains_not_found(&err);
     let context = format!("failed to access PG_EMBEDDED_WORKER at {path}: {err}");
     let report = err.wrap_err(context);
 
@@ -271,10 +272,4 @@ fn worker_binary_error(path: &Utf8Path, err: Report) -> BootstrapError {
     } else {
         BootstrapError::from(report)
     }
-}
-
-fn error_chain_has_not_found(err: &Report) -> bool {
-    err.chain()
-        .filter_map(|source| source.downcast_ref::<std::io::Error>())
-        .any(|source| source.kind() == ErrorKind::NotFound)
 }

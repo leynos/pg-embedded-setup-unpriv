@@ -1,4 +1,4 @@
-//! Tests for the [`crate::bootstrap::env`] module.
+//! Tests for the [`crate::bootstrap::worker_discovery`] module.
 //!
 //! Covers worker path parsing, PATH-based discovery, and security hardening
 //! for trusted directory filtering.
@@ -67,8 +67,6 @@ fn parse_worker_path_cases(
 /// On Unix, sets executable permissions (0o755).
 #[cfg(unix)]
 fn create_executable_worker(dir: &std::path::Path, worker_name: &str) {
-    use std::os::unix::fs::PermissionsExt;
-
     let worker_path = dir.join(worker_name);
     fs::write(&worker_path, b"#!/bin/sh\nexit 0\n").expect("write worker");
     let mut perms = fs::metadata(&worker_path).expect("metadata").permissions();
@@ -76,9 +74,11 @@ fn create_executable_worker(dir: &std::path::Path, worker_name: &str) {
     fs::set_permissions(&worker_path, perms).expect("set permissions");
 }
 
-/// Tests that `discover_worker_from_path` finds a worker with the given name.
 #[cfg(unix)]
-fn assert_worker_discovered_with_name(worker_name: &str) {
+#[rstest]
+#[case("pg_worker")]
+#[case("my_custom_worker")]
+fn discover_worker_finds_binary_with_name(#[case] worker_name: &str) {
     let temp = tempdir().expect("create tempdir");
 
     create_executable_worker(temp.path(), worker_name);
@@ -96,12 +96,6 @@ fn assert_worker_discovered_with_name(worker_name: &str) {
         found.as_str().contains(worker_name),
         "found path should contain {worker_name}: {found}"
     );
-}
-
-#[cfg(unix)]
-#[test]
-fn discover_worker_finds_binary_in_path() {
-    assert_worker_discovered_with_name("pg_worker");
 }
 
 #[test]
@@ -288,10 +282,4 @@ fn discover_worker_errors_on_non_utf8_path_entry() {
             .contains("PATH contains non-UTF-8 directory"),
         "error should mention non-UTF-8 PATH: {err}"
     );
-}
-
-#[cfg(unix)]
-#[test]
-fn discover_worker_uses_custom_worker_name() {
-    assert_worker_discovered_with_name("my_custom_worker");
 }

@@ -165,6 +165,11 @@ pub use error::PgEmbeddedError as Error;
 pub use error::{
     BootstrapError, BootstrapErrorKind, PgEmbeddedError, PrivilegeError, PrivilegeResult, Result,
 };
+#[doc(hidden)]
+pub use error::{
+    error_chain_contains_kind,
+    error_chain_contains_not_found,
+};
 #[cfg(feature = "privileged-tests")]
 #[cfg(all(
     unix,

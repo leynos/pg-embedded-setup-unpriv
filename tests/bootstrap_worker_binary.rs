@@ -163,14 +163,9 @@ fn bootstrap_discovers_worker_from_path() -> Result<()> {
             Ok(())
         }
         Err(err) => {
-            let message = err.to_string();
-            ensure!(
-                !message.contains("pg_worker binary not found"),
-                "PATH discovery should have found the worker, but got: {message}"
-            );
             ensure!(
                 err.kind() != BootstrapErrorKind::WorkerBinaryMissing,
-                "PATH discovery should have found the worker, but got WorkerBinaryMissing"
+                "PATH discovery should have found the worker, but got: {err:?}"
             );
             sandbox.reset()?;
             Ok(())
@@ -210,10 +205,9 @@ fn bootstrap_fails_when_worker_not_in_path_or_env() -> Result<()> {
         // Unprivileged execution doesn't require a worker, so bootstrap may succeed
         // or fail for other reasons (e.g., network issues), but not for missing worker
         if let Err(err) = outcome {
-            let message = err.to_string();
             ensure!(
-                !message.contains("pg_worker binary not found"),
-                "unprivileged bootstrap should not require worker, but got: {message}"
+                err.kind() != BootstrapErrorKind::WorkerBinaryMissing,
+                "unprivileged bootstrap should not require worker, but got: {err:?}"
             );
         }
     }
