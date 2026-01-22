@@ -7,7 +7,7 @@
 //! ```
 //!
 //! The `operation` must be `setup`, `start`, or `stop`. The JSON payload at
-//! `config-path` must serialise a [`WorkerPayload`] containing `PostgreSQL`
+//! `config-path` must serialize a [`WorkerPayload`] containing `PostgreSQL`
 //! settings and environment overrides. A representative payload is:
 //!
 //! ```json
