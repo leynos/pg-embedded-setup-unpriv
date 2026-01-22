@@ -54,7 +54,7 @@
 #![cfg(unix)]
 
 use camino::{Utf8Path, Utf8PathBuf};
-use pg_embedded_setup_unpriv::test_support::ambient_dir_and_path;
+use pg_embedded_setup_unpriv::ambient_dir_and_path;
 use pg_embedded_setup_unpriv::worker::{PlainSecret, WorkerPayload};
 use postgresql_embedded::{PostgreSQL, Status};
 use std::env;

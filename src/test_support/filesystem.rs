@@ -11,7 +11,7 @@ use cap_std::{
 };
 use color_eyre::eyre::{Context, Report, Result};
 
-use crate::{ExecutionPrivileges, detect_execution_privileges, fs};
+use crate::{detect_execution_privileges, fs, ExecutionPrivileges};
 
 /// Opens the ambient directory containing `path` and returns its relative component.
 ///

@@ -6,16 +6,21 @@
 use std::io::{Result as IoResult, Write};
 use std::sync::{Arc, Mutex};
 
-use crate::observability::LOG_TARGET;
-use tracing::Level;
+#[cfg(any(doc, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use tracing::subscriber::with_default;
-use tracing_subscriber::fmt;
+#[cfg(any(doc, feature = "cluster-unit-tests", feature = "dev-worker"))]
+use tracing::Level;
+#[cfg(any(doc, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use tracing_subscriber::fmt::format::FmtSpan;
 
+use crate::observability::LOG_TARGET;
+
+#[cfg(any(doc, feature = "cluster-unit-tests", feature = "dev-worker"))]
 struct BufferWriter {
     buffer: Arc<Mutex<Vec<u8>>>,
 }
 
+#[cfg(any(doc, feature = "cluster-unit-tests", feature = "dev-worker"))]
 impl Write for BufferWriter {
     fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
         let mut guard = self

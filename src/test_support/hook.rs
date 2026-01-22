@@ -6,9 +6,9 @@ use std::mem;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
-use crate::TestBootstrapSettings;
 use crate::cluster::{WorkerInvoker, WorkerOperation};
 use crate::error::BootstrapResult;
+use crate::TestBootstrapSettings;
 use tracing::debug_span;
 
 #[doc(hidden)]

@@ -24,7 +24,9 @@ mod observability;
 ))]
 mod privileges;
 #[doc(hidden)]
-pub mod test_support;
+pub use test_support::ambient_dir_and_path;
+#[doc(hidden)]
+mod test_support;
 #[doc(hidden)]
 pub mod worker;
 pub(crate) mod worker_process;

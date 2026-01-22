@@ -2,7 +2,7 @@
 
 use super::scoped_env::scoped_env;
 use camino::Utf8PathBuf;
-use color_eyre::eyre::{Result, eyre};
+use color_eyre::eyre::{eyre, Result};
 #[cfg(not(doc))]
 use rstest::fixture;
 use std::ffi::OsString;
@@ -12,8 +12,8 @@ use tokio::runtime::{Builder, Runtime};
 use super::worker_env;
 use crate::error::BootstrapResult;
 use crate::{
-    ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
-    TestCluster, detect_execution_privileges, env::ScopedEnv,
+    detect_execution_privileges, env::ScopedEnv, ExecutionMode, ExecutionPrivileges,
+    TestBootstrapEnvironment, TestBootstrapSettings, TestCluster,
 };
 use postgresql_embedded::Settings;
 
