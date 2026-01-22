@@ -5,8 +5,8 @@
 //! applied to items with doc comments. This keeps Whitaker's
 //! `function_attrs_follow_docs` lint happy while preserving documentation.
 
-use crate::test_support::fixtures as runtime_fixtures;
 use crate::TestCluster;
+use crate::test_support::fixtures as runtime_fixtures;
 
 /// `rstest` fixture that yields a running [`TestCluster`].
 ///

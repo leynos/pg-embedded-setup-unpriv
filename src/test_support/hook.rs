@@ -1,11 +1,14 @@
 //! Hook infrastructure that intercepts privileged worker operations during
 //! tests to assert behaviour and control cluster bootstrapping.
 
+#[allow(unused_imports)]
 use std::future::Future;
 use std::mem;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
+#[allow(unused_imports)]
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use crate::cluster::{WorkerInvoker, WorkerOperation};
 use crate::error::BootstrapResult;
 use crate::TestBootstrapSettings;

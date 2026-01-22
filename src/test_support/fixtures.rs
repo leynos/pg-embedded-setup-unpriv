@@ -1,14 +1,18 @@
 //! Shared fixtures for tests that need bootstrap scaffolding.
 
+#[allow(unused_imports)]
 use super::scoped_env::scoped_env;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{eyre, Result};
+#[allow(unused_imports)]
 #[cfg(not(doc))]
 use rstest::fixture;
 use std::ffi::OsString;
 use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
 
+#[allow(unused_imports)]
+#[cfg(test)]
 use super::worker_env;
 use crate::error::BootstrapResult;
 use crate::{

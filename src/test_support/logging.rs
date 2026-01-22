@@ -6,10 +6,13 @@
 use std::io::{Result as IoResult, Write};
 use std::sync::{Arc, Mutex};
 
+#[allow(unused_imports)]
 #[cfg(any(doc, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use tracing::subscriber::with_default;
+#[allow(unused_imports)]
 #[cfg(any(doc, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use tracing::Level;
+#[allow(unused_imports)]
 #[cfg(any(doc, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use tracing_subscriber::fmt::format::FmtSpan;
 

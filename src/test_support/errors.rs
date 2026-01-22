@@ -3,8 +3,8 @@
 
 use color_eyre::eyre::Report;
 
-use crate::error::{BootstrapError, PrivilegeError};
 use crate::Error;
+use crate::error::{BootstrapError, PrivilegeError};
 
 /// Converts a bootstrap error report into the library's public [`Error`] type.
 /// This helper exists for test scaffolding and should not be used in published
