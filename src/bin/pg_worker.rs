@@ -52,7 +52,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 #[cfg(unix)]
-use pg_embedded_setup_unpriv::test_support::ambient_dir_and_path;
+use pg_embedded_setup_unpriv::ambient_dir_and_path;
 #[cfg(unix)]
 use postgresql_embedded::{PostgreSQL, Status};
 #[cfg(unix)]
@@ -90,6 +90,7 @@ enum Operation {
     Stop,
 }
 
+#[cfg(unix)]
 impl Operation {
     fn parse(arg: &OsStr) -> Result<Self, WorkerError> {
         match arg.to_string_lossy().as_ref() {
