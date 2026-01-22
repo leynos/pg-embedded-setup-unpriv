@@ -136,6 +136,7 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
                 ensure_postgres_started(pg_handle, &data_dir).await?;
 
                 if let Some(pg_instance) = pg.take() {
+                    // Intentionally leak to keep PostgreSQL running after worker exit.
                     let _leaked = std::mem::ManuallyDrop::new(pg_instance);
                 }
                 Ok(())
