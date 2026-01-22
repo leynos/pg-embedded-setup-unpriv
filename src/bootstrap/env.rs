@@ -9,15 +9,67 @@ use std::time::Duration;
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::Report;
 
+use crate::bootstrap::mode::ExecutionPrivileges;
 use crate::error::{BootstrapError, BootstrapErrorKind, BootstrapResult};
 use crate::fs::ambient_dir_and_path;
 
 #[cfg(unix)]
 use cap_std::fs::PermissionsExt;
 
+#[cfg(unix)]
+const WORKER_BINARY_NAME: &str = "pg_worker";
+#[cfg(windows)]
+const WORKER_BINARY_NAME: &str = "pg_worker.exe";
+
 pub(super) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_SHUTDOWN_TIMEOUT_SECS: u64 = 600;
 const SHUTDOWN_TIMEOUT_ENV: &str = "PG_SHUTDOWN_TIMEOUT_SECS";
+
+fn discover_worker_from_path() -> Option<Utf8PathBuf> {
+    let path_var = env::var_os("PATH")?;
+    for dir in env::split_paths(&path_var) {
+        let Some(worker_path) = Utf8PathBuf::from_path_buf(dir.join(WORKER_BINARY_NAME)).ok()
+        else {
+            continue;
+        };
+
+        #[cfg(unix)]
+        {
+            let dir_str = dir.as_os_str().to_string_lossy();
+            if dir_str == "." || dir_str.is_empty() {
+                continue;
+            }
+        }
+
+        if worker_path.is_file() && is_executable(&worker_path) {
+            return Some(worker_path);
+        }
+    }
+
+    None
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Utf8Path) -> bool {
+    path.metadata()
+        .map(|m| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                m.permissions().mode() & 0o111 != 0
+            }
+            #[cfg(not(unix))]
+            {
+                true
+            }
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(_path: &Utf8Path) -> bool {
+    true
+}
 
 /// Common Unix paths where time zone databases may be installed.
 ///
@@ -100,32 +152,55 @@ pub(super) fn shutdown_timeout_from_env() -> BootstrapResult<Duration> {
     }
 }
 
-pub(super) fn worker_binary_from_env() -> BootstrapResult<Option<Utf8PathBuf>> {
-    let Some(raw) = env::var_os("PG_EMBEDDED_WORKER") else {
-        return Ok(None);
-    };
+pub(super) fn worker_binary_from_env(
+    privileges: ExecutionPrivileges,
+) -> BootstrapResult<Option<Utf8PathBuf>> {
+    if let Some(raw) = env::var_os("PG_EMBEDDED_WORKER") {
+        let path = Utf8PathBuf::from_path_buf(PathBuf::from(&raw)).map_err(|_| {
+            let invalid_value = raw.to_string_lossy().to_string();
+            BootstrapError::from(color_eyre::eyre::eyre!(
+                "PG_EMBEDDED_WORKER contains a non-UTF-8 value: {invalid_value:?}. \
+                 Provide a UTF-8 encoded absolute path to the worker binary."
+            ))
+        })?;
 
-    let path = Utf8PathBuf::from_path_buf(PathBuf::from(&raw)).map_err(|_| {
-        let invalid_value = raw.to_string_lossy().to_string();
-        BootstrapError::from(color_eyre::eyre::eyre!(
-            "PG_EMBEDDED_WORKER contains a non-UTF-8 value: {invalid_value:?}. \
-             Provide a UTF-8 encoded absolute path to the worker binary."
-        ))
-    })?;
+        validate_worker_path(&path)?;
+        return Ok(Some(path));
+    }
 
+    #[cfg(unix)]
+    {
+        use crate::bootstrap::mode::ExecutionPrivileges;
+        if privileges == ExecutionPrivileges::Root {
+            if let Some(worker) = discover_worker_from_path() {
+                validate_worker_path(&worker)?;
+                return Ok(Some(worker));
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = privileges;
+    }
+
+    Ok(None)
+}
+
+fn validate_worker_path(path: &Utf8PathBuf) -> BootstrapResult<()> {
     if path.as_str().is_empty() {
         return Err(BootstrapError::from(color_eyre::eyre::eyre!(
-            "PG_EMBEDDED_WORKER must not be empty"
+            "Worker binary path must not be empty"
         )));
     }
     if path.as_str() == "/" {
         return Err(BootstrapError::from(color_eyre::eyre::eyre!(
-            "PG_EMBEDDED_WORKER must not point at the filesystem root"
+            "Worker binary path must not point at filesystem root"
         )));
     }
 
-    validate_worker_binary(&path)?;
-    Ok(Some(path))
+    validate_worker_binary(path)?;
+    Ok(())
 }
 
 fn validate_worker_binary(path: &Utf8PathBuf) -> BootstrapResult<()> {

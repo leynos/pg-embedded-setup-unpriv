@@ -1,17 +1,22 @@
 //! Capability-aware filesystem helpers for tests, mirroring the public `fs`
 //! API while exposing ambient operations for scaffolding.
 
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use camino::{Utf8Path, Utf8PathBuf};
-use cap_std::{
-    ambient_authority,
-    fs::{Dir, Metadata},
-};
-use color_eyre::eyre::{Context, Report, Result};
+use cap_std::fs::Dir;
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+use cap_std::{ambient_authority, fs::Metadata};
+use color_eyre::eyre::Result;
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+use color_eyre::eyre::{Context, Report};
 
-use crate::{ExecutionPrivileges, detect_execution_privileges, fs};
+use crate::fs;
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+use crate::{ExecutionPrivileges, detect_execution_privileges};
 
 /// Opens the ambient directory containing `path` and returns its relative component.
 ///
@@ -45,6 +50,7 @@ pub fn ambient_dir_and_path(path: &Utf8Path) -> Result<(Dir, Utf8PathBuf)> {
 /// # Ok(())
 /// # }
 /// ```
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub fn ensure_dir_exists(path: &Utf8Path) -> Result<()> {
     fs::ensure_dir_exists(path)
 }
@@ -61,14 +67,15 @@ pub fn ensure_dir_exists(path: &Utf8Path) -> Result<()> {
 /// # Ok(())
 /// # }
 /// ```
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub fn set_permissions(path: &Utf8Path, mode: u32) -> Result<()> {
     fs::set_permissions(path, mode)
 }
 
 /// Retrieves metadata for the provided path using capability APIs.
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub fn metadata(path: &Utf8Path) -> std::io::Result<Metadata> {
-    let (dir, relative) =
-        ambient_dir_and_path(path).map_err(|err| std::io::Error::other(err.to_string()))?;
+    let (dir, relative) = ambient_dir_and_path(path).map_err(std::io::Error::other)?;
     if relative.as_str().is_empty() {
         dir.dir_metadata()
     } else {
@@ -76,6 +83,7 @@ pub fn metadata(path: &Utf8Path) -> std::io::Result<Metadata> {
     }
 }
 
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 fn temp_root_dir() -> Result<Utf8PathBuf> {
     let privileges = detect_execution_privileges();
     let base = match env_temp_base(privileges)? {
@@ -93,6 +101,7 @@ fn temp_root_dir() -> Result<Utf8PathBuf> {
     Ok(root)
 }
 
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 fn env_temp_base(privileges: ExecutionPrivileges) -> Result<Option<Utf8PathBuf>> {
     let vars: &[&str] = match privileges {
         ExecutionPrivileges::Root => &["PG_EMBEDDED_TEST_TMPDIR"],
@@ -107,6 +116,7 @@ fn env_temp_base(privileges: ExecutionPrivileges) -> Result<Option<Utf8PathBuf>>
     Ok(None)
 }
 
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 fn resolve_env_path(var: &str) -> Result<Option<Utf8PathBuf>> {
     std::env::var_os(var)
         .map(|path| {
@@ -116,6 +126,7 @@ fn resolve_env_path(var: &str) -> Result<Option<Utf8PathBuf>> {
         .transpose()
 }
 
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 fn default_temp_base(privileges: ExecutionPrivileges) -> Result<Utf8PathBuf> {
     match privileges {
         ExecutionPrivileges::Root => {
@@ -133,6 +144,7 @@ fn default_temp_base(privileges: ExecutionPrivileges) -> Result<Utf8PathBuf> {
     }
 }
 
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 fn target_temp_base() -> Result<Utf8PathBuf> {
     let cwd_path = std::env::current_dir().context("resolve current directory")?;
     let cwd = Utf8PathBuf::try_from(cwd_path)
@@ -141,12 +153,14 @@ fn target_temp_base() -> Result<Utf8PathBuf> {
 }
 
 /// Capability-aware temporary directory that exposes both a [`Dir`] handle and the UTF-8 path.
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[derive(Debug)]
 pub struct CapabilityTempDir {
     dir: Option<Dir>,
     path: Utf8PathBuf,
 }
 
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 impl CapabilityTempDir {
     /// Creates a new temporary directory rooted under the test temp location.
     ///
@@ -204,6 +218,7 @@ impl CapabilityTempDir {
     }
 }
 
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 impl Drop for CapabilityTempDir {
     fn drop(&mut self) {
         if let Some(dir) = self.dir.take() {

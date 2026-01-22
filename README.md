@@ -35,6 +35,41 @@ You may also provide these values through a configuration file named `pg.toml`,
 recognised by `ortho_config`, or through CLI flags if you wrap the binary
 inside your own launcher.
 
+## Root usage and worker binary
+
+When running as `root`, the library requires a privileged worker binary
+(`pg_worker`) to execute PostgreSQL operations safely while dropping privileges
+to `nobody`.
+
+### Installation
+
+```bash
+cargo install --path .
+```
+
+This installs both `pg_embedded_setup_unpriv` and `pg_worker`. Verify
+installation:
+
+```bash
+which pg_embedded_setup_unpriv pg_worker
+```
+
+### Worker discovery
+
+The library automatically discovers `pg_worker` from PATH. For custom workers,
+set the `PG_EMBEDDED_WORKER` environment variable:
+
+```bash
+export PG_EMBEDDED_WORKER=/path/to/custom/worker
+```
+
+### Common issues
+
+- **Worker not found**: Ensure `pg_worker` is installed and in PATH.
+- **Permission errors**: Verify the binary is executable (`chmod +x`).
+
+Unprivileged users do not need to install the worker binary.
+
 ## Running the setup helper
 
 1. Ensure the desired directories exist or can be created. They will be owned
