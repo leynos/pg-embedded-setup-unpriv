@@ -126,7 +126,8 @@ mod behaviour_tests {
 #[cfg(unix)]
 mod unix_tests {
     use super::*;
-    use nix::unistd::Uid;
+    use nix::unistd::{Uid, User, geteuid};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use tempfile::tempdir;
 
     #[test]
@@ -170,5 +171,30 @@ mod unix_tests {
         assert_eq!(paths.password_file, paths.install_dir.join(".pgpass"));
         assert!(!paths.install_default);
         assert!(!paths.data_default);
+    }
+
+    #[test]
+    fn ensure_pgpass_for_user_sets_permissions_and_owner() {
+        let sandbox = tempdir().expect("pgpass sandbox");
+        let path = sandbox.path().join(".pgpass");
+        std::fs::write(&path, b"test").expect("write pgpass");
+        let mut perms = std::fs::metadata(&path)
+            .expect("pgpass metadata")
+            .permissions();
+        perms.set_mode(0o644);
+        std::fs::set_permissions(&path, perms).expect("set initial pgpass permissions");
+
+        let user = User::from_uid(geteuid())
+            .expect("resolve current user")
+            .expect("current user should exist");
+        let utf8_path = Utf8PathBuf::from_path_buf(path).expect("pgpass path utf8");
+
+        ensure_pgpass_for_user(&utf8_path, &user).expect("ensure pgpass for user");
+
+        let metadata = std::fs::metadata(utf8_path.as_std_path()).expect("pgpass metadata");
+        let observed_mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(observed_mode, PGPASS_MODE);
+        assert_eq!(metadata.uid(), user.uid.as_raw());
+        assert_eq!(metadata.gid(), user.gid.as_raw());
     }
 }
