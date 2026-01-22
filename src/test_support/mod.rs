@@ -36,7 +36,6 @@ pub use fixtures::{shared_test_cluster, shared_test_cluster_handle, test_cluster
 pub use fixtures_docs::{shared_test_cluster, test_cluster};
 // Note: shared_test_cluster_handle doc fixture pending (see issue #87)
 pub use hash::hash_directory;
-pub use fixtures::{dummy_environment, dummy_settings, test_cluster, test_runtime};
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use hook::{
     HookGuard, RunRootOperationHook, RunRootOperationHookInstallError, drain_hook_install_logs,
