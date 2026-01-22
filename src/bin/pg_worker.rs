@@ -162,6 +162,7 @@ fn parse_args(
     Ok((operation, config_path))
 }
 
+#[cfg(unix)]
 fn load_payload(config_path: &Utf8Path) -> Result<WorkerPayload, WorkerError> {
     let config_bytes = read_config_file(config_path).map_err(WorkerError::ConfigRead)?;
     serde_json::from_slice(&config_bytes).map_err(WorkerError::ConfigParse)
@@ -196,23 +197,39 @@ fn is_setup_complete(pg: &PostgreSQL, data_dir: &Utf8Path) -> bool {
 }
 
 #[cfg(unix)]
-#[expect(
-    clippy::cognitive_complexity,
-    reason = "simple conditional with early return; complexity from helper function is_inline"
-)]
+async fn run_setup(pg: &mut PostgreSQL) -> Result<(), WorkerError> {
+    pg.setup()
+        .await
+        .map_err(|e| WorkerError::PostgresOperation(format!("setup failed: {e}")))
+}
+
+#[cfg(unix)]
+fn log_setup_already_complete() {
+    info!("PostgreSQL setup already complete, skipping redundant setup");
+}
+
+#[cfg(unix)]
+fn log_setup_needed() {
+    info!("PostgreSQL data directory not initialized, running setup");
+}
+
+#[cfg(unix)]
+async fn run_postgres_setup(pg: &mut PostgreSQL, data_dir: &Utf8Path) -> Result<(), WorkerError> {
+    if is_setup_complete(pg, data_dir) {
+        log_setup_already_complete();
+        return Ok(());
+    }
+
+    log_setup_needed();
+    run_setup(pg).await
+}
+
+#[cfg(unix)]
 async fn ensure_postgres_setup(
     pg: &mut PostgreSQL,
     data_dir: &Utf8Path,
 ) -> Result<(), WorkerError> {
-    if is_setup_complete(pg, data_dir) {
-        info!("PostgreSQL setup already complete, skipping redundant setup");
-        return Ok(());
-    }
-
-    info!("PostgreSQL data directory not initialized, running setup");
-    pg.setup()
-        .await
-        .map_err(|e| WorkerError::PostgresOperation(format!("setup failed: {e}")))
+    run_postgres_setup(pg, data_dir).await
 }
 
 #[cfg(unix)]
@@ -285,8 +302,8 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
 /// Stub main for non-Unix platforms.
 ///
 /// The worker binary is Unix-only because it requires privilege dropping and
-/// Unix-specific filesystem operations. This stub provides a compile-time
-/// error on non-Unix platforms to prevent accidental use.
+/// Unix-specific filesystem operations. This stub returns a runtime error on
+/// non-Unix platforms to prevent accidental use.
 #[cfg(not(unix))]
 fn main() -> Result<(), BoxError> {
     Err("pg_worker is not supported on non-Unix platforms".into())

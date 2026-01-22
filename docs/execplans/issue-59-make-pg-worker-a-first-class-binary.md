@@ -5,7 +5,7 @@ This Execution Plan (ExecPlan) is a living document. The sections
 `Decision log`, and `Outcomes & retrospective` must be kept up to date as work
 proceeds.
 
-Status: IN PROGRESS
+Status: COMPLETED
 
 ## Purpose / big picture
 
@@ -122,7 +122,7 @@ After this change:
   error messages. Date/Author: 2026-01-22 / Plan author.
 
 - **Decision**: Add "Root usage" section to `docs/users-guide.md` after "Quick
-  start". Rationale: Users guide is authoritative documentation for library
+  start". Rationale: Users' guide is authoritative documentation for library
   usage. Placing after quick start makes it accessible but not overwhelming at
   the start. Date/Author: 2026-01-22 / Plan author (based on user preference).
 

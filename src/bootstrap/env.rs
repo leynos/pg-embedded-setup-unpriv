@@ -28,7 +28,18 @@ const SHUTDOWN_TIMEOUT_ENV: &str = "PG_SHUTDOWN_TIMEOUT_SECS";
 fn discover_worker_from_path() -> Option<Utf8PathBuf> {
     let path_var = env::var_os("PATH")?;
     for dir in env::split_paths(&path_var) {
-        let worker_path = Utf8PathBuf::from_path_buf(dir.join(WORKER_BINARY_NAME)).ok()?;
+        let Some(worker_path) = Utf8PathBuf::from_path_buf(dir.join(WORKER_BINARY_NAME)).ok()
+        else {
+            continue;
+        };
+
+        #[cfg(unix)]
+        {
+            let dir_str = dir.as_os_str().to_string_lossy();
+            if dir_str == "." || dir_str.is_empty() {
+                continue;
+            }
+        }
 
         if worker_path.is_file() && is_executable(&worker_path) {
             return Some(worker_path);
