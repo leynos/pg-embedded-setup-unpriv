@@ -130,15 +130,19 @@ After this change:
 
 ### What was achieved
 
-Successfully promoted `pg_worker` from a test-only helper to a first-class production binary:
+Successfully promoted `pg_worker` from a test-only helper to a first-class
+production binary:
 
 - Moved `pg_worker` from `tests/support/pg_worker.rs` to `src/bin/pg_worker.rs`.
-- Removed feature gate from `pg_worker` in `Cargo.toml`, making it available by default.
-- Implemented three-tier worker binary discovery (explicit config → PATH search → error).
+- Removed feature gate from `pg_worker` in `Cargo.toml`, making it available by
+  default.
+- Implemented three-tier worker binary discovery (explicit config → PATH search
+  → error).
 - Updated error messages to guide users on installation and PATH discovery.
 - Added "Root usage" sections to `docs/users-guide.md` and `README.md`.
 
-All tests pass with no regressions, and the binary builds and installs correctly.
+All tests pass with no regressions, and the binary builds and installs
+correctly.
 
 ### Metrics
 
@@ -149,18 +153,21 @@ All tests pass with no regressions, and the binary builds and installs correctly
 
 ### Lessons learned
 
-- Test discovery (`CARGO_BIN_EXE_pg_worker`) and production discovery (`PATH`) are independent and can coexist without conflict.
-- Using `concat!()` for long string literals improves readability compared to backslash continuations.
-- Platform-specific code (`cfg(unix)`) requires careful handling to ensure cross-platform compatibility.
+- Test discovery (`CARGO_BIN_EXE_pg_worker`) and production discovery (`PATH`)
+  are independent and can coexist without conflict.
+- Using `concat!()` for long string literals improves readability compared to
+  backslash continuations.
+- Platform-specific code (`cfg(unix)`) requires careful handling to ensure
+  cross-platform compatibility.
 
 ## Context and orientation
 
 ### Key files
 
 - `tests/support/pg_worker.rs` (374 lines): Current location of worker binary.
-  Contains command-line interface (CLI) argument parsing, worker operation execution,
-  and privilege dropping. Lines 1-38: module documentation. Lines 98-135:
-  `run_worker()` main function.
+  Contains command-line interface (CLI) argument parsing, worker operation
+  execution, and privilege dropping. Lines 1-38: module documentation. Lines
+  98-135: `run_worker()` main function.
 
 - `Cargo.toml` (226 lines): Package configuration. Lines 20-28: binary
   definitions. Lines 128-137: feature flags. Line 135: `dev-worker` feature
@@ -317,8 +324,8 @@ In `src/bootstrap/env.rs`, add PATH-based autodiscovery.
    }
    ```
 
-   Note: `env::split_paths` already handles platform separators, so there is
-   no need to use `PATH_SEPARATOR`.
+   Note: `env::split_paths` already handles platform separators, so there is no
+   need to use `PATH_SEPARATOR`.
 
 2. Modify `worker_binary_from_env()` to implement three-tier discovery:
 
@@ -560,7 +567,7 @@ Unprivileged users do not need to install the worker binary.
 
    Expected: All tests pass with no failures.
 
-1. Run linting and formatting checks:
+2. Run linting and formatting checks:
 
    ```bash
    make check-fmt && make lint
@@ -568,7 +575,7 @@ Unprivileged users do not need to install the worker binary.
 
    Expected: No warnings or formatting issues.
 
-2. Test binary builds:
+3. Test binary builds:
 
    ```bash
    cargo build --release --bin pg_worker --bin pg_embedded_setup_unpriv
@@ -577,7 +584,7 @@ Unprivileged users do not need to install the worker binary.
 
    Expected: Both binaries exist.
 
-3. Test PATH-based autodiscovery (requires root):
+4. Test PATH-based autodiscovery (requires root):
 
    ```bash
    # Ensure pg_worker is in PATH
@@ -734,7 +741,8 @@ valid executable found:
 
    1. Append `pg_worker` (or `pg_worker.exe` on Windows).
    2. Check if the path exists and is a regular file.
-   3. Check if the file is executable (Unix only: mode has the execute bits set).
+   3. Check if the file is executable (Unix only: mode has the execute bits
+      set).
    4. If all checks pass, return this path.
 3. If no valid binary is found, return `None`.
 
