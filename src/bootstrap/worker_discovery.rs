@@ -99,6 +99,11 @@ pub(crate) fn parse_worker_path_from_env(raw: &std::ffi::OsStr) -> BootstrapResu
             "PG_EMBEDDED_WORKER must not point at the filesystem root"
         )));
     }
+    if !path.is_absolute() {
+        return Err(BootstrapError::from(color_eyre::eyre::eyre!(
+            "PG_EMBEDDED_WORKER must be an absolute path"
+        )));
+    }
 
     Ok(path)
 }
