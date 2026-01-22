@@ -10,24 +10,25 @@ Reference: PLANS.md (if exists)
 
 ## Purpose / Big Picture
 
-When PostgreSQL setup is interrupted or fails partway through, the data directory
-may be left in an invalid state. Subsequent setup calls will fail because the
-directory exists but is incomplete. This plan adds detection and recovery logic
-to handle partial setups before running normal setup.
+When PostgreSQL setup is interrupted or fails partway through, the data
+directory may be left in an invalid state. Subsequent setup calls will fail
+because the directory exists but is incomplete. This plan adds detection and
+recovery logic to handle partial setups before running normal setup.
 
 After this change, a PostgreSQL setup operation that encounters a partial or
 invalid data directory will automatically clean it up and proceed with fresh
 initialisation, instead of failing with an error about the directory already
 existing.
 
-The user-visible behaviour: running a setup operation after a failed or interrupted
-setup will succeed without manual cleanup.
+The user-visible behaviour: running a setup operation after a failed or
+interrupted setup will succeed without manual cleanup.
 
 ## Constraints
 
 Hard invariants that must hold throughout implementation.
 
-- Must not modify the public API of `WorkerError` (only remove the `#[expect(dead_code)]`
+- Must not modify the public API of `WorkerError` (only remove the
+  `#[expect(dead_code)]`
   attribute from the reserved `DataDirRecovery` variant)
 - Must not break existing functionality in `ensure_postgres_setup` when the data
   directory is valid or already complete
@@ -57,33 +58,28 @@ Thresholds that trigger escalation when breached.
 Known uncertainties that might affect the plan.
 
 - Risk: The marker file `global/pg_filenode.map` might not exist in all
-  PostgreSQL versions or configurations.
-  Severity: low
-  Likelihood: low
+  PostgreSQL versions or configurations. Severity: low Likelihood: low
   Mitigation: `global/pg_filenode.map` is created by `initdb` in PostgreSQL
-  9.3+ and persists through the lifecycle. This marker is used by
-  PostgreSQL's own pg_upgrade tool as a validity indicator.
+  9.3+ and persists through the lifecycle. This marker is used by PostgreSQL's
+  own pg_upgrade tool as a validity indicator.
 
 - Risk: Permission errors during directory reset might leave the data
-  directory in a worse state.
-  Severity: medium
-  Likelihood: low
-  Mitigation: The reset operation uses `remove_dir_all` which either
-  succeeds or fails atomically. Partial failures cannot occur.
+  directory in a worse state. Severity: medium Likelihood: low Mitigation: The
+  reset operation uses `remove_dir_all` which either succeeds or fails
+  atomically. Partial failures cannot occur.
 
 - Risk: The recovery logic might trigger when a valid setup is simply not yet
-  complete, destroying user data.
-  Severity: high
-  Likelihood: low
-  Mitigation: The logic only triggers when `has_valid_data_dir` returns false,
-  which occurs when the marker file is missing. A complete setup will always have
-  this marker. The existing `is_setup_complete` check runs first and skips
-  recovery for already-complete setups.
+  complete, destroying user data. Severity: high Likelihood: low Mitigation:
+  The logic only triggers when `has_valid_data_dir` returns false, which occurs
+  when the marker file is missing. A complete setup will always have this
+  marker. The existing `is_setup_complete` check runs first and skips recovery
+  for already-complete setups.
 
 ## Progress
 
 - [ ] (pending) Add required imports to `tests/support/pg_worker.rs`
-- [ ] (pending) Remove `#[expect(dead_code)]` from `WorkerError::DataDirRecovery`
+- [ ] (pending) Remove `#[expect(dead_code)]` from
+      `WorkerError::DataDirRecovery`
 - [ ] (pending) Implement `has_valid_data_dir` function
 - [ ] (pending) Implement `reset_data_dir` function
 - [ ] (pending) Modify `ensure_postgres_setup` to integrate recovery logic
@@ -108,10 +104,10 @@ None yet.
 
 ## Context and Orientation
 
-This work modifies `tests/support/pg_worker.rs`, which implements a worker process
-that performs PostgreSQL bootstrap operations (setup, start, stop) with elevated
-privileges before demoting credentials. The worker is invoked via the binary
-interface:
+This work modifies `tests/support/pg_worker.rs`, which implements a worker
+process that performs PostgreSQL bootstrap operations (setup, start, stop) with
+elevated privileges before demoting credentials. The worker is invoked via the
+binary interface:
 
   `pg_worker <operation> <config-path>`
 
@@ -121,14 +117,14 @@ case where a previous setup attempt left a partial data directory.
 
 A valid PostgreSQL data directory contains the file `global/pg_filenode.map`,
 which is created during successful initialisation. The function
-`ambient_dir_and_path` (from `pg_embedded_setup_unpriv::test_support`)
-returns a tuple of `(Dir, Utf8PathBuf)` where `Dir` is a capability-safe
-handle to a parent directory and `Utf8PathBuf` is the relative path
-from that parent to the target.
+`ambient_dir_and_path` (from `pg_embedded_setup_unpriv::test_support`) returns
+a tuple of `(Dir, Utf8PathBuf)` where `Dir` is a capability-safe handle to a
+parent directory and `Utf8PathBuf` is the relative path from that parent to the
+target.
 
-The existing error enum `WorkerError` has a reserved variant
-`DataDirRecovery` (currently lines 70-75) that is marked with
-`#[expect(dead_code)]` specifically for this future use.
+The existing error enum `WorkerError` has a reserved variant `DataDirRecovery`
+(currently lines 70-75) that is marked with `#[expect(dead_code)]` specifically
+for this future use.
 
 ## Plan of Work
 
@@ -136,7 +132,8 @@ The implementation proceeds in three stages.
 
 ### Stage A: Add function implementations
 
-Add the two new helper functions and integrate them into `ensure_postgres_setup`.
+Add the two new helper functions and integrate them into
+`ensure_postgres_setup`.
 
 1. Add imports to the existing import block (around line 40-50):
    - `use cap_std::fs::Dir;`
@@ -195,8 +192,8 @@ Add the two new helper functions and integrate them into `ensure_postgres_setup`
 
 Validation for Stage A:
 
-  Run `cargo check --workspace` to verify the code compiles without errors.
-  Run `cargo test --workspace` to verify existing tests still pass.
+  Run `cargo check --workspace` to verify the code compiles without errors. Run
+  `cargo test --workspace` to verify existing tests still pass.
 
 ### Stage B: Add unit tests
 
@@ -280,9 +277,9 @@ Step 2: Remove dead_code expectation
 
   Working directory: repository root
 
-  Command: Edit `tests/support/pg_worker.rs` and remove the `#[expect(dead_code,
-  reason = "variant reserved for future data directory recovery errors")]` line
-  and the closing `]` from the `WorkerError::DataDirRecovery` variant.
+  Command: Edit `tests/support/pg_worker.rs` and remove the
+  `#[expect(dead_code, reason = "variant reserved for future data directory recovery errors")]`
+   line and the closing `]` from the `WorkerError::DataDirRecovery` variant.
 
   Expected result: No change to behaviour, clippy no longer expects the variant
   to be unused.
@@ -291,9 +288,9 @@ Step 3: Add has_valid_data_dir function
 
   Working directory: repository root
 
-  Command: Edit `tests/support/pg_worker.rs` and insert the `has_valid_data_dir`
-  function after line 208 (after `ensure_postgres_setup` and before the test
-  module).
+  Command: Edit `tests/support/pg_worker.rs` and insert the
+  `has_valid_data_dir` function after line 208 (after `ensure_postgres_setup`
+  and before the test module).
 
   Expected result: Code compiles, new function is callable.
 
@@ -310,9 +307,9 @@ Step 5: Modify ensure_postgres_setup
 
   Working directory: repository root
 
-  Command: Edit `tests/support/pg_worker.rs` and insert the recovery logic
-  into `ensure_postgres_setup` after line 201 (after the early return when
-  setup is complete).
+  Command: Edit `tests/support/pg_worker.rs` and insert the recovery logic into
+  `ensure_postgres_setup` after line 201 (after the early return when setup is
+  complete).
 
   Expected result: Code compiles, existing tests still pass.
 
@@ -332,9 +329,8 @@ Step 7: Add unit tests for has_valid_data_dir
 
   Working directory: repository root
 
-  Command: Edit `tests/support/pg_worker.rs` and add three test functions
-  to the test module (after line 373, before the closing brace of the
-  module):
+  Command: Edit `tests/support/pg_worker.rs` and add three test functions to
+  the test module (after line 373, before the closing brace of the module):
 
 - `has_valid_data_dir_returns_true_for_valid_directory`
 - `has_valid_data_dir_returns_false_for_missing_directory`
@@ -346,8 +342,8 @@ Step 8: Add unit tests for reset_data_dir
 
   Working directory: repository root
 
-  Command: Edit `tests/support/pg_worker.rs` and add three test functions
-  to the test module:
+  Command: Edit `tests/support/pg_worker.rs` and add three test functions to
+  the test module:
 
 - `reset_data_dir_removes_partial_setup`
 - `reset_data_dir_succeeds_for_missing_directory`
@@ -359,11 +355,11 @@ Step 9: Add integration test
 
   Working directory: repository root
 
-  Command: Edit `tests/support/pg_worker.rs` and add `setup_recovers_from_partial_initialisation`
-  test to the test module.
+  Command: Edit `tests/support/pg_worker.rs` and add
+  `setup_recovers_from_partial_initialisation` test to the test module.
 
-  Expected result: Integration test passes, demonstrating that a partial
-  setup is recovered.
+  Expected result: Integration test passes, demonstrating that a partial setup
+  is recovered.
 
 Step 10: Run full test suite
 
@@ -383,8 +379,8 @@ Step 11: Run lint checks
 
   Working directory: repository root
 
-  Command: `make lint` (or `cargo clippy --workspace --all-targets
-  --all-features -- -D warnings`)
+  Command: `make lint` (or
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`)
 
   Expected output: No clippy warnings or errors.
 
@@ -471,7 +467,8 @@ The pattern for safe directory removal (from cap_fs_privileged.rs:39-42):
   }
   ```
 
-The pattern for using ambient_dir_and_path (from tests/support/pg_worker.rs:167):
+The pattern for using ambient_dir_and_path (from
+tests/support/pg_worker.rs:167):
 
   ```rust
   let (dir, relative) = ambient_dir_and_path(path)?;
@@ -484,7 +481,8 @@ Libraries and types used:
 - `cap_std::fs::Dir` - capability-safe directory handle from the `cap_std` crate
   (already a dependency of the project)
 - `std::io::ErrorKind` - for matching error kinds (standard library)
-- `camino::Utf8Path`, `camino::Utf8PathBuf` - for UTF-8 path handling (already imported)
+- `camino::Utf8Path`, `camino::Utf8PathBuf` - for UTF-8 path handling (already
+  imported)
 - `pg_embedded_setup_unpriv::test_support::ambient_dir_and_path` - for getting
   directory handles (already imported)
 

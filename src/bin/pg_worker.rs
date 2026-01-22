@@ -45,7 +45,7 @@ use std::env;
 #[cfg(unix)]
 use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 #[cfg(unix)]
 use std::path::PathBuf;
 #[cfg(unix)]
@@ -80,6 +80,8 @@ enum WorkerError {
     RuntimeInit(#[source] std::io::Error),
     #[error("postgres operation failed: {0}")]
     PostgresOperation(String),
+    #[error("data dir recovery: {0}")]
+    DataDirRecovery(String),
 }
 
 #[cfg(unix)]
@@ -225,12 +227,25 @@ fn log_setup_needed() {
 }
 
 #[cfg(unix)]
+fn recover_invalid_data_dir(data_dir: &Utf8Path) -> Result<(), WorkerError> {
+    if !has_valid_data_dir(data_dir)
+        .map_err(|e| WorkerError::DataDirRecovery(format!("validation failed: {e}")))?
+    {
+        info!("Invalid or partial data directory detected, resetting before setup");
+        reset_data_dir(data_dir)
+            .map_err(|e| WorkerError::DataDirRecovery(format!("reset failed: {e}")))?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
 async fn run_postgres_setup(pg: &mut PostgreSQL, data_dir: &Utf8Path) -> Result<(), WorkerError> {
     if is_setup_complete(pg, data_dir) {
         log_setup_already_complete();
         return Ok(());
     }
 
+    recover_invalid_data_dir(data_dir)?;
     log_setup_needed();
     run_setup(pg).await
 }
@@ -311,6 +326,27 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
     }
 }
 
+#[cfg(unix)]
+fn has_valid_data_dir(data_dir: &Utf8Path) -> Result<bool, BoxError> {
+    let (dir, relative) = ambient_dir_and_path(data_dir)?;
+    let marker_path = relative.join("global/pg_filenode.map");
+    Ok(cap_std::fs::Dir::exists(&dir, marker_path.as_std_path()))
+}
+
+#[cfg(unix)]
+fn reset_data_dir(data_dir: &Utf8Path) -> Result<(), BoxError> {
+    let (dir, relative) = ambient_dir_and_path(data_dir)?;
+    if relative.as_str().is_empty() {
+        return Ok(());
+    }
+
+    match cap_std::fs::Dir::remove_dir_all(&dir, relative.as_std_path()) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
 /// Stub main for non-Unix platforms.
 ///
 /// The worker binary is Unix-only because it requires privilege dropping and
@@ -319,4 +355,111 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
 #[cfg(not(unix))]
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Err("pg_worker is not supported on non-Unix platforms".into())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::ffi::{OsStr, OsString};
+    use std::fs;
+    use std::os::unix::ffi::OsStrExt;
+    use tempfile::tempdir;
+
+    #[test]
+    fn rejects_extra_argument() {
+        let args = vec![
+            OsString::from("pg_worker"),
+            OsString::from("setup"),
+            OsString::from("/tmp/config.json"),
+            OsString::from("unexpected"),
+        ];
+        let err = run_worker(args.into_iter()).expect_err("extra argument must fail");
+        assert!(
+            err.to_string().contains("unexpected extra argument"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_args_rejects_non_utf8_config_path() {
+        let program = OsString::from("pg_worker");
+        let operation = OsString::from("setup");
+        let non_utf8 = OsStr::from_bytes(&[0x80]).to_os_string();
+
+        let args = vec![program, operation, non_utf8].into_iter();
+
+        let result = parse_args(args);
+
+        match result {
+            Err(WorkerError::InvalidArgs(msg)) => {
+                let msg_lc = msg.to_lowercase();
+                assert!(
+                    msg_lc.contains("utf-8"),
+                    "error message should mention UTF-8, got: {msg}"
+                );
+                assert!(
+                    msg_lc.contains("config"),
+                    "error message should mention config path, got: {msg}"
+                );
+            }
+            other => panic!(
+                "expected WorkerError::InvalidArgs for non-UTF-8 config path, got: {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn has_valid_data_dir_returns_true_for_valid_directory() {
+        let temp = tempdir().expect("create temp dir");
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(data_dir.join("global")).expect("create global subdirectory");
+        fs::write(data_dir.join("global/pg_filenode.map"), "").expect("create marker file");
+
+        let data_dir_utf8 = Utf8PathBuf::from_path_buf(data_dir).expect("valid UTF-8 path");
+        let result = has_valid_data_dir(&data_dir_utf8).expect("check should succeed");
+        assert!(result, "should detect valid data dir");
+    }
+
+    #[test]
+    fn has_valid_data_dir_returns_false_for_missing_directory() {
+        let temp = tempdir().expect("create temp dir");
+        let data_dir = temp.path().join("nonexistent_data");
+
+        let data_dir_utf8 = Utf8PathBuf::from_path_buf(data_dir).expect("valid UTF-8 path");
+        let result = has_valid_data_dir(&data_dir_utf8).expect("check should succeed");
+        assert!(!result, "missing dir should be invalid");
+    }
+
+    #[test]
+    fn has_valid_data_dir_returns_false_for_directory_without_marker() {
+        let temp = tempdir().expect("create temp dir");
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(&data_dir).expect("create directory");
+
+        let data_dir_utf8 = Utf8PathBuf::from_path_buf(data_dir).expect("valid UTF-8 path");
+        let result = has_valid_data_dir(&data_dir_utf8).expect("check should succeed");
+        assert!(!result, "missing marker should be invalid");
+    }
+
+    #[test]
+    fn reset_data_dir_removes_partial_setup() {
+        let temp = tempdir().expect("create temp dir");
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(data_dir.join("incomplete")).expect("create partial directory");
+
+        let data_dir_utf8 = Utf8PathBuf::from_path_buf(data_dir.clone()).expect("valid UTF-8 path");
+        reset_data_dir(&data_dir_utf8).expect("reset should succeed");
+
+        assert!(!data_dir.exists(), "directory should be removed");
+    }
+
+    #[test]
+    fn reset_data_dir_succeeds_for_missing_directory() {
+        let temp = tempdir().expect("create temp dir");
+        let data_dir = temp.path().join("nonexistent_data");
+
+        let data_dir_utf8 = Utf8PathBuf::from_path_buf(data_dir).expect("valid UTF-8 path");
+        let result = reset_data_dir(&data_dir_utf8);
+        assert!(result.is_ok(), "removing missing directory should succeed");
+    }
 }
