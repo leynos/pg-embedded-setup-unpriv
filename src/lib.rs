@@ -144,6 +144,40 @@ pub mod worker_process_test_api {
     }
 }
 
+/// Resolves a path to an ambient directory handle paired with the relative path component.
+///
+/// This function provides capability-based filesystem access by opening paths relative to
+/// ambient authority. Absolute paths are opened relative to their parent directory; relative
+/// paths reuse the current working directory.
+///
+/// # Returns
+///
+/// Returns a tuple containing:
+/// - A [`cap_std::fs::Dir`] handle for the parent directory
+/// - A [`camino::Utf8PathBuf`] with the relative component
+///
+/// For absolute paths like `/foo/bar`, returns `(Dir("/foo"), "bar")`.
+/// For relative paths like `baz/qux`, returns `(Dir("."), "baz/qux")`.
+/// For root paths like `/`, returns `(Dir("/"), "")` with an empty relative component.
+///
+/// # Errors
+///
+/// Returns an error if the path cannot be opened as a directory or if path operations fail.
+///
+/// # Examples
+///
+/// ```no_run
+/// use pg_embedded_setup_unpriv::ambient_dir_and_path;
+/// use camino::Utf8Path;
+///
+/// # fn main() -> color_eyre::Result<()> {
+/// let (dir, relative) = ambient_dir_and_path(Utf8Path::new("./data"))?;
+/// // Use dir handle for capability-based operations on relative path
+/// # Ok(())
+/// # }
+/// ```
+pub use crate::fs::ambient_dir_and_path;
+
 #[doc(hidden)]
 pub use crate::env::ScopedEnv;
 pub use bootstrap::{

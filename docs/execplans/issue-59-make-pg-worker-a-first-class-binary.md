@@ -712,7 +712,7 @@ The test infrastructure has its own worker discovery mechanism in
 
 These are independent and serve different purposes:
 
-*Table: Worker discovery mechanisms by context*
+*Table 1: Discovery mechanisms by context.*
 
 | Context    | Discovery mechanism             | Purpose                   |
 | ---------- | ------------------------------- | ------------------------- |
