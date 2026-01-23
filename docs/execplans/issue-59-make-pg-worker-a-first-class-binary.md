@@ -110,7 +110,7 @@ After this change:
   `CapabilityTempDir` are only used in test code (under `tests/`), which
   documentation builds don't see. Solution: Add
   `#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]`
-  attributes to align with how they're exported in `mod.rs`.
+   attributes to align with how they're exported in `mod.rs`.
 
 ## Decision log
 
