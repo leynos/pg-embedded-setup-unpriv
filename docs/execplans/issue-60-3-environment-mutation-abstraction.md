@@ -353,7 +353,7 @@ compare. This section must be updated as work proceeds.
 
 ### Verify Stage A: add trait and implementations
 
-Working directory: repository root (e.g., `/path/to/pg-embedded-setup-unpriv`).
+Working directory: repository root (i.e., `./` or `<repo-root>`).
 
 Command to verify Stage A:
 
