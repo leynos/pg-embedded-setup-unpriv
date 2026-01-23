@@ -168,7 +168,7 @@ fn validate_data_dir(path: &Utf8Path) -> Result<bool, WorkerError> {
 
 #[cfg(unix)]
 mod log {
-    // Logging helpers isolated to avoid cognitive complexity lint inflation.
+    //! Logging helpers for recovery flow; extracted to avoid cognitive complexity inflation.
     use super::{Utf8Path, info};
     pub fn reset(p: &Utf8Path, done: bool) {
         info!("Reset: path={p}, done={done}");

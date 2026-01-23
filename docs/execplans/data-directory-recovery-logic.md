@@ -66,8 +66,10 @@ Known uncertainties that might affect the plan.
 
 - Risk: Permission errors during directory reset might leave the data
   directory in a worse state. Severity: medium Likelihood: low Mitigation: The
-  reset operation uses `remove_dir_all` which either succeeds or fails
-  atomically. Partial failures cannot occur.
+  reset operation uses `remove_dir_all`, which can fail after partially
+  deleting entries; it is **not** atomic. Any error from `remove_dir_all` must
+  be treated as a recovery failure that requires surfacing and remediation
+  rather than assuming all-or-nothing behaviour.
 
 - Risk: The recovery logic might trigger when a valid setup is simply not yet
   complete, destroying user data. Severity: high Likelihood: low Mitigation:
