@@ -129,10 +129,7 @@ impl TestCluster {
     /// embedded cluster fails.
     pub fn new() -> BootstrapResult<Self> {
         let (handle, guard) = Self::new_split()?;
-        Ok(Self {
-            handle,
-            guard,
-        })
+        Ok(Self { handle, guard })
     }
 
     /// Boots a `PostgreSQL` instance and returns a separate handle and guard.
@@ -233,10 +230,7 @@ impl TestCluster {
     #[cfg(feature = "async-api")]
     pub async fn start_async() -> BootstrapResult<Self> {
         let (handle, guard) = Self::start_async_split().await?;
-        Ok(Self {
-            handle,
-            guard,
-        })
+        Ok(Self { handle, guard })
     }
 
     /// Boots a `PostgreSQL` instance asynchronously and returns a separate handle and guard.

@@ -171,8 +171,8 @@ performance guidance.
 
 ## Behaviour-driven diagnostics
 
-Behavioural coverage relies on `rstest-bdd` (Behaviour-Driven Development, BDD),
-which bundles Fluent localization files. The test suite includes
+Behavioural coverage relies on `rstest-bdd` (Behaviour-Driven Development,
+BDD), which bundles Fluent localization files. The test suite includes
 `tests/localized_diagnostics.rs`, a Dutch Gherkin scenario that switches
 diagnostics to French via `rstest_bdd::select_localizations` and fails if the
 embedded assets are missing. Run `make test` (or the focused
