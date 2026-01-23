@@ -26,12 +26,14 @@ pub use filesystem::ambient_dir_and_path;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use filesystem::{CapabilityTempDir, ensure_dir_exists, metadata, set_permissions};
 pub use fixtures::{
-    dummy_environment, dummy_settings, ensure_worker_env, shared_cluster, test_runtime,
+    dummy_environment, dummy_settings, ensure_worker_env, shared_cluster, shared_cluster_handle,
+    test_runtime,
 };
 #[cfg(not(doc))]
-pub use fixtures::{shared_test_cluster, test_cluster};
+pub use fixtures::{shared_test_cluster, shared_test_cluster_handle, test_cluster};
 #[cfg(doc)]
 pub use fixtures_docs::{shared_test_cluster, test_cluster};
+// TODO: Add shared_test_cluster_handle to fixtures_docs when doc-only fixtures are updated
 pub use hash::hash_directory;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use hook::{

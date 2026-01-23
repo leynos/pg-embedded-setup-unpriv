@@ -160,49 +160,33 @@ fn resolve_worker_path(
 
 use std::sync::{Mutex, OnceLock};
 
-/// Global state for the shared cluster singleton.
+use crate::ClusterHandle;
+
+/// Global state for the shared cluster handle singleton.
 ///
 /// Uses `OnceLock<Mutex<...>>` to support fallible initialisation whilst
 /// maintaining thread-safe singleton semantics. The `Mutex` protects
 /// initialisation; once complete, the pointer is stable.
 ///
-/// We store a raw pointer because `TestCluster` is `!Sync` (it contains
-/// `ScopedEnv` which uses `PhantomData<Rc<()>>`). The pointer is safe to
-/// share across threads because:
-/// 1. The cluster is only initialised once and never moved.
-/// 2. All access goes through immutable references.
-/// 3. The cluster's public API is thread-safe (database operations are
-///    independent connections).
-static SHARED_CLUSTER: OnceLock<Mutex<SharedClusterState>> = OnceLock::new();
+/// We store a static reference obtained by leaking the handle so it lives
+/// for the entire process lifetime.
+static SHARED_CLUSTER_HANDLE: OnceLock<Mutex<SharedHandleState>> = OnceLock::new();
 
-enum SharedClusterState {
+enum SharedHandleState {
     Uninitialised,
-    Initialised(SharedClusterPtr),
+    Initialised(&'static ClusterHandle),
     Failed(String),
 }
 
-/// A wrapper around a raw pointer to `TestCluster` that implements `Send`
-/// and `Sync`.
-///
-/// # Safety
-///
-/// This is safe because:
-/// 1. The pointer is only created from a leaked `Box<TestCluster>`.
-/// 2. The pointed-to data lives for the entire process lifetime.
-/// 3. Access is read-only through the returned `&'static TestCluster`.
-struct SharedClusterPtr(*const TestCluster);
-
-// SAFETY: The pointer points to a leaked Box that lives forever.
-// The TestCluster's public API (connection(), database_exists(), etc.)
-// creates new connections for each operation and is thread-safe.
-unsafe impl Send for SharedClusterPtr {}
-unsafe impl Sync for SharedClusterPtr {}
-
-/// Returns a reference to the shared test cluster.
+/// Returns a reference to the shared cluster handle.
 ///
 /// The cluster is initialised lazily on first access using [`OnceLock`] for
-/// thread-safe singleton semantics. Subsequent calls return the same cluster
+/// thread-safe singleton semantics. Subsequent calls return the same handle
 /// instance, eliminating per-test bootstrap overhead.
+///
+/// This function returns a [`ClusterHandle`] which is `Send + Sync`, making it
+/// suitable for use in contexts requiring thread safety (e.g., rstest fixtures
+/// with timeouts).
 ///
 /// # Errors
 ///
@@ -210,7 +194,87 @@ unsafe impl Sync for SharedClusterPtr {}
 /// cannot be started. Once initialisation fails, subsequent calls return the
 /// same error.
 ///
-/// # Thread safety
+/// # Thread Safety
+///
+/// This function is safe to call from multiple threads concurrently. The first
+/// caller to reach the initialisation path will bootstrap the cluster while
+/// other callers wait.
+///
+/// # Examples
+///
+/// ```no_run
+/// use pg_embedded_setup_unpriv::test_support::shared_cluster_handle;
+///
+/// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+/// let handle = shared_cluster_handle()?;
+/// assert!(handle.database_exists("postgres")?);
+///
+/// // Second call returns the same instance
+/// let handle2 = shared_cluster_handle()?;
+/// assert!(std::ptr::eq(handle, handle2));
+/// # Ok(())
+/// # }
+/// ```
+pub fn shared_cluster_handle() -> BootstrapResult<&'static ClusterHandle> {
+    let mutex = SHARED_CLUSTER_HANDLE.get_or_init(|| Mutex::new(SharedHandleState::Uninitialised));
+    let mut guard = mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    match *guard {
+        SharedHandleState::Initialised(handle) => Ok(handle),
+        SharedHandleState::Failed(ref msg) => Err(crate::error::BootstrapError::from(
+            color_eyre::eyre::eyre!("shared cluster initialisation failed: {msg}"),
+        )),
+        SharedHandleState::Uninitialised => {
+            let worker_guard = ensure_worker_env();
+            match TestCluster::new_split() {
+                Ok((handle, cluster_guard)) => {
+                    // Attach worker guard to cluster guard, then leak it.
+                    // The guard manages shutdown; leaking it means the cluster
+                    // runs for the process lifetime.
+                    let guarded = cluster_guard.with_worker_guard(worker_guard);
+                    // Leak the guard so the cluster keeps running.
+                    // This is intentional: shared clusters live for the entire
+                    // process lifetime.
+                    std::mem::forget(guarded);
+
+                    // Leak the handle to get a 'static reference.
+                    let leaked: &'static ClusterHandle = Box::leak(Box::new(handle));
+                    *guard = SharedHandleState::Initialised(leaked);
+                    Ok(leaked)
+                }
+                Err(err) => {
+                    let msg = format!("{err:?}");
+                    *guard = SharedHandleState::Failed(msg.clone());
+                    Err(crate::error::BootstrapError::from(color_eyre::eyre::eyre!(
+                        "shared cluster initialisation failed: {msg}"
+                    )))
+                }
+            }
+        }
+    }
+}
+
+/// Returns a reference to the shared test cluster.
+///
+/// The cluster is initialised lazily on first access using [`OnceLock`] for
+/// thread-safe singleton semantics. Subsequent calls return the same cluster
+/// instance, eliminating per-test bootstrap overhead.
+///
+/// # Deprecation Notice
+///
+/// Consider using [`shared_cluster_handle()`] instead, which returns a
+/// `Send + Sync` handle suitable for rstest fixtures with timeouts and other
+/// thread-safe contexts.
+///
+/// # Errors
+///
+/// Returns a [`BootstrapError`](crate::error::BootstrapError) if the cluster
+/// cannot be started. Once initialisation fails, subsequent calls return the
+/// same error.
+///
+/// # Thread Safety
 ///
 /// This function is safe to call from multiple threads concurrently. The first
 /// caller to reach the initialisation path will bootstrap the cluster while
@@ -232,6 +296,24 @@ unsafe impl Sync for SharedClusterPtr {}
 /// # }
 /// ```
 pub fn shared_cluster() -> BootstrapResult<&'static TestCluster> {
+    // Legacy implementation for backward compatibility.
+    // Uses raw pointer wrapper because TestCluster is !Send.
+    static SHARED_CLUSTER: OnceLock<Mutex<SharedClusterState>> = OnceLock::new();
+
+    enum SharedClusterState {
+        Uninitialised,
+        Initialised(SharedClusterPtr),
+        Failed(String),
+    }
+
+    /// Wrapper around raw pointer to `TestCluster` that implements `Send + Sync`.
+    struct SharedClusterPtr(*const TestCluster);
+
+    // SAFETY: The pointer points to a leaked Box that lives forever.
+    // Access is read-only; the public API is thread-safe.
+    unsafe impl Send for SharedClusterPtr {}
+    unsafe impl Sync for SharedClusterPtr {}
+
     let mutex = SHARED_CLUSTER.get_or_init(|| Mutex::new(SharedClusterState::Uninitialised));
     let mut guard = mutex
         .lock()
@@ -270,6 +352,10 @@ pub fn shared_cluster() -> BootstrapResult<&'static TestCluster> {
     }
 }
 
+/// rstest fixture returning a shared `TestCluster` reference.
+///
+/// Panics if the cluster cannot be started, enabling tests to fail fast
+/// with a clear error message.
 #[must_use]
 #[cfg_attr(not(doc), fixture)]
 pub fn shared_test_cluster() -> &'static TestCluster {
@@ -277,6 +363,38 @@ pub fn shared_test_cluster() -> &'static TestCluster {
         Ok(cluster) => cluster,
         Err(err) => panic!(
             "SKIP-TEST-CLUSTER: shared_test_cluster fixture failed to start PostgreSQL: {err:?}"
+        ),
+    }
+}
+
+/// rstest fixture returning a shared `ClusterHandle` reference.
+///
+/// This fixture is `Send + Sync`, making it suitable for use with rstest
+/// timeouts and other thread-safe contexts.
+///
+/// Panics if the cluster cannot be started, enabling tests to fail fast
+/// with a clear error message.
+///
+/// # Examples
+///
+/// ```ignore
+/// use rstest::rstest;
+/// use pg_embedded_setup_unpriv::test_support::shared_test_cluster_handle;
+/// use pg_embedded_setup_unpriv::ClusterHandle;
+///
+/// #[rstest]
+/// #[timeout(std::time::Duration::from_secs(30))]
+/// fn test_with_shared_cluster(shared_test_cluster_handle: &'static ClusterHandle) {
+///     assert!(shared_test_cluster_handle.database_exists("postgres").unwrap());
+/// }
+/// ```
+#[must_use]
+#[cfg_attr(not(doc), fixture)]
+pub fn shared_test_cluster_handle() -> &'static ClusterHandle {
+    match shared_cluster_handle() {
+        Ok(handle) => handle,
+        Err(err) => panic!(
+            "SKIP-TEST-CLUSTER: shared_test_cluster_handle fixture failed to start PostgreSQL: {err:?}"
         ),
     }
 }
