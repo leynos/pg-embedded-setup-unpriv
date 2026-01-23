@@ -124,7 +124,7 @@ Known uncertainties that might affect the plan.
   implementations with divergent features creates maintenance burden and
   confusion. The crate should export exactly one pg_worker binary.
 - Decision: Delete `tests/support/pg_worker.rs` and
-  `tests/support/pg_worker_helpers.rs` entirely rather than converting them to
+  `tests/support/pg_worker_helpers.rs`, entirely rather than converting them to
   test-only modules. Rationale: The tests were migrated to unit tests within
   the official binary file using `#[cfg(test)]`, eliminating the need for
   separate test support files.
@@ -522,7 +522,7 @@ The pattern for safe directory removal (from cap_fs_privileged.rs:39-42):
   ```
 
 The pattern for using ambient_dir_and_path (from
-tests/support/pg_worker.rs:167):
+src/bin/pg_worker.rs):
 
   ```rust
   let (dir, relative) = ambient_dir_and_path(path)?;

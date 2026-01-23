@@ -263,10 +263,7 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
 #[cfg(unix)]
 fn has_valid_data_dir(data_dir: &Utf8Path) -> Result<bool, BoxError> {
     let (dir, rel) = ambient_dir_and_path(data_dir)?;
-    Ok(cap_std::fs::Dir::exists(
-        &dir,
-        rel.join("global/pg_filenode.map").as_std_path(),
-    ))
+    Ok(dir.exists(rel.join("global/pg_filenode.map").as_std_path()))
 }
 
 #[cfg(unix)]
@@ -275,7 +272,7 @@ fn reset_data_dir(data_dir: &Utf8Path) -> Result<(), BoxError> {
     if rel.as_str().is_empty() {
         return Err("cannot reset root directory".into());
     }
-    match cap_std::fs::Dir::remove_dir_all(&dir, rel.as_std_path()) {
+    match dir.remove_dir_all(rel.as_std_path()) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.into()),
