@@ -228,6 +228,12 @@ fn log_setup_needed() {
 
 #[cfg(unix)]
 fn recover_invalid_data_dir(data_dir: &Utf8Path) -> Result<(), WorkerError> {
+    // Only attempt recovery if the data directory exists but is invalid.
+    // If it doesn't exist, postgresql_embedded will create it fresh during setup.
+    if !data_dir.exists() {
+        return Ok(());
+    }
+
     if !has_valid_data_dir(data_dir)
         .map_err(|e| WorkerError::DataDirRecovery(format!("validation failed: {e}")))?
     {
@@ -461,5 +467,19 @@ mod tests {
         let data_dir_utf8 = Utf8PathBuf::from_path_buf(data_dir).expect("valid UTF-8 path");
         let result = reset_data_dir(&data_dir_utf8);
         assert!(result.is_ok(), "removing missing directory should succeed");
+    }
+
+    #[test]
+    fn recover_invalid_data_dir_skips_nonexistent_directory() {
+        let temp = tempdir().expect("create temp dir");
+        let data_dir = temp.path().join("nonexistent_data");
+
+        let data_dir_utf8 = Utf8PathBuf::from_path_buf(data_dir.clone()).expect("valid UTF-8 path");
+        let result = recover_invalid_data_dir(&data_dir_utf8);
+        assert!(
+            result.is_ok(),
+            "recovery should succeed for missing directory"
+        );
+        assert!(!data_dir.exists(), "directory should still not exist");
     }
 }

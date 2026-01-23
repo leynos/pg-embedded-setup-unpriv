@@ -1,8 +1,9 @@
 # Data Directory Recovery Logic for pg_worker
 
-This Execution Plan (ExecPlan) is a living document. The sections `Constraints`, `Tolerances`,
-`Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
-`Outcomes & Retrospective` must be kept up to date as work proceeds.
+This Execution Plan (ExecPlan) is a living document. The sections
+`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
+`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
+proceeds.
 
 Status: COMPLETED
 
@@ -28,8 +29,7 @@ interrupted setup will succeed without manual cleanup.
 Hard invariants that must hold throughout implementation.
 
 - Must not modify the public API of `WorkerError` (only remove the
-  `#[expect(dead_code)]`
-  attribute from the reserved `DataDirRecovery` variant)
+  `#[expect(dead_code)]` attribute from the reserved `DataDirRecovery` variant)
 - Must not break existing functionality in `ensure_postgres_setup` when the data
   directory is valid or already complete
 - Must not attempt to remove the root directory (safety guard required)
@@ -88,7 +88,8 @@ Known uncertainties that might affect the plan.
 - [x] (completed) Run full test suite and verify all pass
 - [x] (completed) Run clippy and verify no warnings
 - [x] (completed) Run fmt check and verify formatting
-- [x] (completed) Remove duplicate implementation from `tests/support/pg_worker.rs`
+- [x] (completed) Remove duplicate implementation from
+      `tests/support/pg_worker.rs`
 
 ## Surprises & Discoveries
 
@@ -103,15 +104,14 @@ Known uncertainties that might affect the plan.
 ## Decision Log
 
 - Decision: Consolidate pg_worker into a single binary at `src/bin/pg_worker.rs`
-  rather than maintaining separate implementations.
-  Rationale: Having two implementations with divergent features creates
-  maintenance burden and confusion. The crate should export exactly one
-  pg_worker binary.
-- Decision: Delete `tests/support/pg_worker.rs` and `tests/support/pg_worker_helpers.rs`
-  entirely rather than converting them to test-only modules.
-  Rationale: The tests were migrated to unit tests within the official binary
-  file using `#[cfg(test)]`, eliminating the need for separate test support
-  files.
+  rather than maintaining separate implementations. Rationale: Having two
+  implementations with divergent features creates maintenance burden and
+  confusion. The crate should export exactly one pg_worker binary.
+- Decision: Delete `tests/support/pg_worker.rs` and
+  `tests/support/pg_worker_helpers.rs`
+  entirely rather than converting them to test-only modules. Rationale: The
+  tests were migrated to unit tests within the official binary file using
+  `#[cfg(test)]`, eliminating the need for separate test support files.
 
 ## Outcomes & Retrospective
 
@@ -134,9 +134,9 @@ operations, does not modify public API signatures, and passes all quality gates.
 ## Context and Orientation
 
 This work modifies `src/bin/pg_worker.rs`, which implements a worker process
-that performs PostgreSQL bootstrap operations (setup, start, stop) with elevated
-privileges before demoting credentials. The worker is invoked via the binary
-interface:
+that performs PostgreSQL bootstrap operations (setup, start, stop) with
+elevated privileges before demoting credentials. The worker is invoked via the
+binary interface:
 
   `pg_worker <operation> <config-path>`
 
