@@ -227,19 +227,30 @@ fn log_setup_needed() {
 }
 
 #[cfg(unix)]
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "complexity is from info! macro calls for diagnostic logging"
+)]
 fn recover_invalid_data_dir(data_dir: &Utf8Path) -> Result<(), WorkerError> {
     // Only attempt recovery if the data directory exists but is invalid.
     // If it doesn't exist, postgresql_embedded will create it fresh during setup.
-    if !data_dir.exists() {
+    let exists = data_dir.exists();
+    info!("Checking data directory for recovery: path={data_dir}, exists={exists}");
+
+    if !exists {
+        info!("Data directory does not exist, skipping recovery");
         return Ok(());
     }
 
-    if !has_valid_data_dir(data_dir)
-        .map_err(|e| WorkerError::DataDirRecovery(format!("validation failed: {e}")))?
-    {
-        info!("Invalid or partial data directory detected, resetting before setup");
+    let is_valid = has_valid_data_dir(data_dir)
+        .map_err(|e| WorkerError::DataDirRecovery(format!("validation failed: {e}")))?;
+    info!("Data directory validation result: path={data_dir}, is_valid={is_valid}");
+
+    if !is_valid {
+        info!("Invalid or partial data directory detected, resetting: path={data_dir}");
         reset_data_dir(data_dir)
             .map_err(|e| WorkerError::DataDirRecovery(format!("reset failed: {e}")))?;
+        info!("Data directory reset complete");
     }
     Ok(())
 }
