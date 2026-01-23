@@ -28,8 +28,9 @@ interrupted setup will succeed without manual cleanup.
 
 Hard invariants that must hold throughout implementation.
 
-- Must not modify the public API of `WorkerError` (only remove the
-  `#[expect(dead_code)]` attribute from the reserved `DataDirRecovery` variant)
+- Must not modify the public Application Programming Interface (API) of
+  `WorkerError` (only remove the `#[expect(dead_code)]` attribute from the
+  reserved `DataDirRecovery` variant)
 - Must not break existing functionality in `ensure_postgres_setup` when the data
   directory is valid or already complete
 - Must not attempt to remove the root directory (safety guard required)
@@ -270,8 +271,8 @@ Add an integration test that exercises the full recovery workflow.
    - Create a partial setup state (directory exists but no marker)
    - Write pg_ctl stub and build settings
    - Run the worker with `setup` operation
-   - Verify the data directory was reset and initialised
-     (PG_VERSION and marker exist)
+   - Verify the data directory was reset and initialized (PG_VERSION and marker
+     exist)
 
 Validation for Stage C:
 

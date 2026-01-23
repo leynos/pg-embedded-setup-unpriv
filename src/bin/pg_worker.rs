@@ -1,5 +1,4 @@
-//! Privileged worker for `PostgreSQL` bootstrap: `pg_worker <setup|start|stop> <config.json>`
-//!
+//! Privileged worker for `PostgreSQL` bootstrap: `pg_worker <setup|start|stop> <config.json>`.
 //! Deserializes [`WorkerPayload`] from `config.json` and invokes `postgresql_embedded` lifecycle
 //! calls, allowing the caller to demote credentials before spawning the child process.
 
@@ -84,18 +83,13 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
     apply_worker_environment(&payload.environment);
     let mut pg = Some(PostgreSQL::new(settings));
     runtime.block_on(async {
+        let pg_err = || WorkerError::PostgresOperation("no pg".into());
         match op {
             Operation::Setup => {
-                let h = pg
-                    .as_mut()
-                    .ok_or_else(|| WorkerError::PostgresOperation("no pg".into()))?;
-                run_postgres_setup(h, &data_dir).await
+                run_postgres_setup(pg.as_mut().ok_or_else(pg_err)?, &data_dir).await
             }
             Operation::Start => {
-                let h = pg
-                    .as_mut()
-                    .ok_or_else(|| WorkerError::PostgresOperation("no pg".into()))?;
-                ensure_postgres_started(h, &data_dir).await?;
+                ensure_postgres_started(pg.as_mut().ok_or_else(pg_err)?, &data_dir).await?;
                 // Intentionally leak PostgreSQL to keep it running after worker exit.
                 if let Some(i) = pg.take() {
                     std::mem::forget(i);
@@ -133,13 +127,11 @@ fn parse_args(
 
 #[cfg(unix)]
 fn load_payload(path: &Utf8Path) -> Result<WorkerPayload, WorkerError> {
-    let (dir, rel) = ambient_dir_and_path(path).map_err(|e| WorkerError::ConfigRead(e.into()))?;
-    let mut f = dir
-        .open(rel.as_std_path())
-        .map_err(|e| WorkerError::ConfigRead(e.into()))?;
+    let cfg_err = |e: BoxError| WorkerError::ConfigRead(e);
+    let (dir, rel) = ambient_dir_and_path(path).map_err(|e| cfg_err(e.into()))?;
+    let mut f = dir.open(rel.as_std_path()).map_err(|e| cfg_err(e.into()))?;
     let mut b = Vec::new();
-    f.read_to_end(&mut b)
-        .map_err(|e| WorkerError::ConfigRead(e.into()))?;
+    f.read_to_end(&mut b).map_err(|e| cfg_err(e.into()))?;
     serde_json::from_slice(&b).map_err(WorkerError::ConfigParse)
 }
 
@@ -175,24 +167,40 @@ fn validate_data_dir(path: &Utf8Path) -> Result<bool, WorkerError> {
 }
 
 #[cfg(unix)]
-#[expect(clippy::cognitive_complexity, reason = "info! macro inflates score")]
+mod log {
+    // Logging helpers isolated to avoid cognitive complexity lint inflation.
+    use super::{Utf8Path, info};
+    pub fn reset(p: &Utf8Path, done: bool) {
+        info!("Reset: path={p}, done={done}");
+    }
+    pub fn check(p: &Utf8Path, exists: bool) {
+        info!("Check: path={p}, exists={exists}");
+    }
+    pub fn valid(p: &Utf8Path, v: bool) {
+        info!("Validation: path={p}, valid={v}");
+    }
+    pub fn setup(msg: &str) {
+        info!("{msg}");
+    }
+}
+
+#[cfg(unix)]
 fn perform_data_dir_reset(path: &Utf8Path) -> Result<(), WorkerError> {
-    info!("Resetting: path={path}");
+    log::reset(path, false);
     reset_data_dir(path).map_err(|e| WorkerError::DataDirRecovery(format!("reset: {e}")))?;
-    info!("Reset complete");
+    log::reset(path, true);
     Ok(())
 }
 
 #[cfg(unix)]
-#[expect(clippy::cognitive_complexity, reason = "info! macro inflates score")]
 fn recover_invalid_data_dir(data_dir: &Utf8Path) -> Result<(), WorkerError> {
     let exists = data_dir.exists();
-    info!("Check: path={data_dir}, exists={exists}");
+    log::check(data_dir, exists);
     if !exists {
         return Ok(());
     }
     let is_valid = validate_data_dir(data_dir)?;
-    info!("Validation: path={data_dir}, valid={is_valid}");
+    log::valid(data_dir, is_valid);
     if !is_valid {
         perform_data_dir_reset(data_dir)?;
     }
@@ -200,14 +208,13 @@ fn recover_invalid_data_dir(data_dir: &Utf8Path) -> Result<(), WorkerError> {
 }
 
 #[cfg(unix)]
-#[expect(clippy::cognitive_complexity, reason = "info! macro inflates score")]
 async fn run_postgres_setup(pg: &mut PostgreSQL, data_dir: &Utf8Path) -> Result<(), WorkerError> {
     if is_setup_complete(pg, data_dir) {
-        info!("Setup complete");
+        log::setup("Setup complete");
         return Ok(());
     }
     recover_invalid_data_dir(data_dir)?;
-    info!("Running setup");
+    log::setup("Running setup");
     run_setup(pg).await
 }
 
@@ -220,10 +227,9 @@ async fn ensure_postgres_started(pg: &mut PostgreSQL, d: &Utf8Path) -> Result<()
 #[cfg(unix)]
 async fn start_if_not_started(pg: &mut PostgreSQL) -> Result<(), WorkerError> {
     if pg.status() == Status::Started {
-        info!("PostgreSQL already started, skipping redundant start");
+        info!("PostgreSQL already started");
         return Ok(());
     }
-
     pg.start()
         .await
         .map_err(|e| WorkerError::PostgresOperation(format!("start failed: {e}")))
@@ -231,20 +237,18 @@ async fn start_if_not_started(pg: &mut PostgreSQL) -> Result<(), WorkerError> {
 
 #[cfg(unix)]
 async fn execute_stop(pg: &mut Option<PostgreSQL>) -> Result<(), WorkerError> {
-    let pg_handle = pg
+    let h = pg
         .as_mut()
-        .ok_or_else(|| WorkerError::PostgresOperation("pg handle missing during stop".into()))?;
-    handle_stop_result(pg_handle.stop().await)
+        .ok_or_else(|| WorkerError::PostgresOperation("pg handle missing".into()))?;
+    handle_stop_result(h.stop().await)
 }
 
 #[cfg(unix)]
 fn handle_stop_result(result: Result<(), postgresql_embedded::Error>) -> Result<(), WorkerError> {
     match result {
         Ok(()) => Ok(()),
-        Err(err) if stop_missing_pid_is_ok(&err) => Ok(()),
-        Err(err) => Err(WorkerError::PostgresOperation(format!(
-            "stop failed: {err}"
-        ))),
+        Err(e) if stop_missing_pid_is_ok(&e) => Ok(()),
+        Err(e) => Err(WorkerError::PostgresOperation(format!("stop failed: {e}"))),
     }
 }
 
@@ -261,33 +265,29 @@ fn apply_worker_environment(environment: &[(String, Option<PlainSecret>)]) {
 
 #[cfg(unix)]
 fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
-    match err {
-        postgresql_embedded::Error::DatabaseStopError(msg)
-        | postgresql_embedded::Error::IoError(msg) => {
-            msg.contains("postmaster.pid") && msg.contains("does not exist")
-        }
-        _ => false,
-    }
+    use postgresql_embedded::Error::{DatabaseStopError, IoError};
+    matches!(err, DatabaseStopError(m) | IoError(m) if m.contains("postmaster.pid") && m.contains("does not exist"))
 }
 
 #[cfg(unix)]
 fn has_valid_data_dir(data_dir: &Utf8Path) -> Result<bool, BoxError> {
-    let (dir, relative) = ambient_dir_and_path(data_dir)?;
-    let marker_path = relative.join("global/pg_filenode.map");
-    Ok(cap_std::fs::Dir::exists(&dir, marker_path.as_std_path()))
+    let (dir, rel) = ambient_dir_and_path(data_dir)?;
+    Ok(cap_std::fs::Dir::exists(
+        &dir,
+        rel.join("global/pg_filenode.map").as_std_path(),
+    ))
 }
 
 #[cfg(unix)]
 fn reset_data_dir(data_dir: &Utf8Path) -> Result<(), BoxError> {
-    let (dir, relative) = ambient_dir_and_path(data_dir)?;
-    if relative.as_str().is_empty() {
+    let (dir, rel) = ambient_dir_and_path(data_dir)?;
+    if rel.as_str().is_empty() {
         return Err("cannot reset root directory".into());
     }
-
-    match cap_std::fs::Dir::remove_dir_all(&dir, relative.as_std_path()) {
+    match cap_std::fs::Dir::remove_dir_all(&dir, rel.as_std_path()) {
         Ok(()) => Ok(()),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err.into()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -298,102 +298,103 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 #[cfg(all(test, unix))]
-#[expect(clippy::expect_used, reason = "tests may panic on setup failure")]
 mod tests {
     use super::*;
     use rstest::{fixture, rstest};
-    use std::ffi::{OsStr, OsString};
-    use std::fs;
-    use std::os::unix::ffi::OsStrExt;
+    use std::{
+        ffi::{OsStr, OsString},
+        fs,
+        os::unix::ffi::OsStrExt,
+    };
     use tempfile::{TempDir, tempdir};
+    type R<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+    type TempDir2 = R<(TempDir, Utf8PathBuf)>;
+    fn ensure(cond: bool, msg: &str) -> R {
+        if cond { Ok(()) } else { Err(msg.into()) }
+    }
 
     #[fixture]
-    fn temp_data_dir() -> (TempDir, Utf8PathBuf) {
-        let temp = tempdir().expect("create temp dir");
-        let data_dir = temp.path().join("data");
-        let utf8 = Utf8PathBuf::from_path_buf(data_dir).expect("valid UTF-8 path");
-        (temp, utf8)
+    fn temp_data_dir() -> TempDir2 {
+        let temp = tempdir()?;
+        let p = Utf8PathBuf::from_path_buf(temp.path().join("data"))
+            .map_err(|p| format!("not UTF-8: {}", p.display()))?;
+        Ok((temp, p))
     }
 
     #[test]
-    fn rejects_extra_argument() {
-        let args = vec![
-            OsString::from("pg_worker"),
-            OsString::from("setup"),
-            OsString::from("/tmp/config.json"),
-            OsString::from("unexpected"),
-        ];
-        let err = run_worker(args.into_iter()).expect_err("extra argument must fail");
-        assert!(
+    fn rejects_extra_argument() -> R {
+        let args = ["pg_worker", "setup", "/tmp/config.json", "unexpected"].map(OsString::from);
+        let err = run_worker(args.into_iter()).err().ok_or("expected error")?;
+        ensure(
             err.to_string().contains("unexpected extra argument"),
-            "unexpected error: {err}"
-        );
+            "wrong err",
+        )
     }
 
     #[test]
-    fn parse_args_rejects_non_utf8_config_path() {
-        let args = vec![
+    fn parse_args_rejects_non_utf8_config_path() -> R {
+        let args = [
             OsString::from("pg_worker"),
             OsString::from("setup"),
             OsStr::from_bytes(&[0x80]).to_os_string(),
         ];
         match parse_args(args.into_iter()) {
-            Err(WorkerError::InvalidArgs(msg)) => {
-                let lc = msg.to_lowercase();
-                assert!(lc.contains("utf-8"), "should mention UTF-8, got: {msg}");
-                assert!(lc.contains("config"), "should mention config, got: {msg}");
-            }
-            other => panic!("expected InvalidArgs, got: {other:?}"),
+            Err(WorkerError::InvalidArgs(m)) => ensure(
+                m.to_lowercase().contains("utf-8") && m.contains("config"),
+                "bad msg",
+            ),
+            o => Err(format!("expected InvalidArgs: {o:?}").into()),
         }
     }
 
     #[rstest]
-    fn valid_data_dir_detected(temp_data_dir: (TempDir, Utf8PathBuf)) {
-        let (_, p) = temp_data_dir;
-        fs::create_dir_all(p.join("global")).expect("mkdir");
-        fs::write(p.join("global/pg_filenode.map"), "").expect("marker");
-        assert!(has_valid_data_dir(&p).expect("check"), "valid dir");
+    fn valid_data_dir_detected(temp_data_dir: TempDir2) -> R {
+        let (_, p) = temp_data_dir?;
+        fs::create_dir_all(p.join("global"))?;
+        fs::write(p.join("global/pg_filenode.map"), "")?;
+        ensure(has_valid_data_dir(&p)?, "should be valid")
     }
 
     #[rstest]
-    fn missing_dir_is_invalid(temp_data_dir: (TempDir, Utf8PathBuf)) {
-        let (_, p) = temp_data_dir;
-        assert!(!has_valid_data_dir(&p).expect("check"), "missing invalid");
+    fn missing_dir_is_invalid(temp_data_dir: TempDir2) -> R {
+        ensure(!has_valid_data_dir(&temp_data_dir?.1)?, "should be invalid")
     }
 
     #[rstest]
-    fn dir_without_marker_is_invalid(temp_data_dir: (TempDir, Utf8PathBuf)) {
-        let (_, p) = temp_data_dir;
-        fs::create_dir_all(&p).expect("mkdir");
-        assert!(!has_valid_data_dir(&p).expect("check"), "no marker");
+    fn dir_without_marker_is_invalid(temp_data_dir: TempDir2) -> R {
+        let (_, p) = temp_data_dir?;
+        fs::create_dir_all(&p)?;
+        ensure(!has_valid_data_dir(&p)?, "should be invalid")
     }
 
     #[rstest]
-    fn reset_removes_partial(temp_data_dir: (TempDir, Utf8PathBuf)) {
-        let (_, p) = temp_data_dir;
-        fs::create_dir_all(p.join("x")).expect("partial");
-        reset_data_dir(&p).expect("reset");
-        assert!(!p.exists(), "removed");
+    fn reset_removes_partial(temp_data_dir: TempDir2) -> R {
+        let (_, p) = temp_data_dir?;
+        fs::create_dir_all(p.join("x"))?;
+        reset_data_dir(&p)?;
+        ensure(!p.exists(), "should be removed")
     }
 
     #[rstest]
-    fn reset_ok_for_missing(temp_data_dir: (TempDir, Utf8PathBuf)) {
-        let (_, p) = temp_data_dir;
-        assert!(reset_data_dir(&p).is_ok(), "ok");
+    fn reset_ok_for_missing(temp_data_dir: TempDir2) -> R {
+        reset_data_dir(&temp_data_dir?.1)
     }
 
     #[test]
-    fn reset_errors_on_root() {
-        let err = reset_data_dir(&Utf8PathBuf::from("/")).expect_err("root");
-        assert!(err.to_string().to_lowercase().contains("root"), "{err}");
+    fn reset_errors_on_root() -> R {
+        let e = reset_data_dir(&Utf8PathBuf::from("/"))
+            .err()
+            .ok_or("expected err")?;
+        ensure(
+            e.to_string().to_lowercase().contains("root"),
+            "should mention root",
+        )
     }
 
     #[rstest]
-    fn recover_skips_nonexistent(temp_data_dir: (TempDir, Utf8PathBuf)) {
-        let (_, p) = temp_data_dir;
-        assert!(
-            recover_invalid_data_dir(&p).is_ok() && !p.exists(),
-            "skip nonexistent"
-        );
+    fn recover_skips_nonexistent(temp_data_dir: TempDir2) -> R {
+        let (_, p) = temp_data_dir?;
+        recover_invalid_data_dir(&p)?;
+        ensure(!p.exists(), "should not exist")
     }
 }
