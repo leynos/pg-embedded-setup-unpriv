@@ -57,7 +57,7 @@ of autonomous action, not quality criteria.
 
 - Scope: if the change requires editing more than 2 files or exceeds 150 net
   lines of code, stop and escalate.
-- Interface: if any public API outside of `tests/support/pg_worker.rs` must
+- Interface: if any public API outside `tests/support/pg_worker.rs` must
   change, stop and escalate.
 - Dependencies: if a new external dependency is required, stop and escalate.
 - Iterations: if tests still fail after two retries, stop and escalate with
@@ -462,7 +462,7 @@ All steps in this plan are idempotent:
 
 If a mistake is made, use `git checkout tests/support/pg_worker.rs` to restore
 the file to its original state and start over. No destructive operations are
-performed outside of the git working tree.
+performed outside the git working tree.
 
 ## Artifacts and notes
 
