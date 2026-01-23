@@ -108,10 +108,10 @@ Known uncertainties that might affect the plan.
   implementations with divergent features creates maintenance burden and
   confusion. The crate should export exactly one pg_worker binary.
 - Decision: Delete `tests/support/pg_worker.rs` and
-  `tests/support/pg_worker_helpers.rs`
-  entirely rather than converting them to test-only modules. Rationale: The
-  tests were migrated to unit tests within the official binary file using
-  `#[cfg(test)]`, eliminating the need for separate test support files.
+  `tests/support/pg_worker_helpers.rs` entirely rather than converting them to
+  test-only modules. Rationale: The tests were migrated to unit tests within
+  the official binary file using `#[cfg(test)]`, eliminating the need for
+  separate test support files.
 
 ## Outcomes & Retrospective
 
