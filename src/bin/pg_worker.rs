@@ -1,6 +1,5 @@
-//! Privileged worker for `PostgreSQL` bootstrap: `pg_worker <setup|start|stop> <config.json>`.
-//! Deserializes [`WorkerPayload`] from `config.json` and invokes `postgresql_embedded` lifecycle
-//! calls, allowing the caller to demote credentials before spawning the child process.
+//! Privileged `PostgreSQL` bootstrap worker: deserializes [`WorkerPayload`] from `config.json` and
+//! invokes lifecycle calls, allowing the caller to demote credentials before spawning the child.
 
 #[cfg(unix)]
 use {
@@ -90,9 +89,8 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
             }
             Operation::Start => {
                 ensure_postgres_started(pg.as_mut().ok_or_else(pg_err)?, &data_dir).await?;
-                // Intentionally leak PostgreSQL to keep it running after worker exit.
                 if let Some(i) = pg.take() {
-                    std::mem::forget(i);
+                    std::mem::forget(i); // Leak to keep PostgreSQL running after worker exit.
                 }
                 Ok(())
             }
@@ -162,34 +160,27 @@ async fn run_setup(pg: &mut PostgreSQL) -> Result<(), WorkerError> {
 }
 
 #[cfg(unix)]
-fn validate_data_dir(path: &Utf8Path) -> Result<bool, WorkerError> {
-    has_valid_data_dir(path).map_err(|e| WorkerError::DataDirRecovery(format!("validation: {e}")))
-}
-
-#[cfg(unix)]
 mod log {
     //! Logging helpers for recovery flow; extracted to avoid cognitive complexity inflation.
     use super::{Utf8Path, info};
-    pub fn reset(p: &Utf8Path, done: bool) {
-        info!("Reset: path={p}, done={done}");
-    }
     pub fn check(p: &Utf8Path, exists: bool) {
         info!("Check: path={p}, exists={exists}");
     }
     pub fn valid(p: &Utf8Path, v: bool) {
         info!("Validation: path={p}, valid={v}");
     }
-    pub fn setup(msg: &str) {
-        info!("{msg}");
-    }
 }
 
 #[cfg(unix)]
 fn perform_data_dir_reset(path: &Utf8Path) -> Result<(), WorkerError> {
-    log::reset(path, false);
-    reset_data_dir(path).map_err(|e| WorkerError::DataDirRecovery(format!("reset: {e}")))?;
-    log::reset(path, true);
-    Ok(())
+    info!("Reset: path={path}");
+    reset_data_dir(path).map_err(|e| WorkerError::DataDirRecovery(format!("reset: {e}")))
+}
+
+#[cfg(unix)]
+fn is_dir_empty(path: &Utf8Path) -> Result<bool, BoxError> {
+    let (dir, rel) = ambient_dir_and_path(path)?;
+    Ok(dir.read_dir(rel.as_std_path())?.next().is_none())
 }
 
 #[cfg(unix)]
@@ -199,22 +190,27 @@ fn recover_invalid_data_dir(data_dir: &Utf8Path) -> Result<(), WorkerError> {
     if !exists {
         return Ok(());
     }
-    let is_valid = validate_data_dir(data_dir)?;
+    let is_valid = has_valid_data_dir(data_dir)
+        .map_err(|e| WorkerError::DataDirRecovery(format!("validation: {e}")))?;
     log::valid(data_dir, is_valid);
-    if !is_valid {
+    if !is_valid && !is_dir_empty(data_dir).unwrap_or(false) {
         perform_data_dir_reset(data_dir)?;
     }
     Ok(())
 }
 
 #[cfg(unix)]
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "setup flow is straightforward despite metric"
+)]
 async fn run_postgres_setup(pg: &mut PostgreSQL, data_dir: &Utf8Path) -> Result<(), WorkerError> {
     if is_setup_complete(pg, data_dir) {
-        log::setup("Setup complete");
+        info!("Setup complete");
         return Ok(());
     }
     recover_invalid_data_dir(data_dir)?;
-    log::setup("Running setup");
+    info!("Running setup");
     run_setup(pg).await
 }
 
@@ -240,12 +236,7 @@ async fn execute_stop(pg: &mut Option<PostgreSQL>) -> Result<(), WorkerError> {
     let h = pg
         .as_mut()
         .ok_or_else(|| WorkerError::PostgresOperation("pg handle missing".into()))?;
-    handle_stop_result(h.stop().await)
-}
-
-#[cfg(unix)]
-fn handle_stop_result(result: Result<(), postgresql_embedded::Error>) -> Result<(), WorkerError> {
-    match result {
+    match h.stop().await {
         Ok(()) => Ok(()),
         Err(e) if stop_missing_pid_is_ok(&e) => Ok(()),
         Err(e) => Err(WorkerError::PostgresOperation(format!("stop failed: {e}"))),
@@ -396,5 +387,13 @@ mod tests {
         let (_, p) = temp_data_dir?;
         recover_invalid_data_dir(&p)?;
         ensure(!p.exists(), "should not exist")
+    }
+
+    #[rstest]
+    fn recover_skips_empty_dir(temp_data_dir: TempDir2) -> R {
+        let (_, p) = temp_data_dir?;
+        fs::create_dir_all(&p)?;
+        recover_invalid_data_dir(&p)?;
+        ensure(p.exists(), "empty dir should remain")
     }
 }

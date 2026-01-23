@@ -78,6 +78,14 @@ Known uncertainties that might affect the plan.
   marker. The existing `is_setup_complete` check runs first and skips recovery
   for already-complete setups.
 
+- Risk: When the worker runs with dropped privileges (as `nobody`), it may lack
+  permission to delete a data directory whose parent is owned by root. Severity:
+  medium Likelihood: medium (occurs when `PG_DATA_DIR` is explicitly set).
+  Mitigation: The recovery logic now skips reset for **empty** directories
+  (checked via `is_dir_empty`). Empty directories are a valid pre-setup state
+  created by bootstrap, not a partial initialization requiring cleanup. This
+  avoids permission errors and allows setup to proceed normally.
+
 ## Progress
 
 - [x] (completed) Add required imports to `src/bin/pg_worker.rs`
@@ -103,6 +111,11 @@ Known uncertainties that might affect the plan.
   recovery logic that needed to be consolidated into the official binary.
 - Extracting `recover_invalid_data_dir` as a separate function was necessary
   to satisfy clippy's cognitive complexity lint for `run_postgres_setup`.
+- CI e2e tests failed with `Permission denied` when the worker (running as
+  `nobody`) tried to reset an empty data directory. The bootstrap creates the
+  data directory owned by `nobody`, but the parent directory may be owned by
+  root when `PG_DATA_DIR` is explicitly set. The fix: skip reset for empty
+  directories, since these are a valid pre-setup state, not partial failures.
 
 ## Decision Log
 
@@ -124,11 +137,14 @@ integrated into the official pg_worker binary at `src/bin/pg_worker.rs`.
 Key outcomes:
 - Added `has_valid_data_dir()` function that checks for `global/pg_filenode.map`
 - Added `reset_data_dir()` function that safely removes invalid data directories
+- Added `is_dir_empty()` function to distinguish empty directories from partial
+  setups
 - Added `recover_invalid_data_dir()` helper that orchestrates validation and
-  reset
+  reset, skipping reset for empty directories
 - Integrated recovery into `run_postgres_setup()` between the setup-complete
   check and the actual setup call
-- Added 7 unit tests covering the new functionality
+- Added 10 unit tests covering the new functionality (including
+  `recover_skips_empty_dir`)
 - Removed 535 lines of duplicate code from test support files
 
 The implementation follows all constraints: uses capability-based filesystem
