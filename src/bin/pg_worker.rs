@@ -354,7 +354,7 @@ fn has_valid_data_dir(data_dir: &Utf8Path) -> Result<bool, BoxError> {
 fn reset_data_dir(data_dir: &Utf8Path) -> Result<(), BoxError> {
     let (dir, relative) = ambient_dir_and_path(data_dir)?;
     if relative.as_str().is_empty() {
-        return Ok(());
+        return Err("cannot reset root directory".into());
     }
 
     match cap_std::fs::Dir::remove_dir_all(&dir, relative.as_std_path()) {
@@ -478,6 +478,16 @@ mod tests {
         let data_dir_utf8 = Utf8PathBuf::from_path_buf(data_dir).expect("valid UTF-8 path");
         let result = reset_data_dir(&data_dir_utf8);
         assert!(result.is_ok(), "removing missing directory should succeed");
+    }
+
+    #[test]
+    fn reset_data_dir_errors_on_root_directory() {
+        let root = Utf8PathBuf::from("/");
+        let err = reset_data_dir(&root).expect_err("root reset must error");
+        assert!(
+            err.to_string().to_lowercase().contains("root"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
