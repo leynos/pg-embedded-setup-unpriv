@@ -356,8 +356,8 @@ the body of `test_add_to_basket`.
 
 Because `rstest-bdd` reuses `rstest` fixtures, fixtures defined in dependent
 crates can be imported. For example, `pg_embedded_setup_unpriv` publishes a
-`test_support::test_cluster` fixture that yields a running PostgreSQL instance.
-Bring the fixture into scope and declare a `test_cluster: TestCluster`
+`test_support::test_cluster` fixture that yields a running PostgreSQL
+instance. Bring the fixture into scope and declare a `test_cluster: TestCluster`
 parameter in any scenario or step that needs database access:
 
 ```rust,no_run
@@ -371,8 +371,8 @@ fn embed_cluster(test_cluster: TestCluster) {
 ```
 
 This keeps behaviour tests declarative: the fixture handles bootstrap,
-environment management, and teardown automatically, while steps focus on the
-observable outcomes.
+environment management, and teardown automatically, while steps focus on
+the observable outcomes.
 
 ### Inferred step patterns
 

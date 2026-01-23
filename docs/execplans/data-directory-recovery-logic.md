@@ -291,6 +291,12 @@ Run quality gates to ensure code meets project standards.
 
 ## Concrete Steps
 
+> **Note:** The steps below represent the original plan, which targeted
+> `tests/support/pg_worker.rs`. During implementation, the work was redirected
+> to `src/bin/pg_worker.rs` as documented in the "Surprises & Discoveries" and
+> "Decision Log" sections above. These steps are preserved as reference
+> material.
+
 Step 1: Add imports
 
   Working directory: repository root
@@ -449,8 +455,8 @@ Manual validation:
 
 Automated validation (quality criteria):
 
-- Tests: All tests in `tests/support/pg_worker.rs` must pass, including the
-  new unit tests and integration test. The specific test
+- Tests: All tests in `src/bin/pg_worker.rs` (inline `#[cfg(test)]` module)
+  must pass, including the new unit tests. The specific test
   `setup_recovers_from_partial_initialization` fails before the change and
   passes after.
 - Lint/typecheck: `make lint` must succeed with no warnings or errors.
@@ -520,7 +526,7 @@ Libraries and types used:
 
 Function signatures that must exist at the end:
 
-  In `tests/support/pg_worker.rs`:
+  In `src/bin/pg_worker.rs`:
 
   ```rust
   fn has_valid_data_dir(data_dir: &Utf8Path) -> Result<bool, BoxError>
