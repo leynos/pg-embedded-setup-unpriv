@@ -354,8 +354,8 @@ the body of `test_add_to_basket`.
 
 ### Consuming fixtures from dependencies
 
-Because `rstest-bdd` reuses `rstest` fixtures, you can import fixtures defined
-in dependent crates. For example, `pg_embedded_setup_unpriv` publishes a
+Because `rstest-bdd` reuses `rstest` fixtures, fixtures defined in dependent
+crates can be imported. For example, `pg_embedded_setup_unpriv` publishes a
 `test_support::test_cluster` fixture that yields a running PostgreSQL instance.
 Bring the fixture into scope and declare a `test_cluster: TestCluster`
 parameter in any scenario or step that needs database access:
