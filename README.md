@@ -3,8 +3,6 @@
 *Zero-configuration PostgreSQL test fixtures for Rust—whether you're root or
 not.*
 
-______________________________________________________________________
-
 ## Why pg_embedded_setup_unpriv?
 
 Writing integration tests against PostgreSQL should be straightforward, but
@@ -22,8 +20,6 @@ happen:
   stops it on drop. No orphan processes, no cleanup code.
 - **Fast test isolation**: Clone pre-migrated template databases in
   milliseconds instead of bootstrapping fresh clusters for each test.
-
-______________________________________________________________________
 
 ## Quick start
 
@@ -54,8 +50,6 @@ fn test_my_database_logic(test_cluster: TestCluster) {
 That's it. The `test_cluster` fixture handles downloading PostgreSQL, creating
 directories, starting the server, and cleaning up when the test ends.
 
-______________________________________________________________________
-
 ## Features
 
 - **Automatic privilege detection**: Root executions delegate filesystem work
@@ -72,8 +66,6 @@ ______________________________________________________________________
 - **Observability**: Tracing spans for lifecycle events, with sensitive values
   automatically redacted.
 
-______________________________________________________________________
-
 ## Learn more
 
 - [Users' Guide](docs/users-guide.md) — full documentation, async API,
@@ -81,13 +73,9 @@ ______________________________________________________________________
 - [Developers' Guide](docs/developers-guide.md) — contributing and development
 - [Roadmap](docs/roadmap.md) — planned features and progress
 
-______________________________________________________________________
-
 ## Licence
 
 ISC — see [LICENSE](LICENSE) for details.
-
-______________________________________________________________________
 
 ## Contributing
 
