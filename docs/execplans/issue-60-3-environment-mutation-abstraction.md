@@ -158,7 +158,7 @@ No tolerance breaches encountered. All quality gates passed:
 - `make test`: all 117 tests passed
 
 Changes were confined to a single file (tests/support/pg_worker.rs), with 88
-lines added and 10 lines removed, well within the 150-line tolerance.
+lines added, and 10 lines removed, well within the 150-line tolerance.
 
 ## Rebase notes
 
