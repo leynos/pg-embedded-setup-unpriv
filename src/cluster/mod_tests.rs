@@ -3,6 +3,8 @@
 use std::ffi::OsString;
 
 use super::TestCluster;
+use super::guard::ClusterGuard;
+use super::handle::ClusterHandle;
 use super::runtime_mode::ClusterRuntime;
 use crate::ExecutionPrivileges;
 use crate::env::ScopedEnv;
@@ -44,7 +46,9 @@ fn dummy_cluster() -> TestCluster {
     let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
     let env_vars = bootstrap.environment.to_env();
     let env_guard = ScopedEnv::apply(&env_vars);
-    TestCluster {
+
+    let handle = ClusterHandle::new(bootstrap.clone());
+    let guard = ClusterGuard {
         runtime: ClusterRuntime::Sync(runtime),
         postgres: None,
         bootstrap,
@@ -53,5 +57,7 @@ fn dummy_cluster() -> TestCluster {
         worker_guard: None,
         _env_guard: env_guard,
         _cluster_span: span,
-    }
+    };
+
+    TestCluster { handle, guard }
 }
