@@ -1,8 +1,9 @@
 # Issue 60.3: Environment Mutation Abstraction
 
-This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
-`Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
-`Outcomes & Retrospective` must be kept up to date as work proceeds.
+This execution plan (ExecPlan) is a living document. The sections
+`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
+`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
+proceeds.
 
 Status: COMPLETE
 
@@ -87,7 +88,7 @@ mitigation or contingency.
 
 ## Progress
 
-Use a list with checkboxes to summarise granular steps. Every stopping point
+Use a list with checkboxes to summarize granular steps. Every stopping point
 must be documented here, even if it requires splitting a partially completed
 task into two ("done" vs. "remaining"). This section must always reflect the
 actual current state of the work.
@@ -129,7 +130,7 @@ choices.
 
 ## Outcomes & retrospective
 
-Summarise outcomes, gaps, and lessons learned at major milestones or at
+Summarize outcomes, gaps, and lessons learned at major milestones or at
 completion. Compare the result against the original purpose. Note what would
 be done differently next time.
 
@@ -197,7 +198,8 @@ term you will use. Do not refer to prior plans.
 
 The `pg_worker` binary is a privileged worker process invoked by the main
 `pg_embedded_setup_unpriv` library to perform PostgreSQL bootstrap operations.
-The worker receives a `WorkerPayload` via JSON containing PostgreSQL settings
+The worker receives a `WorkerPayload` via JavaScript Object Notation (JSON)
+containing PostgreSQL settings
 and environment variable overrides. The `apply_worker_environment` function
 applies these environment overrides to the current process before executing the
 requested operation (setup, start, or stop).
@@ -274,7 +276,6 @@ implementations:
    key is not in the map or if the stored value is `None`, otherwise returns a
    reference to the string. Add doc comments explaining the in-memory storage
    and `get` method's use in test assertions.
-   get` method's use in test assertions.
 
 Validation: The code should compile with
 `cargo check --bin pg_worker --features dev-worker`. No behavioural changes yet.
@@ -352,8 +353,7 @@ compare. This section must be updated as work proceeds.
 
 ### Verify Stage A: add trait and implementations
 
-Working directory:
-`/data/leynos/Projects/pg-embedded-setup-unpriv.worktrees/issue-60-3-environment-mutation-abstraction`
+Working directory: repository root (e.g., `/path/to/pg-embedded-setup-unpriv`).
 
 Command to verify Stage A:
 
@@ -391,7 +391,7 @@ cargo test --bin pg_worker --features dev-worker --lib
 ```
 
 Expected output: all tests pass, including the new
-`test_env_store_test_impl_get_and_remove`.
+`test_env_store_test_impl_get_set_and_remove`.
 
 ### Verify Stage D: validation and commit
 
