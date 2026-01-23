@@ -80,6 +80,12 @@ const _: () = {
     assert_sync::<ClusterHandle>();
 };
 
+impl From<TestBootstrapSettings> for ClusterHandle {
+    fn from(bootstrap: TestBootstrapSettings) -> Self {
+        Self { bootstrap }
+    }
+}
+
 impl ClusterHandle {
     /// Creates a new handle from bootstrap settings.
     pub(super) const fn new(bootstrap: TestBootstrapSettings) -> Self {
