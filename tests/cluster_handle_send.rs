@@ -156,3 +156,25 @@ fn cluster_guard_is_not_send_documented() {
     // Type-level assertion that ClusterGuard exists (proves the type is accessible)
     fn _type_exists(_: Option<ClusterGuard>) {}
 }
+
+// ============================================================================
+// Shared cluster handle caching behaviour
+// ============================================================================
+
+// Note: Testing `shared_cluster_handle()` caching directly is problematic because:
+//
+// 1. **Success caching**: The function uses a global `OnceLock`, so once
+//    initialised, the state cannot be reset. Calling `shared_cluster_handle()`
+//    in a test would interfere with other tests that use the shared cluster.
+//
+// 2. **Failure caching**: Similarly, simulating a failure would poison the
+//    global state, preventing other tests from using the shared cluster.
+//
+// The caching behaviour is implicitly tested by integration tests that call
+// `shared_cluster_handle()` multiple times and verify they receive the same
+// instance (via pointer equality checks in fixtures).
+//
+// For explicit caching tests, a separate test binary with isolation would be
+// required. The current test suite validates the core functionality through:
+// - `cluster_handle_works_with_oncelock`: Verifies OnceLock compatibility
+// - Integration tests using `shared_test_cluster_handle` fixture

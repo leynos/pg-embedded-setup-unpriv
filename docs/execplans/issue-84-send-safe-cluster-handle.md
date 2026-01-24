@@ -227,7 +227,7 @@ ______________________________________________________________________
 
 ## References
 
-- [Issue #84][issue-84]
+- [Issue #84][^1]
 - Branch: `issue-84-send-safe-cluster-handle`
 
-[issue-84]: https://github.com/leynos/pg-embedded-setup-unpriv/issues/84
+[^1]: https://github.com/leynos/pg-embedded-setup-unpriv/issues/84
