@@ -161,6 +161,11 @@ fn resolve_worker_path(
 use std::sync::{Mutex, OnceLock};
 
 use crate::ClusterHandle;
+use crate::error::BootstrapErrorKind;
+
+// ============================================================================
+// Shared cluster handle singleton
+// ============================================================================
 
 /// Global state for the shared cluster handle singleton.
 ///
@@ -168,14 +173,18 @@ use crate::ClusterHandle;
 /// maintaining thread-safe singleton semantics. The `Mutex` protects
 /// initialisation; once complete, the pointer is stable.
 ///
-/// We store a static reference obtained by leaking the handle so it lives
-/// for the entire process lifetime.
+/// The handle is leaked to obtain a `'static` reference for the entire
+/// process lifetime.
 static SHARED_CLUSTER_HANDLE: OnceLock<Mutex<SharedHandleState>> = OnceLock::new();
 
+/// State machine for lazy cluster handle initialisation.
 enum SharedHandleState {
+    /// Not yet initialised.
     Uninitialised,
+    /// Successfully initialised with a leaked handle reference.
     Initialised(&'static ClusterHandle),
-    Failed(String),
+    /// Initialisation failed; stores the error kind and message for reconstruction.
+    Failed(BootstrapErrorKind, String),
 }
 
 /// Returns a reference to the shared cluster handle.
@@ -223,9 +232,11 @@ pub fn shared_cluster_handle() -> BootstrapResult<&'static ClusterHandle> {
 
     match *guard {
         SharedHandleState::Initialised(handle) => Ok(handle),
-        SharedHandleState::Failed(ref msg) => Err(crate::error::BootstrapError::from(
-            color_eyre::eyre::eyre!("shared cluster initialisation failed: {msg}"),
-        )),
+        SharedHandleState::Failed(kind, ref msg) => {
+            let report =
+                color_eyre::eyre::eyre!("shared cluster initialisation previously failed: {msg}");
+            Err(crate::error::BootstrapError::new(kind, report))
+        }
         SharedHandleState::Uninitialised => {
             let worker_guard = ensure_worker_env();
             match TestCluster::new_split() {
@@ -245,12 +256,10 @@ pub fn shared_cluster_handle() -> BootstrapResult<&'static ClusterHandle> {
                     Ok(leaked)
                 }
                 Err(err) => {
+                    let kind = err.kind();
                     let msg = format!("{err:?}");
-                    let error_msg = format!("shared cluster initialisation failed: {msg}");
-                    *guard = SharedHandleState::Failed(msg);
-                    Err(crate::error::BootstrapError::from(color_eyre::eyre::eyre!(
-                        "{error_msg}"
-                    )))
+                    *guard = SharedHandleState::Failed(kind, msg.clone());
+                    Err(err)
                 }
             }
         }
@@ -297,24 +306,6 @@ pub fn shared_cluster_handle() -> BootstrapResult<&'static ClusterHandle> {
 /// # }
 /// ```
 pub fn shared_cluster() -> BootstrapResult<&'static TestCluster> {
-    // Legacy implementation for backward compatibility.
-    // Uses raw pointer wrapper because TestCluster is !Send.
-    static SHARED_CLUSTER: OnceLock<Mutex<SharedClusterState>> = OnceLock::new();
-
-    enum SharedClusterState {
-        Uninitialised,
-        Initialised(SharedClusterPtr),
-        Failed(String),
-    }
-
-    /// Wrapper around raw pointer to `TestCluster` that implements `Send + Sync`.
-    struct SharedClusterPtr(*const TestCluster);
-
-    // SAFETY: The pointer points to a leaked Box that lives forever.
-    // Access is read-only; the public API is thread-safe.
-    unsafe impl Send for SharedClusterPtr {}
-    unsafe impl Sync for SharedClusterPtr {}
-
     let mutex = SHARED_CLUSTER.get_or_init(|| Mutex::new(SharedClusterState::Uninitialised));
     let mut guard = mutex
         .lock()
@@ -325,9 +316,11 @@ pub fn shared_cluster() -> BootstrapResult<&'static TestCluster> {
             // SAFETY: The pointer was created from Box::leak and is valid forever.
             Ok(unsafe { &*ptr.0 })
         }
-        SharedClusterState::Failed(msg) => Err(crate::error::BootstrapError::from(
-            color_eyre::eyre::eyre!("shared cluster initialisation failed: {msg}"),
-        )),
+        SharedClusterState::Failed(kind, msg) => {
+            let report =
+                color_eyre::eyre::eyre!("shared cluster initialisation previously failed: {msg}");
+            Err(crate::error::BootstrapError::new(*kind, report))
+        }
         SharedClusterState::Uninitialised => {
             let worker_guard = ensure_worker_env();
             match TestCluster::new() {
@@ -342,11 +335,10 @@ pub fn shared_cluster() -> BootstrapResult<&'static TestCluster> {
                     Ok(leaked)
                 }
                 Err(err) => {
+                    let kind = err.kind();
                     let msg = format!("{err:?}");
-                    *guard = SharedClusterState::Failed(msg.clone());
-                    Err(crate::error::BootstrapError::from(color_eyre::eyre::eyre!(
-                        "shared cluster initialisation failed: {msg}"
-                    )))
+                    *guard = SharedClusterState::Failed(kind, msg);
+                    Err(err)
                 }
             }
         }
@@ -367,6 +359,45 @@ pub fn shared_test_cluster() -> &'static TestCluster {
         ),
     }
 }
+
+// ============================================================================
+// Legacy shared cluster singleton (for backward compatibility)
+// ============================================================================
+
+/// Global state for the legacy shared cluster singleton.
+///
+/// Uses `OnceLock<Mutex<...>>` to support fallible initialisation whilst
+/// maintaining thread-safe singleton semantics.
+static SHARED_CLUSTER: OnceLock<Mutex<SharedClusterState>> = OnceLock::new();
+
+/// State machine for lazy cluster initialisation (legacy API).
+enum SharedClusterState {
+    /// Not yet initialised.
+    Uninitialised,
+    /// Successfully initialised with a pointer wrapper.
+    Initialised(SharedClusterPtr),
+    /// Initialisation failed; stores the error kind and message for reconstruction.
+    Failed(BootstrapErrorKind, String),
+}
+
+/// Wrapper around raw pointer to `TestCluster` that implements `Send + Sync`.
+///
+/// Required because `TestCluster` is `!Send` (contains `ScopedEnv` with
+/// `PhantomData<Rc<()>>`). The pointer is safe to share across threads because:
+/// 1. The cluster is only initialised once and never moved.
+/// 2. All access goes through immutable references.
+/// 3. The cluster's public API is thread-safe (database operations use
+///    independent connections).
+struct SharedClusterPtr(*const TestCluster);
+
+// SAFETY: The pointer points to a leaked Box that lives forever.
+// Access is read-only; the public API is thread-safe.
+unsafe impl Send for SharedClusterPtr {}
+unsafe impl Sync for SharedClusterPtr {}
+
+// ============================================================================
+// Fixture functions
+// ============================================================================
 
 /// rstest fixture returning a shared `ClusterHandle` reference.
 ///
