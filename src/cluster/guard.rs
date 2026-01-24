@@ -32,7 +32,7 @@ use crate::TestBootstrapSettings;
 use crate::env::ScopedEnv;
 use crate::observability::LOG_TARGET;
 use postgresql_embedded::PostgreSQL;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Lifecycle guard for a running `PostgreSQL` cluster.
 ///
@@ -58,9 +58,9 @@ use tracing::info;
 ///
 /// # Shared Cluster Pattern
 ///
-/// For shared clusters, the guard can be dropped after creation while the
-/// cluster keeps running. The `PostgreSQL` process is an external OS process
-/// that continues independently:
+/// For shared clusters that should run for the entire process lifetime,
+/// the guard must be explicitly forgotten to prevent shutdown on drop.
+/// Use [`std::mem::forget`] to keep the cluster running:
 ///
 /// ```no_run
 /// use std::sync::OnceLock;
@@ -70,14 +70,17 @@ use tracing::info;
 ///
 /// fn shared_handle() -> &'static ClusterHandle {
 ///     SHARED.get_or_init(|| {
-///         let (handle, _guard) = TestCluster::new_split()
+///         let (handle, guard) = TestCluster::new_split()
 ///             .expect("cluster bootstrap failed");
-///         // Guard drops here - environment restored, but cluster keeps running
-///         // This is intentional for process-lifetime shared clusters
+///         // Forget the guard to prevent shutdown - cluster runs for process lifetime
+///         std::mem::forget(guard);
 ///         handle
 ///     })
 /// }
 /// ```
+///
+/// **Warning**: Dropping the guard shuts down the cluster. Do not use the
+/// handle after the guard has been dropped unless the guard was forgotten.
 #[derive(Debug)]
 pub struct ClusterGuard {
     /// Runtime mode: either owns a runtime (sync) or runs on caller's runtime (async).
@@ -117,6 +120,25 @@ impl ClusterGuard {
 
 impl Drop for ClusterGuard {
     fn drop(&mut self) {
+        if self.should_skip_shutdown() {
+            return;
+        }
+        self.perform_shutdown();
+        // Environment guards drop after this block, restoring the process state.
+    }
+}
+
+impl ClusterGuard {
+    /// Returns true if shutdown should be skipped.
+    ///
+    /// Shutdown is skipped if the cluster was already stopped (e.g., via
+    /// `stop_async()`) or if the postgres handle was never initialised.
+    const fn should_skip_shutdown(&self) -> bool {
+        self.postgres.is_none() && !self.is_managed_via_worker
+    }
+
+    /// Performs cluster shutdown, logging and delegating to the appropriate path.
+    fn perform_shutdown(&mut self) {
         let context = shutdown::stop_context(&self.bootstrap.settings);
         let is_async = self.runtime.is_async();
         info!(
@@ -128,26 +150,31 @@ impl Drop for ClusterGuard {
         );
 
         if is_async {
-            // Async clusters should use stop_async() explicitly; attempt best-effort cleanup.
-            shutdown::drop_async_cluster(shutdown::DropContext {
-                is_managed_via_worker: self.is_managed_via_worker,
-                postgres: &mut self.postgres,
-                bootstrap: &self.bootstrap,
-                env_vars: &self.env_vars,
-                context: &context,
-            });
+            self.drop_async_cluster(&context);
         } else {
             self.drop_sync_cluster(&context);
         }
-        // Environment guards drop after this block, restoring the process state.
     }
-}
 
-impl ClusterGuard {
+    /// Asynchronous drop path: best-effort cleanup for async clusters.
+    fn drop_async_cluster(&mut self, context: &str) {
+        shutdown::drop_async_cluster(shutdown::DropContext {
+            is_managed_via_worker: self.is_managed_via_worker,
+            postgres: &mut self.postgres,
+            bootstrap: &self.bootstrap,
+            env_vars: &self.env_vars,
+            context,
+        });
+    }
+
     /// Synchronous drop path: stops the cluster using the owned runtime.
     fn drop_sync_cluster(&mut self, context: &str) {
         let ClusterRuntime::Sync(ref runtime) = self.runtime else {
             // Should never happen: drop_sync_cluster is only called for sync mode.
+            warn!(
+                target: LOG_TARGET,
+                "drop_sync_cluster called with non-sync runtime mode; skipping shutdown"
+            );
             return;
         };
 

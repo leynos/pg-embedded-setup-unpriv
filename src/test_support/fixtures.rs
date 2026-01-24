@@ -246,9 +246,10 @@ pub fn shared_cluster_handle() -> BootstrapResult<&'static ClusterHandle> {
                 }
                 Err(err) => {
                     let msg = format!("{err:?}");
-                    *guard = SharedHandleState::Failed(msg.clone());
+                    let error_msg = format!("shared cluster initialisation failed: {msg}");
+                    *guard = SharedHandleState::Failed(msg);
                     Err(crate::error::BootstrapError::from(color_eyre::eyre::eyre!(
-                        "shared cluster initialisation failed: {msg}"
+                        "{error_msg}"
                     )))
                 }
             }

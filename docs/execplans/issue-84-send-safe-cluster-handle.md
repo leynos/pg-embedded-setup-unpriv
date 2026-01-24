@@ -1,8 +1,8 @@
-# ExecPlan: Send-Safe Cluster Handle (Issue #84)
+# ExecPlan: Send-safe cluster handle (issue #84)
 
-## Big Picture
+## Big picture
 
-Make `TestCluster` usable in `Send`-bounded contexts (e.g., `OnceLock`,
+Make `TestCluster` usable in `Send`-bound contexts (e.g., `OnceLock`,
 `rstest` timeouts) by separating concerns: environment management remains
 `!Send` (tied to the creating thread), whilst cluster access becomes `Send`
 through a dedicated handle type.
@@ -12,13 +12,15 @@ through a dedicated handle type.
 - **Backward compatibility**: Existing `TestCluster` API must continue to work
   unchanged for users who do not need `Send`.
 - **Safety**: The `!Send` constraint on environment guards exists for good
-  reason (thread-local storage). We must not compromise this safety.
+  reason (thread-local storage). This safety must not be compromised.
 - **Minimal API surface**: Avoid exposing unnecessary complexity to users who
   do not need shared cluster patterns.
 - **No unsafe code in user space**: The existing `SharedClusterPtr` workaround
   uses `unsafe impl Send`; the new API should eliminate the need for this.
 
 ## Architecture
+
+*Figure 1: Handle/guard split architecture*
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -46,9 +48,9 @@ through a dedicated handle type.
          └──────────────────┘           └─────────────────────┘
 ```
 
-## Implementation Tasks
+## Implementation tasks
 
-### Phase 1: Core Type Definitions
+### Phase 1: Core type definitions
 
 - [x] **1.1** Create `ClusterHandle` struct in `src/cluster/handle.rs`
   - Contains: `bootstrap: TestBootstrapSettings`
@@ -66,7 +68,7 @@ through a dedicated handle type.
   - `ClusterHandle: Send + Sync`
   - `ClusterGuard: !Send` (documented, not assertable at compile-time)
 
-### Phase 2: Constructor Updates
+### Phase 2: Constructor updates
 
 - [x] **2.1** Add
       `TestCluster::new_split() -> BootstrapResult<(ClusterHandle, ClusterGuard)>`
@@ -80,7 +82,7 @@ through a dedicated handle type.
 - [x] **2.3** Add `TestCluster::start_async_split()` for async variant
   - Same split pattern for async API
 
-### Phase 3: Delegation and Method Distribution
+### Phase 3: Delegation and method distribution
 
 - [x] **3.1** Move read-only methods to `ClusterHandle`
   - `settings()`, `environment()`, `bootstrap()`, `connection()`
@@ -90,7 +92,7 @@ through a dedicated handle type.
   - Provides transparent access to handle methods
   - Existing code continues to work unchanged
 
-### Phase 4: Shutdown Logic Updates
+### Phase 4: Shutdown logic updates
 
 - [x] **4.1** Update `ClusterGuard::Drop` to handle shutdown
   - Move shutdown logic from `TestCluster::Drop`
@@ -100,10 +102,10 @@ through a dedicated handle type.
   - PostgreSQL stops before environment is restored
   - Runtime is available for shutdown operations
 
-### Phase 5: Fixture Updates
+### Phase 5: Fixture updates
 
 - [x] **5.1** Update `shared_cluster()` to use safe API
-  - Kept `SharedClusterPtr` for backward compat in `shared_cluster()`
+  - Kept `SharedClusterPtr` for backward compatibility in `shared_cluster()`
   - Added `shared_cluster_handle()` using `OnceLock<ClusterHandle>` pattern
   - Guard is forgotten to keep cluster running for process lifetime
 
@@ -114,7 +116,7 @@ through a dedicated handle type.
 - [x] **5.3** Keep `test_cluster()` fixture unchanged
   - Returns `TestCluster` for per-test usage
 
-### Phase 6: Export and Documentation
+### Phase 6: Export and documentation
 
 - [x] **6.1** Export new types from `src/lib.rs`
   - `pub use cluster::{ClusterHandle, ClusterGuard};`
@@ -146,51 +148,52 @@ through a dedicated handle type.
 ### Phase 8: Cleanup
 
 - [ ] **8.1** Remove deprecated unsafe workaround
-  - Decision: Keep `shared_cluster()` with `SharedClusterPtr` for backward compat
+  - Decision: Keep `shared_cluster()` with `SharedClusterPtr` for backward
+    compatibility
   - New `shared_cluster_handle()` is the recommended safe API
 
 - [x] **8.2** Run full quality gates
   - `make check-fmt && make lint && make test` - all pass
 
-## Progress Log
+## Progress log
 
-### 2026-01-23: Implementation Complete
+### 2026-01-23: Implementation complete
 
 **Commits:**
 1. `Add Send-safe ClusterHandle for shared cluster patterns` - Core handle/guard split
 2. `Add shared_cluster_handle() for Send-safe shared cluster fixture` - New fixture API
 3. `Add Send/Sync trait tests and From impl for ClusterHandle` - Test coverage
 
-**Key Implementation Notes:**
+**Key implementation notes:**
 
-1. **Handle/Guard Architecture**: Successfully separated `TestCluster` into:
+1. **Handle/guard architecture**: Successfully separated `TestCluster` into:
    - `ClusterHandle`: Send + Sync, contains only `TestBootstrapSettings`
    - `ClusterGuard`: !Send, manages shutdown and environment restoration
 
-2. **Backward Compatibility**: Maintained via:
+2. **Backward compatibility**: Maintained via:
    - `Deref<Target = ClusterHandle>` on `TestCluster`
    - Keeping `shared_cluster()` with `SharedClusterPtr` workaround
    - All existing tests pass unchanged
 
-3. **New APIs Added:**
+3. **New APIs added:**
    - `TestCluster::new_split()` and `start_async_split()`
    - `shared_cluster_handle()` and `shared_test_cluster_handle()` fixtures
    - `From<TestBootstrapSettings>` for `ClusterHandle`
 
-4. **!Send Assertion Limitation**: Cannot assert `!Send` at compile-time due to
+4. **!Send assertion limitation**: Cannot assert `!Send` at compile-time due to
    Rust coherence rules. Documented this constraint; the `!Send` property is
    enforced by `ScopedEnv` containing `PhantomData<Rc<()>>`.
 
-5. **Shared Cluster Pattern**: The `shared_cluster_handle()` function leaks the
+5. **Shared cluster pattern**: The `shared_cluster_handle()` function leaks the
    `ClusterHandle` via `Box::leak()` to obtain a `&'static` reference suitable
    for `OnceLock` patterns. The `ClusterGuard` is forgotten with `std::mem::forget()`
    so the PostgreSQL process continues running for the process lifetime.
 
 ______________________________________________________________________
 
-## Key Decisions
+## Key decisions
 
-### Why separate types instead of making `TestCluster` Send?
+### Why separate types instead of making TestCluster Send?
 
 The `ScopedEnv` component uses thread-local storage (`THREAD_STATE`) to track
 environment variable changes. This is fundamental to its design - it ensures
@@ -198,22 +201,22 @@ that environment restoration happens on the same thread that made the changes.
 Making this `Send` would require either:
 
 1. Removing thread-local storage (breaks the safety model)
-2. Adding complex synchronisation (adds overhead, potential deadlocks)
-3. Changing to a global mutex (serialises all environment operations)
+2. Adding complex synchronization (adds overhead, potential deadlocks)
+3. Changing to a global mutex (serializes all environment operations)
 
 The handle/guard split preserves the safety of environment management whilst
 enabling the primary use case (shared cluster access) without unsafe code.
 
-### Why leak the cluster in `shared_cluster()`?
+### Why leak the cluster in shared_cluster()?
 
 The shared cluster lives for the entire process lifetime. Leaking is
-intentional - we avoid the complexity of tracking when all references are done
-and the overhead of reference counting. The `ClusterGuard` is dropped after
-initialisation, which means environment variables are restored, but the
-PostgreSQL process continues running (it's an external process, not tied to
-Rust lifetimes).
+intentional - this approach avoids the complexity of tracking when all
+references are done and the overhead of reference counting. The `ClusterGuard`
+is forgotten after initialization, which means environment variables are
+restored, but the PostgreSQL process continues running (it's an external
+process, not tied to Rust lifetimes).
 
-### Why not make `ClusterHandle` hold an `Arc` internally?
+### Why not make ClusterHandle hold an Arc internally?
 
 The handle itself is already lightweight (just `TestBootstrapSettings` which is
 `Clone`). Users who need shared access can wrap it in `Arc` themselves. This
@@ -224,5 +227,7 @@ ______________________________________________________________________
 
 ## References
 
-- Issue: https://github.com/leynos/pg-embedded-setup-unpriv/issues/84
+- [Issue #84][issue-84]
 - Branch: `issue-84-send-safe-cluster-handle`
+
+[issue-84]: https://github.com/leynos/pg-embedded-setup-unpriv/issues/84

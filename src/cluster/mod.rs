@@ -104,8 +104,10 @@ use tracing::info_span;
 ///
 /// fn shared_cluster() -> &'static ClusterHandle {
 ///     SHARED.get_or_init(|| {
-///         let (handle, _guard) = TestCluster::new_split()
+///         let (handle, guard) = TestCluster::new_split()
 ///             .expect("cluster bootstrap failed");
+///         // Forget the guard to prevent shutdown on drop
+///         std::mem::forget(guard);
 ///         handle
 ///     })
 /// }
@@ -153,6 +155,9 @@ impl TestCluster {
     ///
     /// ## Shared Cluster with `OnceLock`
     ///
+    /// For shared clusters that run for the entire process lifetime, forget
+    /// the guard to prevent shutdown:
+    ///
     /// ```no_run
     /// use std::sync::OnceLock;
     /// use pg_embedded_setup_unpriv::{ClusterHandle, TestCluster};
@@ -161,13 +166,17 @@ impl TestCluster {
     ///
     /// fn shared_cluster() -> &'static ClusterHandle {
     ///     SHARED.get_or_init(|| {
-    ///         let (handle, _guard) = TestCluster::new_split()
+    ///         let (handle, guard) = TestCluster::new_split()
     ///             .expect("cluster bootstrap failed");
-    ///         // Guard drops, but cluster keeps running for the process lifetime
+    ///         // Forget the guard to prevent shutdown on drop
+    ///         std::mem::forget(guard);
     ///         handle
     ///     })
     /// }
     /// ```
+    ///
+    /// **Warning**: Dropping the guard shuts down the cluster. Do not use the
+    /// handle after the guard has been dropped unless the guard was forgotten.
     pub fn new_split() -> BootstrapResult<(ClusterHandle, ClusterGuard)> {
         let span = info_span!(target: LOG_TARGET, "test_cluster");
         // Resolve cache directory BEFORE applying test environment.

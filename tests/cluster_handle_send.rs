@@ -1,13 +1,15 @@
 //! Tests verifying `ClusterHandle` Send/Sync traits and thread-safety patterns.
 //!
-//! These tests validate Issue #84: enabling `TestCluster` usage in `Send`-bounded
+//! These tests validate Issue #84: enabling `TestCluster` usage in `Send`-bound
 //! contexts through the `ClusterHandle` type.
 #![cfg(unix)]
 
 use std::sync::OnceLock;
 use std::thread;
 
-use pg_embedded_setup_unpriv::{ClusterGuard, ClusterHandle};
+use pg_embedded_setup_unpriv::test_support::dummy_settings;
+use pg_embedded_setup_unpriv::{ClusterGuard, ClusterHandle, ExecutionPrivileges};
+use rstest::{fixture, rstest};
 
 // ============================================================================
 // Compile-time trait assertions
@@ -37,10 +39,9 @@ const _: () = {
 // Compile-time assertion that ClusterGuard is !Send
 // ============================================================================
 
-// Note: We cannot use a compile_fail doctest here because ClusterGuard being
-// !Send is enforced by containing ScopedEnv which has PhantomData<Rc<()>>.
-// The following test documents this constraint - if ClusterGuard becomes Send,
-// this comment should be updated or removed.
+// Note: ClusterGuard being !Send is enforced by containing ScopedEnv which has
+// PhantomData<Rc<()>>. The following test documents this constraint - if
+// ClusterGuard becomes Send, this comment should be updated or removed.
 //
 // To verify !Send manually, uncomment this block - it should fail to compile:
 // ```
@@ -49,6 +50,20 @@ const _: () = {
 //     assert_send::<ClusterGuard>();
 // };
 // ```
+
+// ============================================================================
+// Test fixtures
+// ============================================================================
+
+/// Creates a dummy `ClusterHandle` for testing thread-safety patterns.
+///
+/// This fixture provides a handle that doesn't start a real cluster,
+/// suitable for verifying Send/Sync behaviour.
+#[fixture]
+fn dummy_handle() -> ClusterHandle {
+    let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
+    ClusterHandle::from(bootstrap)
+}
 
 // ============================================================================
 // Runtime tests for thread-safety patterns
@@ -60,9 +75,6 @@ const _: () = {
 /// per-test bootstrap overhead.
 #[test]
 fn cluster_handle_works_with_oncelock() {
-    use pg_embedded_setup_unpriv::ExecutionPrivileges;
-    use pg_embedded_setup_unpriv::test_support::dummy_settings;
-
     static SHARED: OnceLock<ClusterHandle> = OnceLock::new();
 
     let handle = SHARED.get_or_init(|| {
@@ -83,19 +95,13 @@ fn cluster_handle_works_with_oncelock() {
 ///
 /// This is required for rstest fixtures with timeouts, which spawn the test
 /// body in a separate thread.
-#[test]
-fn cluster_handle_can_be_sent_to_thread() {
-    use pg_embedded_setup_unpriv::ExecutionPrivileges;
-    use pg_embedded_setup_unpriv::test_support::dummy_settings;
-
-    let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
-    let handle = ClusterHandle::from(bootstrap);
-
+#[rstest]
+fn cluster_handle_can_be_sent_to_thread(dummy_handle: ClusterHandle) {
     // Move handle to another thread
     let join_handle = thread::spawn(move || {
         // Access handle methods from the spawned thread
-        let settings = handle.settings();
-        settings.port // Return something to prove we accessed it
+        let settings = dummy_handle.settings();
+        settings.port // Return something to prove access worked
     });
 
     let _port = join_handle
@@ -104,14 +110,11 @@ fn cluster_handle_can_be_sent_to_thread() {
 }
 
 /// Verifies that `ClusterHandle` can be shared across threads via `Arc`.
-#[test]
-fn cluster_handle_can_be_shared_via_arc() {
-    use pg_embedded_setup_unpriv::ExecutionPrivileges;
-    use pg_embedded_setup_unpriv::test_support::dummy_settings;
+#[rstest]
+fn cluster_handle_can_be_shared_via_arc(dummy_handle: ClusterHandle) {
     use std::sync::Arc;
 
-    let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
-    let handle = Arc::new(ClusterHandle::from(bootstrap));
+    let handle = Arc::new(dummy_handle);
 
     let handle_clone = Arc::clone(&handle);
     let join_handle = thread::spawn(move || {
