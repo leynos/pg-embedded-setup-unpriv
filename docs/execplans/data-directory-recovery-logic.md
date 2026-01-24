@@ -537,8 +537,8 @@ Libraries and types used:
 - `std::io::ErrorKind` - for matching error kinds (standard library)
 - `camino::Utf8Path`, `camino::Utf8PathBuf` - for UTF-8 path handling (already
   imported)
-- `pg_embedded_setup_unpriv::test_support::ambient_dir_and_path` - for getting
-  directory handles (already imported)
+- `pg_embedded_setup_unpriv::ambient_dir_and_path` - for getting directory
+  handles (already imported)
 
 Function signatures that must exist at the end:
 
@@ -549,7 +549,7 @@ Function signatures that must exist at the end:
 
   fn reset_data_dir(data_dir: &Utf8Path) -> Result<(), BoxError>
 
-  async fn ensure_postgres_setup(
+  async fn run_postgres_setup(
       pg: &mut PostgreSQL,
       data_dir: &Utf8Path,
   ) -> Result<(), WorkerError>
