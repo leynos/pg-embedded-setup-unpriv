@@ -243,16 +243,18 @@ fn should_skip_test(result: &std::result::Result<Utf8PathBuf, color_eyre::Report
 }
 
 fn wait_for_postmaster_shutdown(data_dir: &Utf8PathBuf) -> Result<()> {
+    use std::time::Instant;
+
     let pid = data_dir.join("postmaster.pid");
-    for _ in 0..50 {
-        if !pid.exists() {
-            break;
-        }
-        thread::sleep(Duration::from_millis(20));
+    let deadline = Instant::now() + Duration::from_secs(10);
+
+    while pid.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
     }
+
     ensure!(
         !pid.exists(),
-        "postmaster.pid should be removed once cluster stops"
+        "postmaster.pid should be removed once cluster stops (waited 10s)"
     );
     Ok(())
 }

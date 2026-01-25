@@ -73,15 +73,11 @@ fn dummy_handle() -> ClusterHandle {
 ///
 /// This pattern is essential for shared cluster fixtures that avoid
 /// per-test bootstrap overhead.
-#[test]
-fn cluster_handle_works_with_oncelock() {
+#[rstest]
+fn cluster_handle_works_with_oncelock(dummy_handle: ClusterHandle) {
     static SHARED: OnceLock<ClusterHandle> = OnceLock::new();
 
-    let handle = SHARED.get_or_init(|| {
-        // Create a dummy handle for testing (doesn't start a real cluster)
-        let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
-        ClusterHandle::from(bootstrap)
-    });
+    let handle = SHARED.get_or_init(|| dummy_handle);
 
     // Second access returns the same instance
     let handle2 = SHARED.get().expect("should be initialised");

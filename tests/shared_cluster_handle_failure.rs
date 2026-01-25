@@ -9,9 +9,40 @@
 //! verification.
 #![cfg(unix)]
 
+use std::ffi::OsStr;
+
 use pg_embedded_setup_unpriv::test_support::shared_cluster_handle;
-use pg_embedded_setup_unpriv::{BootstrapError, BootstrapErrorKind};
+use pg_embedded_setup_unpriv::{BootstrapError, BootstrapErrorKind, ClusterHandle};
 use tracing::warn;
+
+/// Sets an environment variable using the established project pattern.
+///
+/// # Safety
+///
+/// Callers must ensure no other threads are reading environment variables
+/// concurrently. This test runs in isolation (separate test binary).
+unsafe fn set_env_var<K, V>(key: K, value: V)
+where
+    K: AsRef<OsStr>,
+    V: AsRef<OsStr>,
+{
+    // SAFETY: Caller guarantees thread isolation.
+    unsafe { std::env::set_var(key, value) };
+}
+
+/// Removes an environment variable using the established project pattern.
+///
+/// # Safety
+///
+/// Callers must ensure no other threads are reading environment variables
+/// concurrently. This test runs in isolation (separate test binary).
+unsafe fn remove_env_var<K>(key: K)
+where
+    K: AsRef<OsStr>,
+{
+    // SAFETY: Caller guarantees thread isolation.
+    unsafe { std::env::remove_var(key) };
+}
 
 /// Sets up the environment to force bootstrap failure.
 ///
@@ -22,16 +53,15 @@ use tracing::warn;
 /// test binary) and is the only test in this file, so there are no other
 /// threads that could be reading environment variables concurrently.
 unsafe fn setup_failing_environment() {
-    // SAFETY: The outer unsafe block documents why calling this function is
-    // safe. This inner unsafe block is required for Rust 2024 edition
-    // compatibility.
+    // SAFETY: This test runs in isolation (separate test binary with only
+    // one test), so no concurrent threads are reading environment variables.
     unsafe {
-        std::env::set_var(
+        set_env_var(
             "TZDIR",
             "/nonexistent/timezone/directory/that/does/not/exist",
         );
         // Also clear TZ to ensure the bootstrap tries to read from TZDIR
-        std::env::remove_var("TZ");
+        remove_env_var("TZ");
     }
 }
 
@@ -39,7 +69,7 @@ unsafe fn setup_failing_environment() {
 ///
 /// Logs a skip message if the call unexpectedly succeeded.
 fn extract_error(
-    result: Result<&'static pg_embedded_setup_unpriv::ClusterHandle, BootstrapError>,
+    result: Result<&'static ClusterHandle, BootstrapError>,
     context: &str,
 ) -> Option<BootstrapError> {
     if let Err(e) = result {

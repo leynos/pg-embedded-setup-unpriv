@@ -272,11 +272,12 @@ pub fn shared_cluster_handle() -> BootstrapResult<&'static ClusterHandle> {
 /// thread-safe singleton semantics. Subsequent calls return the same cluster
 /// instance, eliminating per-test bootstrap overhead.
 ///
-/// # Deprecation Notice
+/// # Recommendation
 ///
-/// Consider using [`shared_cluster_handle()`] instead, which returns a
-/// `Send + Sync` handle suitable for rstest fixtures with timeouts and other
-/// thread-safe contexts.
+/// Prefer [`shared_cluster_handle()`] for new code. It returns a `Send + Sync`
+/// handle suitable for rstest fixtures with timeouts and other thread-safe
+/// contexts. This function is retained for backward compatibility with
+/// existing tests that depend on the `TestCluster` type.
 ///
 /// # Errors
 ///

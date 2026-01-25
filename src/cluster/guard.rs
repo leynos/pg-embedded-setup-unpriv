@@ -25,6 +25,18 @@
 //! `ClusterGuard` is intentionally `!Send` because `ScopedEnv` uses thread-local
 //! storage to track environment changes. Dropping on a different thread would
 //! corrupt the environment restoration logic.
+//!
+//! # Testing
+//!
+//! `ClusterGuard`'s shutdown and environment-restoration behaviour is tested
+//! in `tests/cluster_split_constructors.rs`:
+//!
+//! - `new_split_creates_working_handle_and_guard`: Verifies that dropping the
+//!   guard stops the `PostgreSQL` cluster (`postmaster.pid` is removed) and
+//!   restores environment variables to their pre-cluster state.
+//!
+//! - `start_async_split_creates_working_handle_and_guard`: Tests the async
+//!   variant with the same shutdown and restoration assertions.
 
 use super::runtime_mode::ClusterRuntime;
 use super::shutdown;
