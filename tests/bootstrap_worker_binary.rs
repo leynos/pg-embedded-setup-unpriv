@@ -7,6 +7,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::process::Command;
 
 use color_eyre::eyre::{Result, ensure, eyre};
 use pg_embedded_setup_unpriv::{BootstrapErrorKind, bootstrap_for_tests};
@@ -122,6 +123,111 @@ fn env_without_timezone_removes_tz_variable() -> Result<()> {
     );
 
     sandbox.reset()?;
+
+    Ok(())
+}
+
+// =============================================================================
+// Binary Invocation Integration Tests
+// =============================================================================
+
+/// Returns the `pg_worker` binary path if available via Cargo's test harness.
+const fn pg_worker_binary() -> Option<&'static str> {
+    option_env!("CARGO_BIN_EXE_pg_worker")
+}
+
+#[test]
+fn pg_worker_binary_rejects_invalid_operation() -> Result<()> {
+    let Some(binary) = pg_worker_binary() else {
+        return Ok(());
+    };
+
+    let output = Command::new(binary)
+        .args(["invalid_op", "/tmp/config.json"])
+        .output()?;
+
+    ensure!(
+        !output.status.success(),
+        "pg_worker should fail with invalid operation"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        stderr.contains("unknown operation 'invalid_op'"),
+        eyre!("stderr should contain 'unknown operation', got: {stderr}")
+    );
+    ensure!(
+        stderr.contains("expected setup, start, or stop"),
+        eyre!("stderr should list valid operations, got: {stderr}")
+    );
+
+    Ok(())
+}
+
+#[test]
+fn pg_worker_binary_missing_operation_shows_error() -> Result<()> {
+    let Some(binary) = pg_worker_binary() else {
+        return Ok(());
+    };
+
+    let output = Command::new(binary).output()?;
+
+    ensure!(
+        !output.status.success(),
+        "pg_worker should fail with missing operation"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        stderr.contains("missing operation"),
+        eyre!("stderr should mention 'missing operation', got: {stderr}")
+    );
+
+    Ok(())
+}
+
+#[test]
+fn pg_worker_binary_missing_config_shows_error() -> Result<()> {
+    let Some(binary) = pg_worker_binary() else {
+        return Ok(());
+    };
+
+    let output = Command::new(binary).args(["setup"]).output()?;
+
+    ensure!(
+        !output.status.success(),
+        "pg_worker should fail with missing config path"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        stderr.contains("missing config path"),
+        eyre!("stderr should mention 'missing config path', got: {stderr}")
+    );
+
+    Ok(())
+}
+
+#[test]
+fn pg_worker_binary_error_format_uses_prefix() -> Result<()> {
+    let Some(binary) = pg_worker_binary() else {
+        return Ok(());
+    };
+
+    let output = Command::new(binary)
+        .args(["invalid_op", "/tmp/config.json"])
+        .output()?;
+
+    ensure!(
+        !output.status.success(),
+        "pg_worker should fail with invalid operation"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        stderr.contains("invalid arguments:"),
+        eyre!("error output should contain 'invalid arguments:' prefix, got: {stderr}")
+    );
 
     Ok(())
 }
