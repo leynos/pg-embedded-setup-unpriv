@@ -34,7 +34,7 @@ pub use fixtures::{
 pub use fixtures::{shared_test_cluster, shared_test_cluster_handle, test_cluster};
 #[cfg(doc)]
 pub use fixtures_docs::{shared_test_cluster, test_cluster};
-// Note: shared_test_cluster_handle doc fixture pending fixtures_docs update (see PR #86)
+// Note: shared_test_cluster_handle doc fixture pending (see issue #87)
 pub use hash::hash_directory;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use hook::{
