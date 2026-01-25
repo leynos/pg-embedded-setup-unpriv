@@ -8,17 +8,15 @@
 //! that call `shared_cluster_handle()` would interfere with the failure caching
 //! verification.
 #![cfg(unix)]
-#![allow(
-    dead_code,
-    reason = "Support modules provide more functionality than needed here"
-)]
 
 use pg_embedded_setup_unpriv::test_support::shared_cluster_handle;
 use pg_embedded_setup_unpriv::{BootstrapError, BootstrapErrorKind, ClusterHandle};
 use tracing::warn;
 
+#[expect(dead_code, reason = "required by env_isolation module")]
 #[path = "support/env.rs"]
 mod env;
+#[expect(dead_code, reason = "only set_env_var and remove_env_var are used")]
 #[path = "support/env_isolation.rs"]
 mod env_isolation;
 

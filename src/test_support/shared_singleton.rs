@@ -107,15 +107,14 @@ pub fn shared_cluster_handle() -> BootstrapResult<&'static ClusterHandle> {
                     Ok(leaked)
                 }
                 Err(err) => {
-                    let arc_err = Arc::new(err);
-                    *guard = SharedHandleState::Failed(Arc::clone(&arc_err));
-                    Err(Arc::try_unwrap(arc_err).unwrap_or_else(|arc| {
-                        // This shouldn't happen since we just created the Arc,
-                        // but handle it gracefully by cloning the error info.
-                        let kind = arc.kind();
-                        let report = color_eyre::eyre::eyre!("bootstrap failed: {:?}", arc);
-                        BootstrapError::new(kind, report)
-                    }))
+                    // Store error info for subsequent callers to retrieve.
+                    let stored = Arc::new(BootstrapError::new(
+                        err.kind(),
+                        color_eyre::eyre::eyre!("bootstrap failed: {:?}", err),
+                    ));
+                    *guard = SharedHandleState::Failed(stored);
+                    // Return the original error with full diagnostics.
+                    Err(err)
                 }
             }
         }
@@ -230,13 +229,14 @@ pub fn shared_cluster() -> BootstrapResult<&'static TestCluster> {
                     Ok(leaked)
                 }
                 Err(err) => {
-                    let arc_err = Arc::new(err);
-                    *guard = SharedClusterState::Failed(Arc::clone(&arc_err));
-                    Err(Arc::try_unwrap(arc_err).unwrap_or_else(|arc| {
-                        let kind = arc.kind();
-                        let report = color_eyre::eyre::eyre!("bootstrap failed: {:?}", arc);
-                        BootstrapError::new(kind, report)
-                    }))
+                    // Store error info for subsequent callers to retrieve.
+                    let stored = Arc::new(BootstrapError::new(
+                        err.kind(),
+                        color_eyre::eyre::eyre!("bootstrap failed: {:?}", err),
+                    ));
+                    *guard = SharedClusterState::Failed(stored);
+                    // Return the original error with full diagnostics.
+                    Err(err)
                 }
             }
         }
