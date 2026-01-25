@@ -31,7 +31,7 @@ Hard invariants that must hold throughout implementation.
 - Must not modify the public Application Programming Interface (API) of
   `WorkerError` (only remove the `#[expect(dead_code)]` attribute from the
   reserved `DataDirRecovery` variant)
-- Must not break existing functionality in `ensure_postgres_setup` when the data
+- Must not break existing functionality in `run_postgres_setup` when the data
   directory is valid or already complete
 - Must not attempt to remove the root directory (safety guard required)
 - Must use capability-based filesystem operations via `ambient_dir_and_path` to
@@ -159,20 +159,19 @@ binary interface:
 
   `pg_worker <operation> <config-path>`
 
-The key function `ensure_postgres_setup` (currently at lines 194-207) checks if
+The key function `run_postgres_setup` (currently at lines 194-207) checks if
 setup is complete and runs `pg.setup()` if not. However, it does not handle the
 case where a previous setup attempt left a partial data directory.
 
 A valid PostgreSQL data directory contains the file `global/pg_filenode.map`,
 which is created during successful initialization. The function
-`ambient_dir_and_path` (from `pg_embedded_setup_unpriv::test_support`) returns
+`ambient_dir_and_path` (from `pg_embedded_setup_unpriv`) returns
 a tuple of `(Dir, Utf8PathBuf)` where `Dir` is a capability-safe handle to a
 parent directory and `Utf8PathBuf` is the relative path from that parent to the
 target.
 
-The existing error enum `WorkerError` has a reserved variant `DataDirRecovery`
-(currently lines 70-75) that is marked with `#[expect(dead_code)]` specifically
-for this future use.
+The existing error enum `WorkerError` has a variant `DataDirRecovery`
+(currently lines 41-42) that is used for data directory recovery errors.
 
 ## Plan of Work
 
@@ -181,7 +180,7 @@ The implementation proceeds in three stages.
 ### Stage A: Add function implementations
 
 Add the two new helper functions and integrate them into
-`ensure_postgres_setup`.
+`run_postgres_setup`.
 
 1. Add imports to the existing import block (around line 40-50):
    - `use cap_std::fs::Dir;`
@@ -218,7 +217,7 @@ Add the two new helper functions and integrate them into
    }
    ```
 
-5. Modify `ensure_postgres_setup` function (lines 194-207) to add recovery
+5. Modify `run_postgres_setup` function (lines 194-207) to add recovery
    logic between the `is_setup_complete` check and the `pg.setup()` call.
    Insert after the early return (after line 201):
 
@@ -343,7 +342,7 @@ Step 3: Add has_valid_data_dir function
   Working directory: repository root
 
   Command: Edit `tests/support/pg_worker.rs` and insert the
-  `has_valid_data_dir` function after line 208 (after `ensure_postgres_setup`
+  `has_valid_data_dir` function after line 208 (after `run_postgres_setup`
   and before the test module).
 
   Expected result: Code compiles, new function is callable.
@@ -357,12 +356,12 @@ Step 4: Add reset_data_dir function
 
   Expected result: Code compiles, new function is callable.
 
-Step 5: Modify ensure_postgres_setup
+Step 5: Modify run_postgres_setup
 
   Working directory: repository root
 
   Command: Edit `tests/support/pg_worker.rs` and insert the recovery logic into
-  `ensure_postgres_setup` after line 201 (after the early return when setup is
+  `run_postgres_setup` after line 201 (after the early return when setup is
   complete).
 
   Expected result: Code compiles, existing tests still pass.

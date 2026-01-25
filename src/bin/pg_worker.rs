@@ -202,7 +202,7 @@ fn recover_invalid_data_dir(data_dir: &Utf8Path) -> Result<(), WorkerError> {
 #[cfg(unix)]
 #[expect(
     clippy::cognitive_complexity,
-    reason = "setup flow is straightforward despite metric"
+    reason = "lint triggers (16/9) despite simple 6-line body; caused by async desugaring"
 )]
 async fn run_postgres_setup(pg: &mut PostgreSQL, data_dir: &Utf8Path) -> Result<(), WorkerError> {
     if is_setup_complete(pg, data_dir) {
