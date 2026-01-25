@@ -148,7 +148,7 @@ fn run_deref_test() -> std::result::Result<(), color_eyre::Report> {
 }
 
 /// Skip helper for tests returning `Result<(), _>`.
-fn should_skip_deref_test(result: &std::result::Result<(), color_eyre::Report>) -> bool {
+fn should_skip_result_unit(result: &std::result::Result<(), color_eyre::Report>) -> bool {
     let Err(err) = result else {
         return false;
     };
@@ -159,6 +159,17 @@ fn should_skip_deref_test(result: &std::result::Result<(), color_eyre::Report>) 
             tracing::warn!("{reason}");
         })
         .is_some()
+}
+
+/// Alias for deref test backwards compatibility.
+fn should_skip_deref_test(result: &std::result::Result<(), color_eyre::Report>) -> bool {
+    should_skip_result_unit(result)
+}
+
+/// Skip helper for async split test.
+#[cfg(feature = "async-api")]
+fn should_skip_async_test(result: &std::result::Result<(), color_eyre::Report>) -> bool {
+    should_skip_result_unit(result)
 }
 
 // ============================================================================
@@ -187,10 +198,12 @@ fn start_async_split_creates_working_handle_and_guard(
             .block_on(run_async_split_lifecycle_test())
     });
 
-    if should_skip_test(&result) {
+    if should_skip_async_test(&result) {
         return Ok(());
     }
-    let data_dir = result?;
+    // Shutdown is verified inside run_async_split_lifecycle_test() to ensure
+    // the spawned cleanup task has time to execute before the runtime drops.
+    result?;
 
     // Verify environment restored
     let env_after = EnvSnapshot::capture();
@@ -199,13 +212,11 @@ fn start_async_split_creates_working_handle_and_guard(
         "environment should be restored after guard drops"
     );
 
-    // Verify cluster stopped
-    wait_for_postmaster_shutdown(&data_dir)?;
     Ok(())
 }
 
 #[cfg(feature = "async-api")]
-async fn run_async_split_lifecycle_test() -> std::result::Result<Utf8PathBuf, color_eyre::Report> {
+async fn run_async_split_lifecycle_test() -> std::result::Result<(), color_eyre::Report> {
     let (handle, guard) = TestCluster::start_async_split()
         .await
         .map_err(color_eyre::Report::from)?;
@@ -222,7 +233,13 @@ async fn run_async_split_lifecycle_test() -> std::result::Result<Utf8PathBuf, co
 
     // Drop guard to trigger shutdown
     drop(guard);
-    Ok(data_dir)
+
+    // Wait for cleanup inside async context so the spawned cleanup task can complete.
+    // The guard's Drop spawns a fire-and-forget task; we must stay in the async context
+    // long enough for it to run before the runtime is dropped.
+    wait_for_postmaster_shutdown_async(&data_dir).await?;
+
+    Ok(())
 }
 
 // ============================================================================
@@ -250,6 +267,32 @@ fn wait_for_postmaster_shutdown(data_dir: &Utf8PathBuf) -> Result<()> {
 
     while pid.exists() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(50));
+    }
+
+    ensure!(
+        !pid.exists(),
+        "postmaster.pid should be removed once cluster stops (waited 10s)"
+    );
+    Ok(())
+}
+
+/// Async version of shutdown wait for use within tokio runtime.
+///
+/// The guard's `Drop` spawns a fire-and-forget cleanup task. We must poll
+/// for completion inside the async context so the spawned task can execute
+/// before the runtime is dropped.
+#[cfg(feature = "async-api")]
+async fn wait_for_postmaster_shutdown_async(
+    data_dir: &Utf8PathBuf,
+) -> std::result::Result<(), color_eyre::Report> {
+    use std::time::Instant;
+    use tokio::time::sleep;
+
+    let pid = data_dir.join("postmaster.pid");
+    let deadline = Instant::now() + Duration::from_secs(10);
+
+    while pid.exists() && Instant::now() < deadline {
+        sleep(Duration::from_millis(50)).await;
     }
 
     ensure!(
