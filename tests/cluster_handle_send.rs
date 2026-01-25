@@ -166,20 +166,23 @@ fn cluster_guard_is_not_send_documented() {
 // Shared cluster handle caching behaviour
 // ============================================================================
 
-// Note: Testing `shared_cluster_handle()` caching directly is problematic because:
+// Note: Testing `shared_cluster_handle()` caching directly in this file is
+// problematic because the function uses a global `OnceLock`. Once initialised,
+// the state cannot be reset, and calling it here would interfere with other
+// tests that use the shared cluster.
 //
-// 1. **Success caching**: The function uses a global `OnceLock`, so once
-//    initialised, the state cannot be reset. Calling `shared_cluster_handle()`
-//    in a test would interfere with other tests that use the shared cluster.
+// **Explicit caching tests exist in separate test binaries** (Cargo compiles
+// each `tests/*.rs` as its own binary, providing natural `OnceLock` isolation):
 //
-// 2. **Failure caching**: Similarly, simulating a failure would poison the
-//    global state, preventing other tests from using the shared cluster.
+// - `tests/shared_cluster_handle_success.rs`: Verifies that successful
+//   initialisation is cached. Calls `shared_cluster_handle()` three times
+//   and asserts pointer equality (`std::ptr::eq`) on returned handles.
 //
-// The caching behaviour is implicitly tested by integration tests that call
-// `shared_cluster_handle()` multiple times and verify they receive the same
-// instance (via pointer equality checks in fixtures).
+// - `tests/shared_cluster_handle_failure.rs`: Verifies that failed
+//   initialisation is cached. Injects failure by setting `TZDIR` to a
+//   non-existent path, then calls `shared_cluster_handle()` three times
+//   and asserts that returned errors have identical `BootstrapErrorKind`
+//   and contain "previously failed" in the message.
 //
-// For explicit caching tests, a separate test binary with isolation would be
-// required. The current test suite validates the core functionality through:
-// - `cluster_handle_works_with_oncelock`: Verifies OnceLock compatibility
-// - Integration tests using `shared_test_cluster_handle` fixture
+// This file focuses on compile-time trait verification and thread-safety
+// patterns that don't require `OnceLock` state manipulation.
