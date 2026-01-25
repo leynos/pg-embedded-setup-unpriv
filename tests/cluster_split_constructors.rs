@@ -55,7 +55,7 @@ fn new_split_creates_working_handle_and_guard(_serial_guard: ScenarioSerialGuard
     let env_before = EnvSnapshot::capture();
     let result = sandbox.with_env(sandbox.env_without_timezone(), run_split_lifecycle_test);
 
-    if should_skip_test(&result) {
+    if should_skip_on_error(&result) {
         return Ok(());
     }
     let data_dir = result?;
@@ -117,7 +117,7 @@ fn test_cluster_derefs_to_cluster_handle(_serial_guard: ScenarioSerialGuard) -> 
 
     let result = sandbox.with_env(sandbox.env_without_timezone(), run_deref_test);
 
-    if should_skip_deref_test(&result) {
+    if should_skip_on_error(&result) {
         return Ok(());
     }
     result?;
@@ -147,8 +147,8 @@ fn run_deref_test() -> std::result::Result<(), color_eyre::Report> {
     Ok(())
 }
 
-/// Skip helper for tests returning `Result<(), _>`.
-fn should_skip_result_unit(result: &std::result::Result<(), color_eyre::Report>) -> bool {
+/// Generic skip helper for tests returning `Result<T, color_eyre::Report>`.
+fn should_skip_on_error<T>(result: &std::result::Result<T, color_eyre::Report>) -> bool {
     let Err(err) = result else {
         return false;
     };
@@ -159,17 +159,6 @@ fn should_skip_result_unit(result: &std::result::Result<(), color_eyre::Report>)
             tracing::warn!("{reason}");
         })
         .is_some()
-}
-
-/// Alias for deref test backwards compatibility.
-fn should_skip_deref_test(result: &std::result::Result<(), color_eyre::Report>) -> bool {
-    should_skip_result_unit(result)
-}
-
-/// Skip helper for async split test.
-#[cfg(feature = "async-api")]
-fn should_skip_async_test(result: &std::result::Result<(), color_eyre::Report>) -> bool {
-    should_skip_result_unit(result)
 }
 
 // ============================================================================
@@ -198,7 +187,7 @@ fn start_async_split_creates_working_handle_and_guard(
             .block_on(run_async_split_lifecycle_test())
     });
 
-    if should_skip_async_test(&result) {
+    if should_skip_on_error(&result) {
         return Ok(());
     }
     // Shutdown is verified inside run_async_split_lifecycle_test() to ensure
@@ -250,19 +239,6 @@ const POSTMASTER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const POSTMASTER_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const POSTMASTER_SHUTDOWN_ERROR: &str =
     "postmaster.pid should be removed once cluster stops (waited 10s)";
-
-fn should_skip_test(result: &std::result::Result<Utf8PathBuf, color_eyre::Report>) -> bool {
-    let Err(err) = result else {
-        return false;
-    };
-    let message = err.to_string();
-    let debug = format!("{err:?}");
-    cluster_skip_message(&message, Some(&debug))
-        .map(|reason| {
-            tracing::warn!("{reason}");
-        })
-        .is_some()
-}
 
 fn wait_for_postmaster_shutdown(data_dir: &Utf8PathBuf) -> Result<()> {
     use std::time::Instant;
