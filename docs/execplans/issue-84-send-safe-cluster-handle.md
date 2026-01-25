@@ -143,7 +143,7 @@ dedicated handle type.
   - Verify the primary use case works in `tests/cluster_handle_send.rs`
 
 - [x] **7.4** Verify existing tests pass unchanged
-  - Backward compatibility validation - all 117 tests pass
+  - Backward compatibility validation — all 117 tests pass
 
 ### Phase 8: Cleanup
 
@@ -153,18 +153,18 @@ dedicated handle type.
   - New `shared_cluster_handle()` is the recommended safe API
 
 - [x] **8.2** Run full quality gates
-  - `make check-fmt && make lint && make test` - all pass
+  - `make check-fmt && make lint && make test` — all pass
 
 ## Progress log
 
 ### 2026-01-23: Implementation complete
 
 **Commits:**
-1. `Add Send-safe ClusterHandle for shared cluster patterns` - Core
+1. `Add Send-safe ClusterHandle for shared cluster patterns` — Core
    handle/guard split
-2. `Add shared_cluster_handle() for Send-safe shared cluster fixture` - New
+2. `Add shared_cluster_handle() for Send-safe shared cluster fixture` — New
    fixture API
-3. `Add Send/Sync trait tests and From impl for ClusterHandle` - Test coverage
+3. `Add Send/Sync trait tests and From impl for ClusterHandle` — Test coverage
 
 **Key implementation notes:**
 
@@ -199,7 +199,7 @@ ______________________________________________________________________
 ### Why separate types instead of making TestCluster Send?
 
 The `ScopedEnv` component uses thread-local storage (`THREAD_STATE`) to track
-environment variable changes. This is fundamental to its design - it ensures
+environment variable changes. This is fundamental to its design — it ensures
 that environment restoration happens on the same thread that made the changes.
 Making this `Send` would require either:
 
@@ -213,7 +213,7 @@ enabling the primary use case (shared cluster access) without unsafe code.
 ### Why leak the cluster in shared_cluster()?
 
 The shared cluster lives for the entire process lifetime. Leaking is
-intentional - this approach avoids the complexity of tracking when all
+intentional — this approach avoids the complexity of tracking when all
 references are done and the overhead of reference counting. The `ClusterGuard`
 is forgotten after initialization, which means environment variables are
 restored, but the PostgreSQL process continues running (it's an external

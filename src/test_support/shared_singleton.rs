@@ -151,8 +151,11 @@ enum SharedClusterState {
 ///    independent connections).
 struct SharedClusterPtr(*const TestCluster);
 
-// SAFETY: The pointer points to a leaked Box that lives forever.
-// Access is read-only; the public API is thread-safe.
+// SAFETY: SharedClusterPtr upholds the following invariants:
+// 1. The pointer targets a `Box::leak`ed allocation that outlives all references.
+// 2. No mutable access occurs through this pointer; all usage is via `&TestCluster`.
+// 3. `TestCluster` methods internally handle synchronisation (each database
+//    operation creates an independent connection).
 unsafe impl Send for SharedClusterPtr {}
 unsafe impl Sync for SharedClusterPtr {}
 
