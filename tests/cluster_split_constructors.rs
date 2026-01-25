@@ -246,6 +246,11 @@ async fn run_async_split_lifecycle_test() -> std::result::Result<(), color_eyre:
 // Test helpers
 // ============================================================================
 
+const POSTMASTER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const POSTMASTER_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const POSTMASTER_SHUTDOWN_ERROR: &str =
+    "postmaster.pid should be removed once cluster stops (waited 10s)";
+
 fn should_skip_test(result: &std::result::Result<Utf8PathBuf, color_eyre::Report>) -> bool {
     let Err(err) = result else {
         return false;
@@ -263,16 +268,13 @@ fn wait_for_postmaster_shutdown(data_dir: &Utf8PathBuf) -> Result<()> {
     use std::time::Instant;
 
     let pid = data_dir.join("postmaster.pid");
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + POSTMASTER_SHUTDOWN_TIMEOUT;
 
     while pid.exists() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(POSTMASTER_POLL_INTERVAL);
     }
 
-    ensure!(
-        !pid.exists(),
-        "postmaster.pid should be removed once cluster stops (waited 10s)"
-    );
+    ensure!(!pid.exists(), POSTMASTER_SHUTDOWN_ERROR);
     Ok(())
 }
 
@@ -289,15 +291,12 @@ async fn wait_for_postmaster_shutdown_async(
     use tokio::time::sleep;
 
     let pid = data_dir.join("postmaster.pid");
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + POSTMASTER_SHUTDOWN_TIMEOUT;
 
     while pid.exists() && Instant::now() < deadline {
-        sleep(Duration::from_millis(50)).await;
+        sleep(POSTMASTER_POLL_INTERVAL).await;
     }
 
-    ensure!(
-        !pid.exists(),
-        "postmaster.pid should be removed once cluster stops (waited 10s)"
-    );
+    ensure!(!pid.exists(), POSTMASTER_SHUTDOWN_ERROR);
     Ok(())
 }
