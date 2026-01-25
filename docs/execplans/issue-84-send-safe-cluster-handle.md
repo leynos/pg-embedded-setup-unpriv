@@ -2,10 +2,10 @@
 
 ## Big picture
 
-Make `TestCluster` usable in `Send`-bound contexts (e.g., `OnceLock`,
-`rstest` timeouts) by separating concerns: environment management remains
-`!Send` (tied to the creating thread), whilst cluster access becomes `Send`
-through a dedicated handle type.
+Make `TestCluster` usable in `Send`-bound contexts (e.g., `OnceLock`, `rstest`
+timeouts) by separating concerns: environment management remains `!Send` (tied
+to the creating thread), whilst cluster access becomes `Send` through a
+dedicated handle type.
 
 ## Constraints
 
@@ -19,8 +19,6 @@ through a dedicated handle type.
   uses `unsafe impl Send`; the new API should eliminate the need for this.
 
 ## Architecture
-
-*Figure 1: Handle/guard split architecture*
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -47,6 +45,8 @@ through a dedicated handle type.
          │  rstest fixtures │           │   + restore env     │
          └──────────────────┘           └─────────────────────┘
 ```
+
+*Figure: Handle/guard split and thread-affinity boundaries.*
 
 ## Implementation tasks
 
@@ -160,8 +160,10 @@ through a dedicated handle type.
 ### 2026-01-23: Implementation complete
 
 **Commits:**
-1. `Add Send-safe ClusterHandle for shared cluster patterns` - Core handle/guard split
-2. `Add shared_cluster_handle() for Send-safe shared cluster fixture` - New fixture API
+1. `Add Send-safe ClusterHandle for shared cluster patterns` - Core
+   handle/guard split
+2. `Add shared_cluster_handle() for Send-safe shared cluster fixture` - New
+   fixture API
 3. `Add Send/Sync trait tests and From impl for ClusterHandle` - Test coverage
 
 **Key implementation notes:**
@@ -186,8 +188,9 @@ through a dedicated handle type.
 
 5. **Shared cluster pattern**: The `shared_cluster_handle()` function leaks the
    `ClusterHandle` via `Box::leak()` to obtain a `&'static` reference suitable
-   for `OnceLock` patterns. The `ClusterGuard` is forgotten with `std::mem::forget()`
-   so the PostgreSQL process continues running for the process lifetime.
+   for `OnceLock` patterns. The `ClusterGuard` is forgotten with
+   `std::mem::forget()` so the PostgreSQL process continues running for the
+   process lifetime.
 
 ______________________________________________________________________
 
