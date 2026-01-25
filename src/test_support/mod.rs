@@ -15,6 +15,7 @@ mod hook;
 #[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod logging;
 mod scoped_env;
+mod shared_singleton;
 mod worker_env;
 
 #[cfg(doc)]

@@ -75,10 +75,11 @@ fn dummy_handle() -> ClusterHandle {
 /// per-test bootstrap overhead.
 ///
 /// Note: This test intentionally creates its own handle inside the closure
-/// rather than using the `dummy_handle` fixture. Using a fixture would pass
-/// a stack-allocated handle that could be invalidated if this test runs
-/// multiple times (rstest parameterization) or in parallel, leading to
-/// undefined behaviour when the `OnceLock` outlives the fixture's scope.
+/// rather than using the `dummy_handle` fixture. Using a fixture would store
+/// that handle in the `OnceLock` on first run; subsequent test runs (rstest
+/// parameterisation or parallel execution) would then test against a stale
+/// cached value instead of the fixture-provided one, producing misleading
+/// test results.
 #[test]
 fn cluster_handle_works_with_oncelock() {
     static SHARED: OnceLock<ClusterHandle> = OnceLock::new();

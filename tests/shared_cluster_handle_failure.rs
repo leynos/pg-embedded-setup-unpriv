@@ -8,41 +8,21 @@
 //! that call `shared_cluster_handle()` would interfere with the failure caching
 //! verification.
 #![cfg(unix)]
-
-use std::ffi::OsStr;
+#![allow(
+    dead_code,
+    reason = "Support modules provide more functionality than needed here"
+)]
 
 use pg_embedded_setup_unpriv::test_support::shared_cluster_handle;
 use pg_embedded_setup_unpriv::{BootstrapError, BootstrapErrorKind, ClusterHandle};
 use tracing::warn;
 
-/// Sets an environment variable using the established project pattern.
-///
-/// # Safety
-///
-/// Callers must ensure no other threads are reading environment variables
-/// concurrently. This test runs in isolation (separate test binary).
-unsafe fn set_env_var<K, V>(key: K, value: V)
-where
-    K: AsRef<OsStr>,
-    V: AsRef<OsStr>,
-{
-    // SAFETY: Caller guarantees thread isolation.
-    unsafe { std::env::set_var(key, value) };
-}
+#[path = "support/env.rs"]
+mod env;
+#[path = "support/env_isolation.rs"]
+mod env_isolation;
 
-/// Removes an environment variable using the established project pattern.
-///
-/// # Safety
-///
-/// Callers must ensure no other threads are reading environment variables
-/// concurrently. This test runs in isolation (separate test binary).
-unsafe fn remove_env_var<K>(key: K)
-where
-    K: AsRef<OsStr>,
-{
-    // SAFETY: Caller guarantees thread isolation.
-    unsafe { std::env::remove_var(key) };
-}
+use env_isolation::{remove_env_var, set_env_var};
 
 /// Sets up the environment to force bootstrap failure.
 ///
@@ -76,8 +56,10 @@ fn extract_error(
         return Some(e);
     }
     warn!(
-        "SKIP: shared_cluster_handle succeeded despite invalid TZDIR \
-         ({}); system may have fallback timezone handling",
+        concat!(
+            "SKIP: shared_cluster_handle succeeded despite invalid TZDIR ",
+            "({}); system may have fallback timezone handling"
+        ),
         context
     );
     None
