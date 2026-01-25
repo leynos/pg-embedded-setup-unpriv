@@ -43,12 +43,8 @@ use serial::{ScenarioSerialGuard, serial_guard};
 /// - Guard manages cluster lifecycle
 /// - Dropping guard stops the cluster
 /// - Environment is restored after guard drops
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "rstest binds the guard even though the test ignores it"
-)]
 #[rstest]
-fn new_split_creates_working_handle_and_guard(_serial_guard: ScenarioSerialGuard) -> Result<()> {
+fn new_split_creates_working_handle_and_guard(serial_guard: ScenarioSerialGuard) -> Result<()> {
     let sandbox = TestSandbox::new("split-constructor").context("create test sandbox")?;
     sandbox.reset()?;
 
@@ -69,6 +65,7 @@ fn new_split_creates_working_handle_and_guard(_serial_guard: ScenarioSerialGuard
 
     // Verify cluster stopped
     wait_for_postmaster_shutdown(&data_dir)?;
+    drop(serial_guard);
     Ok(())
 }
 
@@ -106,12 +103,8 @@ fn run_split_lifecycle_test() -> std::result::Result<Utf8PathBuf, color_eyre::Re
 ///
 /// Verifies that methods available on `ClusterHandle` can be called
 /// directly on `TestCluster` through the `Deref` implementation.
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "rstest binds the guard even though the test ignores it"
-)]
 #[rstest]
-fn test_cluster_derefs_to_cluster_handle(_serial_guard: ScenarioSerialGuard) -> Result<()> {
+fn test_cluster_derefs_to_cluster_handle(serial_guard: ScenarioSerialGuard) -> Result<()> {
     let sandbox = TestSandbox::new("deref-test").context("create test sandbox")?;
     sandbox.reset()?;
 
@@ -121,6 +114,7 @@ fn test_cluster_derefs_to_cluster_handle(_serial_guard: ScenarioSerialGuard) -> 
         return Ok(());
     }
     result?;
+    drop(serial_guard);
     Ok(())
 }
 
@@ -167,13 +161,9 @@ fn should_skip_on_error<T>(result: &std::result::Result<T, color_eyre::Report>) 
 
 /// Tests that `start_async_split()` creates a working handle/guard pair.
 #[cfg(feature = "async-api")]
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "rstest binds the guard even though the test ignores it"
-)]
 #[rstest]
 fn start_async_split_creates_working_handle_and_guard(
-    _serial_guard: ScenarioSerialGuard,
+    serial_guard: ScenarioSerialGuard,
 ) -> Result<()> {
     let sandbox = TestSandbox::new("async-split").context("create test sandbox")?;
     sandbox.reset()?;
@@ -201,6 +191,7 @@ fn start_async_split_creates_working_handle_and_guard(
         "environment should be restored after guard drops"
     );
 
+    drop(serial_guard);
     Ok(())
 }
 
