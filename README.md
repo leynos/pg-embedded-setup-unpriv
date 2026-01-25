@@ -32,7 +32,7 @@ from `postgresql_embedded::Settings::default()` are used.
 
 You may also provide these values through a configuration file named `pg.toml`,
 `pg.yaml`, or `pg.json5` (depending on enabled features) located in any path
-recognised by `ortho_config`, or through CLI flags if you wrap the binary
+recognized by `ortho_config`, or through CLI flags if you wrap the binary
 inside your own launcher.
 
 ## Root usage and worker binary
