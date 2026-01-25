@@ -49,6 +49,8 @@
 mod cache_integration;
 mod connection;
 mod delegation;
+mod guard;
+mod handle;
 mod installation;
 mod lifecycle;
 mod runtime;
@@ -60,6 +62,8 @@ mod worker_invoker;
 mod worker_operation;
 
 pub use self::connection::{ConnectionMetadata, TestClusterConnection};
+pub use self::guard::ClusterGuard;
+pub use self::handle::ClusterHandle;
 pub use self::lifecycle::DatabaseName;
 pub use self::temporary_database::TemporaryDatabase;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
@@ -76,23 +80,44 @@ use crate::bootstrap_for_tests;
 use crate::env::ScopedEnv;
 use crate::error::BootstrapResult;
 use crate::observability::LOG_TARGET;
-use crate::{TestBootstrapEnvironment, TestBootstrapSettings};
-use postgresql_embedded::{PostgreSQL, Settings};
-use tracing::{info, info_span};
+use std::ops::Deref;
+use tracing::info_span;
 
 /// Embedded `PostgreSQL` instance whose lifecycle follows Rust's drop semantics.
+///
+/// `TestCluster` combines a [`ClusterHandle`] (for cluster access) with a
+/// [`ClusterGuard`] (for lifecycle management). For most use cases, this
+/// combined type is the simplest option.
+///
+/// # Send-Safe Patterns
+///
+/// `TestCluster` is `!Send` because it contains environment guards that must
+/// be dropped on the creating thread. For patterns requiring `Send` (such as
+/// `OnceLock` or rstest timeouts), use [`new_split()`](Self::new_split) to
+/// obtain a `Send`-safe [`ClusterHandle`]:
+///
+/// ```no_run
+/// use std::sync::OnceLock;
+/// use pg_embedded_setup_unpriv::{ClusterHandle, TestCluster};
+///
+/// static SHARED: OnceLock<ClusterHandle> = OnceLock::new();
+///
+/// fn shared_cluster() -> &'static ClusterHandle {
+///     SHARED.get_or_init(|| {
+///         let (handle, guard) = TestCluster::new_split()
+///             .expect("cluster bootstrap failed");
+///         // Forget the guard to prevent shutdown on drop
+///         std::mem::forget(guard);
+///         handle
+///     })
+/// }
+/// ```
 #[derive(Debug)]
 pub struct TestCluster {
-    /// Runtime mode: either owns a runtime (sync) or runs on caller's runtime (async).
-    runtime: ClusterRuntime,
-    postgres: Option<PostgreSQL>,
-    bootstrap: TestBootstrapSettings,
-    is_managed_via_worker: bool,
-    env_vars: Vec<(String, Option<String>)>,
-    worker_guard: Option<ScopedEnv>,
-    _env_guard: ScopedEnv,
-    // Keeps the cluster span alive for the lifetime of the guard.
-    _cluster_span: tracing::Span,
+    /// Send-safe handle providing cluster access.
+    pub(crate) handle: ClusterHandle,
+    /// Lifecycle guard managing shutdown and environment restoration.
+    pub(crate) guard: ClusterGuard,
 }
 
 impl TestCluster {
@@ -105,6 +130,54 @@ impl TestCluster {
     /// Returns an error if the bootstrap configuration cannot be prepared or if starting the
     /// embedded cluster fails.
     pub fn new() -> BootstrapResult<Self> {
+        let (handle, guard) = Self::new_split()?;
+        Ok(Self { handle, guard })
+    }
+
+    /// Boots a `PostgreSQL` instance and returns a separate handle and guard.
+    ///
+    /// This constructor is useful for patterns requiring `Send`, such as shared
+    /// cluster fixtures with [`OnceLock`](std::sync::OnceLock) or rstest fixtures
+    /// with timeouts.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of:
+    /// - [`ClusterHandle`]: `Send + Sync` handle for accessing the cluster
+    /// - [`ClusterGuard`]: `!Send` guard managing shutdown and environment
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bootstrap configuration cannot be prepared or if
+    /// starting the embedded cluster fails.
+    ///
+    /// # Examples
+    ///
+    /// ## Shared Cluster with `OnceLock`
+    ///
+    /// For shared clusters that run for the entire process lifetime, forget
+    /// the guard to prevent shutdown:
+    ///
+    /// ```no_run
+    /// use std::sync::OnceLock;
+    /// use pg_embedded_setup_unpriv::{ClusterHandle, TestCluster};
+    ///
+    /// static SHARED: OnceLock<ClusterHandle> = OnceLock::new();
+    ///
+    /// fn shared_cluster() -> &'static ClusterHandle {
+    ///     SHARED.get_or_init(|| {
+    ///         let (handle, guard) = TestCluster::new_split()
+    ///             .expect("cluster bootstrap failed");
+    ///         // Forget the guard to prevent shutdown on drop
+    ///         std::mem::forget(guard);
+    ///         handle
+    ///     })
+    /// }
+    /// ```
+    ///
+    /// **Warning**: Dropping the guard shuts down the cluster. Do not use the
+    /// handle after the guard has been dropped unless the guard was forgotten.
+    pub fn new_split() -> BootstrapResult<(ClusterHandle, ClusterGuard)> {
         let span = info_span!(target: LOG_TARGET, "test_cluster");
         // Resolve cache directory BEFORE applying test environment.
         // Otherwise, the test sandbox's XDG_CACHE_HOME would be used.
@@ -119,7 +192,8 @@ impl TestCluster {
             (runtime, env_vars, env_guard, outcome)
         };
 
-        Ok(Self {
+        let handle = ClusterHandle::new(outcome.bootstrap.clone());
+        let guard = ClusterGuard {
             runtime: ClusterRuntime::Sync(runtime),
             postgres: outcome.postgres,
             bootstrap: outcome.bootstrap,
@@ -128,7 +202,9 @@ impl TestCluster {
             worker_guard: None,
             _env_guard: env_guard,
             _cluster_span: span,
-        })
+        };
+
+        Ok((handle, guard))
     }
 
     /// Boots a `PostgreSQL` instance asynchronously for use in `#[tokio::test]` contexts.
@@ -162,6 +238,26 @@ impl TestCluster {
     /// ```
     #[cfg(feature = "async-api")]
     pub async fn start_async() -> BootstrapResult<Self> {
+        let (handle, guard) = Self::start_async_split().await?;
+        Ok(Self { handle, guard })
+    }
+
+    /// Boots a `PostgreSQL` instance asynchronously and returns a separate handle and guard.
+    ///
+    /// This is the async equivalent of [`new_split()`](Self::new_split).
+    ///
+    /// # Returns
+    ///
+    /// A tuple of:
+    /// - [`ClusterHandle`]: `Send + Sync` handle for accessing the cluster
+    /// - [`ClusterGuard`]: `!Send` guard managing shutdown and environment
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bootstrap configuration cannot be prepared or if
+    /// starting the embedded cluster fails.
+    #[cfg(feature = "async-api")]
+    pub async fn start_async_split() -> BootstrapResult<(ClusterHandle, ClusterGuard)> {
         use tracing::Instrument;
 
         let span = info_span!(target: LOG_TARGET, "test_cluster", async_mode = true);
@@ -184,7 +280,8 @@ impl TestCluster {
         .instrument(span.clone())
         .await?;
 
-        Ok(Self {
+        let handle = ClusterHandle::new(outcome.bootstrap.clone());
+        let guard = ClusterGuard {
             runtime: ClusterRuntime::Async,
             postgres: outcome.postgres,
             bootstrap: outcome.bootstrap,
@@ -193,7 +290,9 @@ impl TestCluster {
             worker_guard: None,
             _env_guard: env_guard,
             _cluster_span: span,
-        })
+        };
+
+        Ok((handle, guard))
     }
 
     /// Extends the cluster lifetime to cover additional scoped environment guards.
@@ -202,9 +301,11 @@ impl TestCluster {
     /// duration of the cluster lifetime.
     #[doc(hidden)]
     #[must_use]
-    pub fn with_worker_guard(mut self, worker_guard: Option<ScopedEnv>) -> Self {
-        self.worker_guard = worker_guard;
-        self
+    pub fn with_worker_guard(self, worker_guard: Option<ScopedEnv>) -> Self {
+        Self {
+            handle: self.handle,
+            guard: self.guard.with_worker_guard(worker_guard),
+        }
     }
 
     /// Explicitly shuts down an async cluster.
@@ -236,106 +337,43 @@ impl TestCluster {
     /// ```
     #[cfg(feature = "async-api")]
     pub async fn stop_async(mut self) -> BootstrapResult<()> {
-        let context = shutdown::stop_context(&self.bootstrap.settings);
-        shutdown::log_async_stop(&context, self.is_managed_via_worker);
+        let context = shutdown::stop_context(self.handle.settings());
+        shutdown::log_async_stop(&context, self.guard.is_managed_via_worker);
 
-        if self.is_managed_via_worker {
-            shutdown::stop_worker_managed_async(&self.bootstrap, &self.env_vars, &context).await
-        } else if let Some(postgres) = self.postgres.take() {
-            shutdown::stop_in_process_async(postgres, self.bootstrap.shutdown_timeout, &context)
-                .await
+        if self.guard.is_managed_via_worker {
+            shutdown::stop_worker_managed_async(
+                &self.guard.bootstrap,
+                &self.guard.env_vars,
+                &context,
+            )
+            .await
+        } else if let Some(postgres) = self.guard.postgres.take() {
+            shutdown::stop_in_process_async(
+                postgres,
+                self.guard.bootstrap.shutdown_timeout,
+                &context,
+            )
+            .await
         } else {
             Ok(())
         }
     }
+}
 
-    /// Returns the prepared `PostgreSQL` settings for the running cluster.
-    pub const fn settings(&self) -> &Settings {
-        &self.bootstrap.settings
-    }
+/// Provides transparent access to [`ClusterHandle`] methods.
+///
+/// This allows `TestCluster` to be used interchangeably with `ClusterHandle`
+/// for all read-only operations like `settings()`, `connection()`, etc.
+impl Deref for TestCluster {
+    type Target = ClusterHandle;
 
-    /// Returns the environment required for clients to interact with the cluster.
-    pub const fn environment(&self) -> &TestBootstrapEnvironment {
-        &self.bootstrap.environment
-    }
-
-    /// Returns the bootstrap metadata captured when the cluster was started.
-    pub const fn bootstrap(&self) -> &TestBootstrapSettings {
-        &self.bootstrap
-    }
-
-    /// Returns helper methods for constructing connection artefacts.
-    ///
-    /// # Examples
-    /// ```no_run
-    /// use pg_embedded_setup_unpriv::TestCluster;
-    ///
-    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
-    /// let cluster = TestCluster::new()?;
-    /// let metadata = cluster.connection().metadata();
-    /// println!(
-    ///     "postgresql://{}:***@{}:{}/postgres",
-    ///     metadata.superuser(),
-    ///     metadata.host(),
-    ///     metadata.port(),
-    /// );
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    pub fn connection(&self) -> TestClusterConnection {
-        TestClusterConnection::new(&self.bootstrap)
+    fn deref(&self) -> &Self::Target {
+        &self.handle
     }
 }
 
-impl Drop for TestCluster {
-    fn drop(&mut self) {
-        let context = shutdown::stop_context(&self.bootstrap.settings);
-        let is_async = self.runtime.is_async();
-        info!(
-            target: LOG_TARGET,
-            context = %context,
-            worker_managed = self.is_managed_via_worker,
-            async_mode = is_async,
-            "stopping embedded postgres cluster"
-        );
-
-        if is_async {
-            // Async clusters should use stop_async() explicitly; attempt best-effort cleanup.
-            shutdown::drop_async_cluster(shutdown::DropContext {
-                is_managed_via_worker: self.is_managed_via_worker,
-                postgres: &mut self.postgres,
-                bootstrap: &self.bootstrap,
-                env_vars: &self.env_vars,
-                context: &context,
-            });
-        } else {
-            self.drop_sync_cluster(&context);
-        }
-        // Environment guards drop after this block, restoring the process state.
-    }
-}
-
-impl TestCluster {
-    /// Synchronous drop path: stops the cluster using the owned runtime.
-    fn drop_sync_cluster(&mut self, context: &str) {
-        let ClusterRuntime::Sync(ref runtime) = self.runtime else {
-            // Should never happen: drop_sync_cluster is only called for sync mode.
-            return;
-        };
-
-        shutdown::drop_sync_cluster(
-            runtime,
-            shutdown::DropContext {
-                is_managed_via_worker: self.is_managed_via_worker,
-                postgres: &mut self.postgres,
-                bootstrap: &self.bootstrap,
-                env_vars: &self.env_vars,
-                context,
-            },
-        );
-    }
-}
+// Note: TestCluster does NOT implement Drop because the ClusterGuard handles shutdown.
+// When TestCluster drops, its _guard field drops, which triggers ClusterGuard::Drop.
 
 #[cfg(test)]
 mod mod_tests;

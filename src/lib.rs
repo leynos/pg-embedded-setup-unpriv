@@ -191,7 +191,8 @@ pub use cluster::WorkerInvoker;
 #[doc(hidden)]
 pub use cluster::WorkerOperation;
 pub use cluster::{
-    ConnectionMetadata, DatabaseName, TemporaryDatabase, TestCluster, TestClusterConnection,
+    ClusterGuard, ClusterHandle, ConnectionMetadata, DatabaseName, TemporaryDatabase, TestCluster,
+    TestClusterConnection,
 };
 #[doc(hidden)]
 pub use error::BootstrapResult;
