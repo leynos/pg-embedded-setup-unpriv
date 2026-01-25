@@ -61,12 +61,18 @@ enum Operation {
 #[cfg(unix)]
 impl Operation {
     fn parse(arg: &OsStr) -> Result<Self, WorkerError> {
-        match arg.to_string_lossy().as_ref() {
+        let arg_str = arg.to_string_lossy();
+        if arg_str.is_empty() {
+            return Err(WorkerError::InvalidArgs(
+                "operation cannot be empty; valid operations are setup, start, stop".into(),
+            ));
+        }
+        match arg_str.as_ref() {
             "setup" => Ok(Self::Setup),
             "start" => Ok(Self::Start),
             "stop" => Ok(Self::Stop),
             other => Err(WorkerError::InvalidArgs(format!(
-                "unknown operation '{other}'; expected setup, start, or stop"
+                "unknown operation '{other}'; valid operations are setup, start, stop"
             ))),
         }
     }
@@ -404,5 +410,22 @@ mod tests {
         fs::create_dir_all(&p)?;
         recover_invalid_data_dir(&p)?;
         ensure(p.exists(), "empty dir should remain")
+    }
+
+    #[rstest]
+    #[case::empty(
+        "",
+        "operation cannot be empty; valid operations are setup, start, stop"
+    )]
+    #[case::unknown(
+        "invalid",
+        "unknown operation 'invalid'; valid operations are setup, start, stop"
+    )]
+    fn operation_parse_rejects_invalid_input(#[case] input: &str, #[case] expected_msg: &str) -> R {
+        let os_input = OsString::from(input);
+        match Operation::parse(&os_input) {
+            Err(WorkerError::InvalidArgs(msg)) => ensure(msg == expected_msg, "unexpected message"),
+            other => Err(format!("expected InvalidArgs, got: {other:?}").into()),
+        }
     }
 }

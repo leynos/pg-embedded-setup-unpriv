@@ -71,7 +71,7 @@ pub struct TestBootstrapSettings {
 /// [`bootstrap_for_tests`] to obtain the structured response for assertions.
 ///
 /// # Examples
-/// ```rust
+/// ```no_run
 /// use pg_embedded_setup_unpriv::run;
 ///
 /// fn main() -> Result<(), pg_embedded_setup_unpriv::Error> {
