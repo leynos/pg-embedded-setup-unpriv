@@ -23,6 +23,14 @@ use {
 #[cfg(unix)]
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// Marker file that indicates a valid `PostgreSQL` data directory.
+///
+/// This path is created by `initdb` during successful initialization and is used
+/// to distinguish complete setups from partial or interrupted ones. The stub at
+/// `tests/support/fixtures/pg_ctl_stub.sh` must create this file to match.
+#[cfg(unix)]
+const PG_FILENODE_MAP_MARKER: &str = "global/pg_filenode.map";
+
 #[cfg(unix)]
 #[derive(Debug, Error)]
 enum WorkerError {
@@ -263,7 +271,7 @@ fn stop_missing_pid_is_ok(err: &postgresql_embedded::Error) -> bool {
 #[cfg(unix)]
 fn has_valid_data_dir(data_dir: &Utf8Path) -> Result<bool, BoxError> {
     let (dir, rel) = ambient_dir_and_path(data_dir)?;
-    Ok(dir.exists(rel.join("global/pg_filenode.map").as_std_path()))
+    Ok(dir.exists(rel.join(PG_FILENODE_MAP_MARKER).as_std_path()))
 }
 
 #[cfg(unix)]
@@ -339,7 +347,7 @@ mod tests {
     fn valid_data_dir_detected(temp_data_dir: TempDir2) -> R {
         let (_, p) = temp_data_dir?;
         fs::create_dir_all(p.join("global"))?;
-        fs::write(p.join("global/pg_filenode.map"), "")?;
+        fs::write(p.join(PG_FILENODE_MAP_MARKER), "")?;
         ensure(has_valid_data_dir(&p)?, "should be valid")
     }
 

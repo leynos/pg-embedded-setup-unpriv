@@ -39,6 +39,7 @@ case "$command" in
     mkdir -p "$data_dir"
     mkdir -p "$data_dir/global"
     echo "16" > "$data_dir/PG_VERSION"
+    # Marker file must match PG_FILENODE_MAP_MARKER in src/bin/pg_worker.rs
     touch "$data_dir/global/pg_filenode.map"
     echo "pg_ctl_stub initdb: created PG_VERSION in $data_dir" >&2
     ;;
