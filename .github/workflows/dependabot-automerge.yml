@@ -22,6 +22,6 @@ jobs:
       checks: read
       statuses: read
     if: ${{ github.event_name == 'workflow_dispatch' || github.actor == 'dependabot[bot]' }}
-    uses: leynos/shared-actions/.github/workflows/dependabot-automerge.yml@235d2d07b9a321364a742310873f6732d7228e72
+    uses: leynos/shared-actions/.github/workflows/dependabot-automerge.yml@c749ab3a96026e14051a2198bf75f94650581b75
     with:
       pull-request-number: ${{ inputs.pull-request-number || github.event.pull_request.number }}
