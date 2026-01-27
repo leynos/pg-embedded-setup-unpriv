@@ -84,7 +84,9 @@ pub fn shared_test_cluster() -> &'static TestCluster {
 ///
 /// #[rstest]
 /// fn uses_shared_handle(shared_test_cluster_handle: &'static ClusterHandle) {
-///     assert!(shared_test_cluster_handle.database_exists("postgres").unwrap());
+///     assert!(shared_test_cluster_handle
+///         .database_exists("postgres")
+///         .expect("expected 'postgres' database to exist in shared_test_cluster_handle"));
 /// }
 /// ```
 #[must_use]
