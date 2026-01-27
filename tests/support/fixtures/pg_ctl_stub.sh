@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+# Marker file path for valid PostgreSQL data directory.
+# Must match PG_FILENODE_MAP_MARKER in src/bin/pg_worker.rs.
+PG_FILENODE_MAP_MARKER="${PG_FILENODE_MAP_MARKER:-global/pg_filenode.map}"
+
 command=""
 data_dir=""
 expect_data=0
@@ -37,10 +41,9 @@ fi
 case "$command" in
   initdb)
     mkdir -p "$data_dir"
-    mkdir -p "$data_dir/global"
+    mkdir -p "$data_dir/$(dirname "$PG_FILENODE_MAP_MARKER")"
     echo "16" > "$data_dir/PG_VERSION"
-    # Marker file must match PG_FILENODE_MAP_MARKER in src/bin/pg_worker.rs
-    touch "$data_dir/global/pg_filenode.map"
+    touch "$data_dir/$PG_FILENODE_MAP_MARKER"
     echo "pg_ctl_stub initdb: created PG_VERSION in $data_dir" >&2
     ;;
   start)

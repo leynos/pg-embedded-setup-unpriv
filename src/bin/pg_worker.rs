@@ -201,7 +201,9 @@ fn recover_invalid_data_dir(data_dir: &Utf8Path) -> Result<(), WorkerError> {
     let is_valid = has_valid_data_dir(data_dir)
         .map_err(|e| WorkerError::DataDirRecovery(format!("validation: {e}")))?;
     log::valid(data_dir, is_valid);
-    if !is_valid && !is_dir_empty(data_dir).unwrap_or(false) {
+    let is_empty = is_dir_empty(data_dir)
+        .map_err(|e| WorkerError::DataDirRecovery(format!("empty check: {e}")))?;
+    if !is_valid && !is_empty {
         perform_data_dir_reset(data_dir)?;
     }
     Ok(())
@@ -295,6 +297,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 #[cfg(all(test, unix))]
 mod tests {
+    //! Unit tests for `pg_worker` data directory recovery and argument parsing.
+
     use super::*;
     use rstest::{fixture, rstest};
     use std::{
