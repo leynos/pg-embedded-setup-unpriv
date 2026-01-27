@@ -5,6 +5,7 @@
 //! applied to items with doc comments. This keeps Whitaker's
 //! `function_attrs_follow_docs` lint happy while preserving documentation.
 
+use crate::ClusterHandle;
 use crate::TestCluster;
 use crate::test_support::fixtures as runtime_fixtures;
 
@@ -59,4 +60,36 @@ pub fn test_cluster() -> TestCluster {
 #[must_use]
 pub fn shared_test_cluster() -> &'static TestCluster {
     runtime_fixtures::shared_test_cluster()
+}
+
+/// `rstest` fixture that yields a reference to the shared [`ClusterHandle`].
+///
+/// This fixture provides access to a process-global handle that is
+/// initialised once and reused across all tests in the same binary. The handle
+/// is `Send + Sync`, making it suitable for rstest timeouts and other
+/// thread-safe contexts.
+///
+/// # Panics
+///
+/// Panics with a `SKIP-TEST-CLUSTER:`-prefixed message if the shared cluster
+/// cannot be started. This allows test harnesses to detect and skip tests when
+/// `PostgreSQL` is unavailable.
+///
+/// # Examples
+///
+/// ```no_run
+/// use pg_embedded_setup_unpriv::ClusterHandle;
+/// use pg_embedded_setup_unpriv::test_support::shared_test_cluster_handle;
+/// use rstest::rstest;
+///
+/// #[rstest]
+/// fn uses_shared_handle(shared_test_cluster_handle: &'static ClusterHandle) {
+///     assert!(shared_test_cluster_handle
+///         .database_exists("postgres")
+///         .expect("expected 'postgres' database to exist in shared_test_cluster_handle"));
+/// }
+/// ```
+#[must_use]
+pub fn shared_test_cluster_handle() -> &'static ClusterHandle {
+    runtime_fixtures::shared_test_cluster_handle()
 }
