@@ -1,7 +1,7 @@
 # Configure postgres-embedded worker counts at cluster setup
 
 This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
-`Risks`, `Progress`, `Surprizes & Discoveries`, `Decision Log`, and
+`Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
 `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 Status: COMPLETE
