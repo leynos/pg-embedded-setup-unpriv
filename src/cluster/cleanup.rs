@@ -8,6 +8,23 @@ use std::{fmt::Display, io::ErrorKind, path::Path};
 use super::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use super::worker_operation;
 
+#[derive(Debug, Clone, Copy)]
+enum DirectoryLabel {
+    Data,
+    Installation,
+    InstallationRoot,
+}
+
+impl DirectoryLabel {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Data => "data",
+            Self::Installation => "installation",
+            Self::InstallationRoot => "installation-root",
+        }
+    }
+}
+
 pub(super) fn cleanup_worker_managed_with_runtime(
     runtime: &tokio::runtime::Runtime,
     bootstrap: &TestBootstrapSettings,
@@ -49,16 +66,20 @@ fn log_cleanup_start(cleanup_mode: CleanupMode, context: &str) {
 
 fn cleanup_data_dir(cleanup_mode: CleanupMode, settings: &Settings, context: &str) {
     if should_remove_data(cleanup_mode) {
-        remove_dir_all_if_exists(&settings.data_dir, "data", context);
+        remove_dir_all_if_exists(&settings.data_dir, DirectoryLabel::Data, context);
     }
 }
 
 fn cleanup_install_dir(cleanup_mode: CleanupMode, settings: &Settings, context: &str) {
     if should_remove_install(cleanup_mode) {
-        remove_dir_all_if_exists(&settings.installation_dir, "installation", context);
+        remove_dir_all_if_exists(
+            &settings.installation_dir,
+            DirectoryLabel::Installation,
+            context,
+        );
         if let Some(parent) = settings.password_file.parent() {
             if parent != settings.installation_dir.as_path() {
-                remove_dir_all_if_exists(parent, "installation-root", context);
+                remove_dir_all_if_exists(parent, DirectoryLabel::InstallationRoot, context);
             }
         }
     }
@@ -86,36 +107,36 @@ enum RemovalOutcome {
     Missing,
 }
 
-fn remove_dir_all_if_exists(path: &Path, label: &str, context: &str) {
+fn remove_dir_all_if_exists(path: &Path, label: DirectoryLabel, context: &str) {
     match try_remove_dir_all(path) {
         Ok(outcome) => log_removal_outcome(outcome, path, label, context),
         Err(err) => warn_cleanup_removal_failure(context, label, path, &err),
     }
 }
 
-fn log_removal_outcome(outcome: RemovalOutcome, path: &Path, label: &str, context: &str) {
+fn log_removal_outcome(outcome: RemovalOutcome, path: &Path, label: DirectoryLabel, context: &str) {
     match outcome {
         RemovalOutcome::Removed => log_dir_removed(path, label, context),
         RemovalOutcome::Missing => log_dir_missing(path, label, context),
     }
 }
 
-fn log_dir_removed(path: &Path, label: &str, context: &str) {
+fn log_dir_removed(path: &Path, label: DirectoryLabel, context: &str) {
     tracing::info!(
         target: LOG_TARGET,
         context = %context,
         path = %path.display(),
-        label,
+        label = label.as_str(),
         "removed postgres directory"
     );
 }
 
-fn log_dir_missing(path: &Path, label: &str, context: &str) {
+fn log_dir_missing(path: &Path, label: DirectoryLabel, context: &str) {
     tracing::debug!(
         target: LOG_TARGET,
         context = %context,
         path = %path.display(),
-        label,
+        label = label.as_str(),
         "postgres directory already removed"
     );
 }
@@ -141,9 +162,15 @@ fn warn_cleanup_failure(
     );
 }
 
-fn warn_cleanup_removal_failure(context: &str, label: &str, path: &Path, err: &impl Display) {
+fn warn_cleanup_removal_failure(
+    context: &str,
+    label: DirectoryLabel,
+    path: &Path,
+    err: &impl Display,
+) {
     tracing::warn!(
-        "SKIP-TEST-CLUSTER: failed to remove {label} directory {} ({context}): {err}",
+        "SKIP-TEST-CLUSTER: failed to remove {} directory {} ({context}): {err}",
+        label.as_str(),
         path.display()
     );
 }

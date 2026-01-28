@@ -28,8 +28,8 @@ use env_snapshot::EnvSnapshot;
 use sandbox::TestSandbox;
 use serial::{ScenarioSerialGuard, serial_guard};
 
-fn run_cluster_lifecycle_test() -> std::result::Result<Utf8PathBuf, Report> {
-    run_cluster_lifecycle_with_cleanup_mode(CleanupMode::DataOnly).map(|(data, _)| data)
+fn run_cluster_lifecycle_test() -> std::result::Result<(Utf8PathBuf, Utf8PathBuf), Report> {
+    run_cluster_lifecycle_with_cleanup_mode(CleanupMode::DataOnly)
 }
 
 fn run_cluster_lifecycle_with_cleanup_mode(
@@ -128,38 +128,17 @@ fn wait_for_dir_cleanup(dir: &Utf8PathBuf, label: &str) -> Result<()> {
     Ok(())
 }
 
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "rstest binds the guard even though the test ignores it"
-)]
-#[rstest]
-fn drops_stop_cluster_and_restore_environment(_serial_guard: ScenarioSerialGuard) -> Result<()> {
-    let sandbox = TestSandbox::new("test-cluster-unit").context("create test cluster sandbox")?;
+fn run_cluster_drop_test(
+    sandbox_name: &str,
+    cleanup_mode: CleanupMode,
+    verify_install_cleanup: bool,
+) -> Result<()> {
+    let sandbox = TestSandbox::new(sandbox_name).context("create test cluster sandbox")?;
     sandbox.reset()?;
     let env_before = EnvSnapshot::capture();
-    let result = sandbox.with_env(sandbox.env_without_timezone(), run_cluster_lifecycle_test);
-    if should_skip_test(&result) {
-        return Ok(());
-    }
-    let data_dir = result?;
-    verify_environment_restored(&env_before)?;
-    wait_for_postmaster_shutdown(&data_dir)?;
-    wait_for_dir_cleanup(&data_dir, "data")?;
-    Ok(())
-}
-
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "rstest binds the guard even though the test ignores it"
-)]
-#[rstest]
-fn drops_remove_install_dir_when_cleanup_full(_serial_guard: ScenarioSerialGuard) -> Result<()> {
-    let sandbox = TestSandbox::new("test-cluster-unit-full-cleanup")
-        .context("create test cluster sandbox")?;
-    sandbox.reset()?;
-    let env_before = EnvSnapshot::capture();
-    let result = sandbox.with_env(sandbox.env_without_timezone(), || {
-        run_cluster_lifecycle_with_cleanup_mode(CleanupMode::Full)
+    let result = sandbox.with_env(sandbox.env_without_timezone(), || match cleanup_mode {
+        CleanupMode::DataOnly => run_cluster_lifecycle_test(),
+        _ => run_cluster_lifecycle_with_cleanup_mode(cleanup_mode),
     });
     if should_skip_test(&result) {
         return Ok(());
@@ -168,6 +147,26 @@ fn drops_remove_install_dir_when_cleanup_full(_serial_guard: ScenarioSerialGuard
     verify_environment_restored(&env_before)?;
     wait_for_postmaster_shutdown(&data_dir)?;
     wait_for_dir_cleanup(&data_dir, "data")?;
-    wait_for_dir_cleanup(&install_dir, "installation")?;
+    if verify_install_cleanup {
+        wait_for_dir_cleanup(&install_dir, "installation")?;
+    }
     Ok(())
+}
+
+#[expect(
+    clippy::used_underscore_binding,
+    reason = "rstest binds the guard even though the test ignores it"
+)]
+#[rstest]
+fn drops_stop_cluster_and_restore_environment(_serial_guard: ScenarioSerialGuard) -> Result<()> {
+    run_cluster_drop_test("test-cluster-unit", CleanupMode::DataOnly, false)
+}
+
+#[expect(
+    clippy::used_underscore_binding,
+    reason = "rstest binds the guard even though the test ignores it"
+)]
+#[rstest]
+fn drops_remove_install_dir_when_cleanup_full(_serial_guard: ScenarioSerialGuard) -> Result<()> {
+    run_cluster_drop_test("test-cluster-unit-full-cleanup", CleanupMode::Full, true)
 }
