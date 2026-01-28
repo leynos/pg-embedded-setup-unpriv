@@ -314,7 +314,6 @@ impl PgEnvCfg {
         self.apply_connection(&mut s);
         self.apply_paths(&mut s);
         self.apply_locale(&mut s);
-        Self::apply_worker_limits(&mut s);
 
         Ok(s)
     }
@@ -363,24 +362,80 @@ impl PgEnvCfg {
                 .insert("encoding".into(), enc.clone());
         }
     }
+}
 
-    fn apply_worker_limits(settings: &mut Settings) {
-        let defaults = [
-            ("max_connections", "20"),
-            ("max_worker_processes", "2"),
-            ("max_parallel_workers", "0"),
-            ("max_parallel_workers_per_gather", "0"),
-            ("max_parallel_maintenance_workers", "0"),
-            ("autovacuum", "off"),
-            ("max_wal_senders", "0"),
-            ("max_replication_slots", "0"),
-        ];
+const WORKER_LIMIT_DEFAULTS: [(&str, &str); 8] = [
+    ("max_connections", "20"),
+    ("max_worker_processes", "2"),
+    ("max_parallel_workers", "0"),
+    ("max_parallel_workers_per_gather", "0"),
+    ("max_parallel_maintenance_workers", "0"),
+    ("autovacuum", "off"),
+    ("max_wal_senders", "0"),
+    ("max_replication_slots", "0"),
+];
 
-        for (key, value) in defaults {
+pub(crate) fn apply_test_worker_limits(settings: &mut Settings) {
+    for (key, value) in WORKER_LIMIT_DEFAULTS {
+        settings
+            .configuration
+            .entry(key.to_owned())
+            .or_insert_with(|| value.to_owned());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WORKER_LIMIT_DEFAULTS, apply_test_worker_limits};
+    use postgresql_embedded::Settings;
+
+    #[test]
+    fn apply_test_worker_limits_inserts_defaults() {
+        let mut settings = Settings::default();
+
+        apply_test_worker_limits(&mut settings);
+
+        for (key, value) in WORKER_LIMIT_DEFAULTS {
+            assert_eq!(
+                settings.configuration.get(key).map(String::as_str),
+                Some(value),
+                "expected {key} to be set to {value}",
+            );
+        }
+    }
+
+    #[test]
+    fn apply_test_worker_limits_preserves_existing_values() {
+        let mut settings = Settings::default();
+        settings
+            .configuration
+            .insert("max_connections".into(), "99".into());
+        settings
+            .configuration
+            .insert("max_worker_processes".into(), "7".into());
+
+        apply_test_worker_limits(&mut settings);
+
+        assert_eq!(
             settings
                 .configuration
-                .entry(key.to_owned())
-                .or_insert_with(|| value.to_owned());
-        }
+                .get("max_connections")
+                .map(String::as_str),
+            Some("99"),
+        );
+        assert_eq!(
+            settings
+                .configuration
+                .get("max_worker_processes")
+                .map(String::as_str),
+            Some("7"),
+        );
+        assert_eq!(
+            settings
+                .configuration
+                .get("max_parallel_workers")
+                .map(String::as_str),
+            Some("0"),
+        );
     }
 }

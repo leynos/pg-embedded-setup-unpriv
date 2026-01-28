@@ -1,8 +1,9 @@
 # Configure postgres-embedded worker counts at cluster setup
 
-This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
-`Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
-`Outcomes & Retrospective` must be kept up to date as work proceeds.
+This execution plan (ExecPlan) is a living document. The sections
+`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`,
+`Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work
+proceeds.
 
 Status: COMPLETE
 
@@ -77,19 +78,19 @@ setup and confirming the expected Postgres server settings (e.g.
   configuration for embedded Postgres. Rationale: this is the supported knob
   for server configuration in `postgresql_embedded` and matches the upstream
   examples.[^1] Date/Author: 2026-01-28 / Codex
-- Decision: apply worker limits inside `PgEnvCfg::to_settings` so every
-  bootstrap-derived `Settings` instance receives the defaults. Rationale:
-  `to_settings` is the shared entry point for cluster setup, keeping
-  configuration centralised without adding new public APIs. Date/Author:
-  2026-01-28 / Codex
+- Decision: apply worker limits during `bootstrap_for_tests` only, keeping the
+  defaults scoped to ephemeral test clusters. Rationale: the CLI bootstrap path
+  is used for long-lived setups and should not disable autovacuum or
+  replication unless explicitly configured. Date/Author: 2026-01-28 / Codex
 
 ## Outcomes & retrospective
 
-Default embedded PostgreSQL settings now include worker and parallelism limits,
-with autovacuum disabled to keep ephemeral test clusters lightweight. Added a
-settings test to verify the configuration map is populated, updated user-facing
-documentation, and ran formatting, lint, and test gates. Future work could add
-a user-facing override if production-style settings are needed.
+Default embedded PostgreSQL settings now include worker and parallelism limits
+in the test bootstrap path, with autovacuum disabled to keep ephemeral test
+clusters lightweight. Added tests to verify defaults are applied without
+overriding existing configuration, updated user-facing documentation, and ran
+formatting, lint, and test gates. Future work could add explicit configuration
+overrides if production-style settings are needed.
 
 ## Context and orientation
 

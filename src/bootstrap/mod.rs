@@ -12,7 +12,7 @@ use color_eyre::eyre::Context;
 use postgresql_embedded::Settings;
 
 use crate::{
-    PgEnvCfg,
+    PgEnvCfg, apply_test_worker_limits,
     error::{BootstrapResult, Result as CrateResult},
 };
 
@@ -27,6 +27,12 @@ use self::{
 
 const DEFAULT_SETUP_TIMEOUT: Duration = Duration::from_secs(180);
 const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[derive(Clone, Copy)]
+enum BootstrapKind {
+    Default,
+    Test,
+}
 
 /// Structured settings returned from [`bootstrap_for_tests`].
 #[derive(Debug, Clone)]
@@ -84,7 +90,7 @@ pub struct TestBootstrapSettings {
 /// Returns an error when bootstrap preparation fails or when subprocess orchestration
 /// cannot be configured.
 pub fn run() -> CrateResult<()> {
-    orchestrate_bootstrap()?;
+    orchestrate_bootstrap(BootstrapKind::Default)?;
     Ok(())
 }
 
@@ -109,21 +115,17 @@ pub fn run() -> CrateResult<()> {
 /// Returns an error when bootstrap preparation fails or when subprocess orchestration
 /// cannot be configured.
 pub fn bootstrap_for_tests() -> BootstrapResult<TestBootstrapSettings> {
-    orchestrate_bootstrap()
+    orchestrate_bootstrap(BootstrapKind::Test)
 }
 
-fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
-    if let Err(err) = color_eyre::install() {
-        tracing::debug!("color_eyre already installed: {err}");
-    }
-
+fn orchestrate_bootstrap(kind: BootstrapKind) -> BootstrapResult<TestBootstrapSettings> {
+    install_color_eyre();
     let privileges = detect_execution_privileges();
     let cfg = PgEnvCfg::load().context("failed to load configuration via OrthoConfig")?;
-    let settings = cfg.to_settings()?;
     let worker_binary = worker_binary_from_env(privileges)?;
     let execution_mode = determine_execution_mode(privileges, worker_binary.as_ref())?;
     let shutdown_timeout = shutdown_timeout_from_env()?;
-    let prepared = prepare_bootstrap(privileges, settings, &cfg)?;
+    let prepared = prepare_bootstrap_settings(privileges, &cfg, kind)?;
 
     Ok(TestBootstrapSettings {
         privileges,
@@ -136,6 +138,27 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
         shutdown_timeout,
         binary_cache_dir: cfg.binary_cache_dir,
     })
+}
+
+fn install_color_eyre() {
+    if let Err(err) = color_eyre::install() {
+        tracing::debug!("color_eyre already installed: {err}");
+    }
+}
+
+fn prepare_bootstrap_settings(
+    privileges: ExecutionPrivileges,
+    cfg: &PgEnvCfg,
+    kind: BootstrapKind,
+) -> BootstrapResult<prepare::PreparedBootstrap> {
+    let settings = cfg.to_settings()?;
+    let mut prepared = prepare_bootstrap(privileges, settings, cfg)?;
+
+    if matches!(kind, BootstrapKind::Test) {
+        apply_test_worker_limits(&mut prepared.settings);
+    }
+
+    Ok(prepared)
 }
 
 #[cfg(test)]
@@ -180,7 +203,7 @@ mod tests {
             ("PG_PASSWORD", Some("bootstrap_test_pw")),
             ("PG_EMBEDDED_WORKER", None),
         ]));
-        let settings = orchestrate_bootstrap().expect("bootstrap to succeed");
+        let settings = orchestrate_bootstrap(BootstrapKind::Default).expect("bootstrap to succeed");
 
         assert_paths(&settings, &runtime_path, &data_path);
         assert_identity(&settings, "bootstrap_test", "bootstrap_test_pw");
@@ -296,7 +319,7 @@ mod tests {
             ("PG_PASSWORD", Some("cache_test_pw")),
             ("PG_EMBEDDED_WORKER", None),
         ]));
-        orchestrate_bootstrap().expect("bootstrap to succeed")
+        orchestrate_bootstrap(BootstrapKind::Default).expect("bootstrap to succeed")
     }
 
     #[rstest]
