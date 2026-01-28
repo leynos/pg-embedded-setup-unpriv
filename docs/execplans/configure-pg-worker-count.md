@@ -64,7 +64,7 @@ setup and confirming the expected Postgres server settings (e.g.
   gates.
 - [x] (2026-01-28 18:45Z) Updated documentation to reflect the new defaults.
 
-## Surprizes & discoveries
+## Surprises & discoveries
 
 - Observation: `make test` initially failed because `cargo nextest` was
   missing. Evidence: `error: no such command: \`nextest\`` during `make test`.
