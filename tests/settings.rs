@@ -97,6 +97,46 @@ fn to_settings_default_config() -> color_eyre::Result<()> {
     Ok(())
 }
 
+#[rstest]
+fn to_settings_for_tests_applies_worker_limits() -> color_eyre::Result<()> {
+    let cfg = PgEnvCfg::default();
+    let settings = cfg.to_settings_for_tests()?;
+
+    ensure!(
+        settings
+            .configuration
+            .get("autovacuum")
+            .is_some_and(|value| value == "off"),
+        "expected autovacuum to be disabled for tests",
+    );
+    ensure!(
+        settings
+            .configuration
+            .get("max_connections")
+            .is_some_and(|value| value == "20"),
+        "expected max_connections to be capped for tests",
+    );
+
+    Ok(())
+}
+
+#[rstest]
+fn to_settings_omits_worker_limits_by_default() -> color_eyre::Result<()> {
+    let cfg = PgEnvCfg::default();
+    let settings = cfg.to_settings()?;
+
+    ensure!(
+        !settings.configuration.contains_key("autovacuum"),
+        "expected autovacuum to remain at PostgreSQL defaults",
+    );
+    ensure!(
+        !settings.configuration.contains_key("max_connections"),
+        "expected max_connections to remain at PostgreSQL defaults",
+    );
+
+    Ok(())
+}
+
 #[cfg(all(unix, feature = "privileged-tests"))]
 #[rstest]
 /// Verify that the effective uid is changed within the passed block

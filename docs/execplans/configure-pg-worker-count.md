@@ -81,7 +81,7 @@ setup and confirming the expected Postgres server settings (e.g.
 - Decision: apply worker limits during `bootstrap_for_tests` only, keeping the
   defaults scoped to ephemeral test clusters. Rationale: the CLI bootstrap path
   is used for long-lived setups and should not disable autovacuum or
-  replication unless explicitly configured. Date/Author: 2026-01-28 / Codex
+  replication unless explicitly configured. Date/Author: 2026-01-28 / Codex.
 
 ## Outcomes & retrospective
 
