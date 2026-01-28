@@ -361,22 +361,39 @@ fn execute_cleanup(
     if let Err(err) = remove_dir_all_if_exists(data_dir, "data") {
         failures.push(err);
     }
-    if let Some(path) = install_dir {
-        if let Err(err) = remove_dir_all_if_exists(path, "installation") {
-            failures.push(err);
-        }
-    }
-    if let Some(path) = install_root {
-        if install_dir.is_some_and(|install_path| install_path == path) {
-            // install_root already removed above.
-        } else if let Err(err) = remove_dir_all_if_exists(path, "installation-root") {
-            failures.push(err);
-        }
-    }
+    attempt_remove_install_dir(install_dir, &mut failures);
+    attempt_remove_install_root(install_root, install_dir, &mut failures);
     if failures.is_empty() {
         Ok(())
     } else {
         Err(WorkerError::CleanupFailed(failures.join("; ")))
+    }
+}
+
+fn attempt_remove_install_dir(install_dir: Option<&Utf8Path>, failures: &mut Vec<String>) {
+    let Some(path) = install_dir else {
+        return;
+    };
+    if let Err(err) = remove_dir_all_if_exists(path, "installation") {
+        failures.push(err);
+    }
+}
+
+fn attempt_remove_install_root(
+    install_root: Option<&Utf8Path>,
+    install_dir: Option<&Utf8Path>,
+    failures: &mut Vec<String>,
+) {
+    let Some(path) = install_root else {
+        return;
+    };
+    let already_removed = install_dir.is_some_and(|install_path| install_path == path);
+    if already_removed {
+        // install_root already removed above.
+        return;
+    }
+    if let Err(err) = remove_dir_all_if_exists(path, "installation-root") {
+        failures.push(err);
     }
 }
 

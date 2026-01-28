@@ -104,18 +104,9 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
             let runtime = build_runtime()?;
             let mut pg = Some(PostgreSQL::new(settings));
             runtime.block_on(async {
-                let pg_err = || WorkerError::PostgresOperation("no pg".into());
                 match op {
-                    Operation::Setup => {
-                        run_postgres_setup(pg.as_mut().ok_or_else(pg_err)?, &data_dir).await
-                    }
-                    Operation::Start => {
-                        ensure_postgres_started(pg.as_mut().ok_or_else(pg_err)?, &data_dir).await?;
-                        if let Some(i) = pg.take() {
-                            std::mem::forget(i); // Leak to keep PostgreSQL running after worker exit.
-                        }
-                        Ok(())
-                    }
+                    Operation::Setup => execute_setup(&mut pg, &data_dir).await,
+                    Operation::Start => execute_start(&mut pg, &data_dir).await,
                     Operation::Stop => execute_stop(&mut pg).await,
                     Operation::Cleanup | Operation::CleanupFull => Ok(()),
                 }
@@ -176,9 +167,8 @@ fn extract_data_dir(settings: &postgresql_embedded::Settings) -> Result<Utf8Path
 fn extract_install_dir(
     settings: &postgresql_embedded::Settings,
 ) -> Result<Utf8PathBuf, WorkerError> {
-    Utf8PathBuf::from_path_buf(settings.installation_dir.clone()).map_err(|_| {
-        WorkerError::SettingsConversion("installation_dir must be valid UTF-8".into())
-    })
+    Utf8PathBuf::from_path_buf(settings.installation_dir.clone())
+        .map_err(|_| WorkerError::SettingsConversion("installation_dir must be valid UTF-8".into()))
 }
 
 #[cfg(unix)]
@@ -274,6 +264,43 @@ async fn start_if_not_started(pg: &mut PostgreSQL) -> Result<(), WorkerError> {
     pg.start()
         .await
         .map_err(|e| WorkerError::PostgresOperation(format!("start failed: {e}")))
+}
+
+#[cfg(unix)]
+async fn execute_setup(
+    pg: &mut Option<PostgreSQL>,
+    data_dir: &Utf8Path,
+) -> Result<(), WorkerError> {
+    let pg_handle = pg_handle_mut(pg, "setup")?;
+    run_postgres_setup(pg_handle, data_dir).await
+}
+
+#[cfg(unix)]
+async fn execute_start(
+    pg: &mut Option<PostgreSQL>,
+    data_dir: &Utf8Path,
+) -> Result<(), WorkerError> {
+    let pg_handle = pg_handle_mut(pg, "start")?;
+    ensure_postgres_started(pg_handle, data_dir).await?;
+    leak_postgres(pg);
+    Ok(())
+}
+
+#[cfg(unix)]
+fn pg_handle_mut<'a>(
+    pg: &'a mut Option<PostgreSQL>,
+    action: &str,
+) -> Result<&'a mut PostgreSQL, WorkerError> {
+    pg.as_mut()
+        .ok_or_else(|| WorkerError::PostgresOperation(format!("pg handle missing during {action}")))
+}
+
+#[cfg(unix)]
+fn leak_postgres(pg: &mut Option<PostgreSQL>) {
+    if let Some(pg_instance) = pg.take() {
+        // Intentionally leak to keep PostgreSQL running after worker exit.
+        let _leaked = std::mem::ManuallyDrop::new(pg_instance);
+    }
 }
 
 #[cfg(unix)]
