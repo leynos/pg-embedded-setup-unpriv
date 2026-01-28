@@ -115,7 +115,7 @@ fn exercise_cluster() -> BootstrapResult<()> {
     let cluster = TestCluster::new()?;
     let url = cluster.settings().url("app_db");
     // Issue queries using any preferred client here.
-    drop(cluster); // PostgreSQL shuts down automatically.
+drop(cluster); // PostgreSQL shuts down automatically.
     Ok(())
 }
 ```
@@ -123,6 +123,24 @@ fn exercise_cluster() -> BootstrapResult<()> {
 The guard keeps `PGPASSFILE`, `TZ`, `TZDIR`, and the XDG directories populated
 for the duration of its lifetime, making synchronous tests usable without extra
 setup.
+
+By default the guard removes the PostgreSQL data directory when it drops. Use
+`CleanupMode` to control whether the installation directory is removed or to
+skip cleanup for debugging:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::{CleanupMode, TestCluster};
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?.with_cleanup_mode(CleanupMode::Full);
+drop(cluster);
+# Ok(())
+# }
+```
+
+Shared clusters created with `test_support::shared_test_cluster()` are
+intentionally leaked for the process lifetime and therefore do not perform
+cleanup on drop.
 
 ### Async API for `#[tokio::test]` contexts
 

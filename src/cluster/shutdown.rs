@@ -3,15 +3,14 @@
 //! Provides synchronous and asynchronous shutdown methods, as well as
 //! drop-time cleanup for both worker-managed and in-process clusters.
 
-use crate::TestBootstrapSettings;
-#[cfg(feature = "async-api")]
 use crate::error::BootstrapResult;
 use crate::observability::LOG_TARGET;
+use crate::{CleanupMode, TestBootstrapSettings};
 use postgresql_embedded::{PostgreSQL, Settings};
-use std::fmt::Display;
-use std::time::Duration;
+use std::{fmt::Display, time::Duration};
 use tokio::time;
 
+use super::cleanup;
 use super::runtime::build_runtime;
 use super::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use super::worker_operation;
@@ -23,6 +22,30 @@ pub(super) struct DropContext<'a> {
     pub bootstrap: &'a TestBootstrapSettings,
     pub env_vars: &'a [(String, Option<String>)],
     pub context: &'a str,
+}
+
+/// Bundles in-process cleanup metadata.
+#[cfg(feature = "async-api")]
+pub(super) struct InProcessCleanup<'a> {
+    pub cleanup_mode: CleanupMode,
+    pub settings: &'a Settings,
+    pub context: &'a str,
+}
+
+struct OwnedCleanup {
+    cleanup_mode: CleanupMode,
+    settings: Settings,
+    context: String,
+}
+
+impl OwnedCleanup {
+    fn new(cleanup_mode: CleanupMode, settings: Settings, context: &str) -> Self {
+        Self {
+            cleanup_mode,
+            settings,
+            context: context.to_owned(),
+        }
+    }
 }
 
 /// Builds a context string for logging shutdown operations.
@@ -70,24 +93,26 @@ pub(super) async fn stop_worker_managed_async(
 pub(super) async fn stop_in_process_async(
     postgres: PostgreSQL,
     timeout: Duration,
-    context: &str,
+    cleanup: InProcessCleanup<'_>,
 ) -> BootstrapResult<()> {
-    match time::timeout(timeout, postgres.stop()).await {
+    let result = match time::timeout(timeout, postgres.stop()).await {
         Ok(Ok(())) => Ok(()),
         Ok(Err(err)) => {
-            warn_stop_failure(context, &err);
+            warn_stop_failure(cleanup.context, &err);
             Err(crate::error::BootstrapError::from(color_eyre::eyre::eyre!(
                 "failed to stop postgres: {err}"
             )))
         }
         Err(_) => {
             let timeout_secs = timeout.as_secs();
-            warn_stop_timeout(timeout_secs, context);
+            warn_stop_timeout(timeout_secs, cleanup.context);
             Err(crate::error::BootstrapError::from(color_eyre::eyre::eyre!(
                 "stop timed out after {timeout_secs}s"
             )))
         }
-    }
+    };
+    cleanup::cleanup_in_process(cleanup.cleanup_mode, cleanup.settings, cleanup.context);
+    result
 }
 
 /// Synchronous worker stop for use with `spawn_blocking`.
@@ -98,10 +123,23 @@ pub(super) fn stop_via_worker_sync(
     context: &str,
 ) -> BootstrapResult<()> {
     let runtime = build_runtime()?;
-    let invoker = ClusterWorkerInvoker::new(&runtime, bootstrap, env_vars);
-    invoker
-        .invoke_as_root(worker_operation::WorkerOperation::Stop)
-        .inspect_err(|err| warn_stop_failure(context, err))
+    stop_worker_managed_with_runtime(&runtime, bootstrap, env_vars, context)
+}
+
+fn stop_worker_managed_with_runtime(
+    runtime: &tokio::runtime::Runtime,
+    bootstrap: &TestBootstrapSettings,
+    env_vars: &[(String, Option<String>)],
+    context: &str,
+) -> BootstrapResult<()> {
+    let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
+    let result = invoker.invoke_as_root(worker_operation::WorkerOperation::Stop);
+    if let Err(err) = &result {
+        warn_stop_failure(context, err);
+    }
+    cleanup::cleanup_worker_managed_with_runtime(runtime, bootstrap, env_vars, context);
+    cleanup::cleanup_in_process(bootstrap.cleanup_mode, &bootstrap.settings, context);
+    result
 }
 
 /// Synchronous drop path: stops the cluster using the owned runtime.
@@ -115,26 +153,24 @@ pub(super) fn drop_sync_cluster(runtime: &tokio::runtime::Runtime, ctx: DropCont
     } = ctx;
 
     if is_managed_via_worker {
-        let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-        if let Err(err) = invoker.invoke_as_root(worker_operation::WorkerOperation::Stop) {
-            warn_stop_failure(context, &err);
-        }
+        drop(stop_worker_managed_with_runtime(
+            runtime, bootstrap, env_vars, context,
+        ));
         return;
     }
-
-    let Some(pg) = postgres.take() else {
-        return;
-    };
 
     let timeout = bootstrap.shutdown_timeout;
     let timeout_secs = timeout.as_secs();
-    let outcome = runtime.block_on(async { time::timeout(timeout, pg.stop()).await });
-
-    match outcome {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => warn_stop_failure(context, &err),
-        Err(_) => warn_stop_timeout(timeout_secs, context),
+    if let Some(pg) = postgres.take() {
+        let outcome = runtime.block_on(async { time::timeout(timeout, pg.stop()).await });
+        match outcome {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => warn_stop_failure(context, &err),
+            Err(_) => warn_stop_timeout(timeout_secs, context),
+        }
     }
+
+    cleanup::cleanup_in_process(bootstrap.cleanup_mode, &bootstrap.settings, context);
 }
 
 /// Best-effort cleanup for async clusters dropped without `stop_async()`.
@@ -155,7 +191,9 @@ pub(super) fn drop_async_cluster(ctx: DropContext<'_>) {
     if is_managed_via_worker {
         drop_async_worker_managed(bootstrap, env_vars, context);
     } else if let Some(pg) = postgres.take() {
-        drop_async_in_process(bootstrap.shutdown_timeout, context, pg);
+        let cleanup =
+            OwnedCleanup::new(bootstrap.cleanup_mode, bootstrap.settings.clone(), context);
+        drop_async_in_process(bootstrap.shutdown_timeout, cleanup, pg);
     }
     // If neither worker-managed nor has postgres handle, already cleaned up via stop_async().
 }
@@ -183,22 +221,23 @@ fn drop_async_worker_managed(
 }
 
 /// Best-effort in-process stop for async clusters dropped without `stop_async()`.
-fn drop_async_in_process(timeout: Duration, context: &str, postgres: PostgreSQL) {
+fn drop_async_in_process(timeout: Duration, cleanup: OwnedCleanup, postgres: PostgreSQL) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
-        error_no_runtime_for_cleanup(context);
+        error_no_runtime_for_cleanup(&cleanup.context);
         return;
     };
 
-    spawn_async_cleanup(&handle, postgres, timeout);
+    spawn_async_cleanup(&handle, postgres, timeout, cleanup);
 }
 
 /// Spawns async cleanup of a `PostgreSQL` instance on the provided runtime handle.
 ///
 /// The task is fire-and-forget; errors during shutdown are logged at debug level.
-pub(super) fn spawn_async_cleanup(
+fn spawn_async_cleanup(
     handle: &tokio::runtime::Handle,
     postgres: PostgreSQL,
     timeout: Duration,
+    cleanup: OwnedCleanup,
 ) {
     drop(handle.spawn(async move {
         match time::timeout(timeout, postgres.stop()).await {
@@ -220,6 +259,8 @@ pub(super) fn spawn_async_cleanup(
                 );
             }
         }
+
+        cleanup::cleanup_in_process(cleanup.cleanup_mode, &cleanup.settings, &cleanup.context);
     }));
 }
 
@@ -265,10 +306,9 @@ fn worker_stop_sync(
         return;
     };
 
-    let invoker = ClusterWorkerInvoker::new(&runtime, bootstrap, env_vars);
-    if let Err(err) = invoker.invoke_as_root(worker_operation::WorkerOperation::Stop) {
-        warn_stop_failure(context, &err);
-    }
+    drop(stop_worker_managed_with_runtime(
+        &runtime, bootstrap, env_vars, context,
+    ));
 }
 
 /// Logs a warning when an async cluster is dropped without calling `stop_async()`.

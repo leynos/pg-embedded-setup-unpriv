@@ -8,8 +8,9 @@ mod prepare;
 
 use std::time::Duration;
 
-use color_eyre::eyre::Context;
+use color_eyre::eyre::{Context, eyre};
 use postgresql_embedded::Settings;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     PgEnvCfg,
@@ -34,6 +35,18 @@ enum BootstrapKind {
     Test,
 }
 
+/// Controls cleanup behaviour when a cluster is dropped.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Default)]
+pub enum CleanupMode {
+    /// Remove only the data directory.
+    #[default]
+    DataOnly,
+    /// Remove both the data and installation directories.
+    Full,
+    /// Skip cleanup entirely (useful for debugging).
+    None,
+}
+
 /// Structured settings returned from [`bootstrap_for_tests`].
 #[derive(Debug, Clone)]
 pub struct TestBootstrapSettings {
@@ -53,6 +66,8 @@ pub struct TestBootstrapSettings {
     pub start_timeout: Duration,
     /// Grace period granted to `PostgreSQL` during drop before teardown proceeds regardless.
     pub shutdown_timeout: Duration,
+    /// Controls cleanup behaviour when the cluster drops.
+    pub cleanup_mode: CleanupMode,
     /// Optional override for the binary cache directory.
     ///
     /// When set, `TestCluster` uses this directory instead of the default
@@ -77,7 +92,7 @@ pub struct TestBootstrapSettings {
 /// [`bootstrap_for_tests`] to obtain the structured response for assertions.
 ///
 /// # Examples
-/// ```no_run
+/// ```rust
 /// use pg_embedded_setup_unpriv::run;
 ///
 /// fn main() -> Result<(), pg_embedded_setup_unpriv::Error> {
@@ -120,6 +135,10 @@ pub fn bootstrap_for_tests() -> BootstrapResult<TestBootstrapSettings> {
 
 fn orchestrate_bootstrap(kind: BootstrapKind) -> BootstrapResult<TestBootstrapSettings> {
     install_color_eyre();
+    if matches!(kind, BootstrapKind::Test) {
+        validate_backend_selection()?;
+    }
+
     let privileges = detect_execution_privileges();
     let cfg = PgEnvCfg::load().context("failed to load configuration via OrthoConfig")?;
     let settings = match kind {
@@ -140,6 +159,7 @@ fn orchestrate_bootstrap(kind: BootstrapKind) -> BootstrapResult<TestBootstrapSe
         setup_timeout: DEFAULT_SETUP_TIMEOUT,
         start_timeout: DEFAULT_START_TIMEOUT,
         shutdown_timeout,
+        cleanup_mode: CleanupMode::default(),
         binary_cache_dir: cfg.binary_cache_dir,
     })
 }
@@ -148,6 +168,19 @@ fn install_color_eyre() {
     if let Err(err) = color_eyre::install() {
         tracing::debug!("color_eyre already installed: {err}");
     }
+}
+
+fn validate_backend_selection() -> BootstrapResult<()> {
+    let raw = std::env::var_os("PG_TEST_BACKEND").unwrap_or_default();
+    let value = raw.to_string_lossy();
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "postgresql_embedded" {
+        return Ok(());
+    }
+    Err(eyre!(
+        "SKIP-TEST-CLUSTER: unsupported PG_TEST_BACKEND '{trimmed}'; supported backends: postgresql_embedded"
+    )
+    .into())
 }
 
 #[cfg(test)]
@@ -192,7 +225,8 @@ mod tests {
             ("PG_PASSWORD", Some("bootstrap_test_pw")),
             ("PG_EMBEDDED_WORKER", None),
         ]));
-        let settings = orchestrate_bootstrap(BootstrapKind::Default).expect("bootstrap to succeed");
+        let settings =
+            orchestrate_bootstrap(BootstrapKind::Default).expect("bootstrap to succeed");
 
         assert_paths(&settings, &runtime_path, &data_path);
         assert_identity(&settings, "bootstrap_test", "bootstrap_test_pw");
@@ -358,5 +392,30 @@ mod tests {
         let pgpass = runtime_path.join(".pgpass");
         assert!(env_pairs.contains(&("PGPASSFILE".into(), Some(pgpass.as_str().into()))));
         assert_eq!(settings.environment.home.as_path(), runtime_path.as_path());
+    }
+
+    #[rstest]
+    #[case::unset(None, true)]
+    #[case::empty(Some(""), true)]
+    #[case::embedded(Some("postgresql_embedded"), true)]
+    #[case::unsupported(Some("sqlite"), false)]
+    fn validate_backend_selection_respects_pg_test_backend(
+        #[case] backend: Option<&str>,
+        #[case] should_succeed: bool,
+    ) {
+        let _guard = scoped_env(env_vars([("PG_TEST_BACKEND", backend)]));
+        let result = validate_backend_selection();
+        assert_eq!(
+            result.is_ok(),
+            should_succeed,
+            "unexpected backend validation result for {backend:?}"
+        );
+        if !should_succeed {
+            let err = result.expect_err("expected backend validation to fail");
+            assert!(
+                err.to_string().contains("SKIP-TEST-CLUSTER"),
+                "expected SKIP-TEST-CLUSTER in error message, got {err:?}"
+            );
+        }
     }
 }

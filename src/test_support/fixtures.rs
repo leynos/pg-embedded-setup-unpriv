@@ -11,7 +11,7 @@ use tokio::runtime::{Builder, Runtime};
 
 use super::worker_env;
 use crate::{
-    ClusterHandle, ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment,
+    CleanupMode, ClusterHandle, ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment,
     TestBootstrapSettings, TestCluster, detect_execution_privileges, env::ScopedEnv,
 };
 use postgresql_embedded::Settings;
@@ -81,6 +81,7 @@ pub fn dummy_settings(privileges: ExecutionPrivileges) -> TestBootstrapSettings 
         setup_timeout: Duration::from_secs(180),
         start_timeout: Duration::from_secs(60),
         shutdown_timeout: Duration::from_secs(15),
+        cleanup_mode: CleanupMode::default(),
         binary_cache_dir: None,
     }
 }
