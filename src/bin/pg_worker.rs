@@ -46,6 +46,8 @@ enum WorkerError {
     RuntimeInit(#[source] std::io::Error),
     #[error("postgres operation failed: {0}")]
     PostgresOperation(String),
+    #[error("cleanup failed: {0}")]
+    CleanupFailed(String),
     #[error("data dir recovery: {0}")]
     DataDirRecovery(String),
 }
@@ -56,6 +58,8 @@ enum Operation {
     Setup,
     Start,
     Stop,
+    Cleanup,
+    CleanupFull,
 }
 
 #[cfg(unix)]
@@ -65,8 +69,10 @@ impl Operation {
             "setup" => Ok(Self::Setup),
             "start" => Ok(Self::Start),
             "stop" => Ok(Self::Stop),
+            "cleanup" => Ok(Self::Cleanup),
+            "cleanup-full" => Ok(Self::CleanupFull),
             other => Err(WorkerError::InvalidArgs(format!(
-                "unknown operation '{other}'; expected setup, start, or stop"
+                "unknown operation '{other}'; expected setup, start, stop, cleanup, or cleanup-full"
             ))),
         }
     }
@@ -86,25 +92,36 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
         .into_settings()
         .map_err(|e| WorkerError::SettingsConversion(e.to_string()))?;
     let data_dir = extract_data_dir(&settings)?;
-    let runtime = build_runtime()?;
     apply_worker_environment(&payload.environment);
-    let mut pg = Some(PostgreSQL::new(settings));
-    runtime.block_on(async {
-        let pg_err = || WorkerError::PostgresOperation("no pg".into());
-        match op {
-            Operation::Setup => {
-                run_postgres_setup(pg.as_mut().ok_or_else(pg_err)?, &data_dir).await
-            }
-            Operation::Start => {
-                ensure_postgres_started(pg.as_mut().ok_or_else(pg_err)?, &data_dir).await?;
-                if let Some(i) = pg.take() {
-                    std::mem::forget(i); // Leak to keep PostgreSQL running after worker exit.
-                }
-                Ok(())
-            }
-            Operation::Stop => execute_stop(&mut pg).await,
+    match op {
+        Operation::Cleanup => execute_cleanup(&data_dir, None, None),
+        Operation::CleanupFull => {
+            let install_dir = extract_install_dir(&settings)?;
+            let install_root = extract_install_root(&settings)?;
+            execute_cleanup(&data_dir, Some(&install_dir), install_root.as_deref())
         }
-    })
+        Operation::Setup | Operation::Start | Operation::Stop => {
+            let runtime = build_runtime()?;
+            let mut pg = Some(PostgreSQL::new(settings));
+            runtime.block_on(async {
+                let pg_err = || WorkerError::PostgresOperation("no pg".into());
+                match op {
+                    Operation::Setup => {
+                        run_postgres_setup(pg.as_mut().ok_or_else(pg_err)?, &data_dir).await
+                    }
+                    Operation::Start => {
+                        ensure_postgres_started(pg.as_mut().ok_or_else(pg_err)?, &data_dir).await?;
+                        if let Some(i) = pg.take() {
+                            std::mem::forget(i); // Leak to keep PostgreSQL running after worker exit.
+                        }
+                        Ok(())
+                    }
+                    Operation::Stop => execute_stop(&mut pg).await,
+                    Operation::Cleanup | Operation::CleanupFull => Ok(()),
+                }
+            })
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -153,6 +170,24 @@ fn build_runtime() -> Result<tokio::runtime::Runtime, WorkerError> {
 fn extract_data_dir(settings: &postgresql_embedded::Settings) -> Result<Utf8PathBuf, WorkerError> {
     Utf8PathBuf::from_path_buf(settings.data_dir.clone())
         .map_err(|_| WorkerError::SettingsConversion("data_dir must be valid UTF-8".into()))
+}
+
+#[cfg(unix)]
+fn extract_install_dir(
+    settings: &postgresql_embedded::Settings,
+) -> Result<Utf8PathBuf, WorkerError> {
+    Utf8PathBuf::from_path_buf(settings.installation_dir.clone()).map_err(|_| {
+        WorkerError::SettingsConversion("installation_dir must be valid UTF-8".into())
+    })
+}
+
+#[cfg(unix)]
+fn extract_install_root(
+    settings: &postgresql_embedded::Settings,
+) -> Result<Option<Utf8PathBuf>, WorkerError> {
+    let pgpass = Utf8PathBuf::from_path_buf(settings.password_file.clone())
+        .map_err(|_| WorkerError::SettingsConversion("password_file must be valid UTF-8".into()))?;
+    Ok(pgpass.parent().map(ToOwned::to_owned))
 }
 
 #[cfg(unix)]
@@ -254,6 +289,37 @@ async fn execute_stop(pg: &mut Option<PostgreSQL>) -> Result<(), WorkerError> {
 }
 
 #[cfg(unix)]
+fn collect_removal_error(failures: &mut Vec<String>, path: &Utf8Path, label: &str) {
+    if let Err(err) = remove_dir_all_if_exists(path, label) {
+        failures.push(err);
+    }
+}
+
+#[cfg(unix)]
+fn execute_cleanup(
+    data_dir: &Utf8Path,
+    install_dir: Option<&Utf8Path>,
+    install_root: Option<&Utf8Path>,
+) -> Result<(), WorkerError> {
+    let mut failures = Vec::new();
+    collect_removal_error(&mut failures, data_dir, "data");
+    if let Some(path) = install_dir {
+        collect_removal_error(&mut failures, path, "installation");
+    }
+    if let Some(path) = install_root {
+        let already_removed = install_dir.is_some_and(|install_path| install_path == path);
+        if !already_removed {
+            collect_removal_error(&mut failures, path, "installation-root");
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(WorkerError::CleanupFailed(failures.join("; ")))
+    }
+}
+
+#[cfg(unix)]
 fn apply_worker_environment(environment: &[(String, Option<PlainSecret>)]) {
     for (key, value) in environment {
         // SAFETY: worker is single-threaded; environment updates cannot race.
@@ -286,6 +352,54 @@ fn reset_data_dir(data_dir: &Utf8Path) -> Result<(), BoxError> {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.into()),
+    }
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum RemovalOutcome {
+    Removed,
+    Missing,
+}
+
+#[cfg(unix)]
+fn remove_dir_all_if_exists(path: &Utf8Path, label: &str) -> Result<(), String> {
+    match try_remove_dir_all(path) {
+        Ok(outcome) => {
+            log_removal_outcome(outcome, path, label);
+            Ok(())
+        }
+        Err(err) => Err(format!(
+            "failed to remove {label} directory {}: {err}",
+            path.as_str()
+        )),
+    }
+}
+
+#[cfg(unix)]
+fn log_removal_outcome(outcome: RemovalOutcome, path: &Utf8Path, label: &str) {
+    match outcome {
+        RemovalOutcome::Removed => log_dir_removed(path, label),
+        RemovalOutcome::Missing => log_dir_missing(path, label),
+    }
+}
+
+#[cfg(unix)]
+fn log_dir_removed(path: &Utf8Path, label: &str) {
+    info!(path = %path, label, "removed postgres directory");
+}
+
+#[cfg(unix)]
+fn log_dir_missing(path: &Utf8Path, label: &str) {
+    info!(path = %path, label, "postgres directory already removed");
+}
+
+#[cfg(unix)]
+fn try_remove_dir_all(path: &Utf8Path) -> Result<RemovalOutcome, std::io::Error> {
+    match std::fs::remove_dir_all(path.as_std_path()) {
+        Ok(()) => Ok(RemovalOutcome::Removed),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(RemovalOutcome::Missing),
+        Err(err) => Err(err),
     }
 }
 

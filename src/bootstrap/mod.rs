@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use color_eyre::eyre::Context;
 use postgresql_embedded::Settings;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     PgEnvCfg,
@@ -27,6 +28,18 @@ use self::{
 
 const DEFAULT_SETUP_TIMEOUT: Duration = Duration::from_secs(180);
 const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Controls cleanup behaviour when a cluster is dropped.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Default)]
+pub enum CleanupMode {
+    /// Remove only the data directory.
+    #[default]
+    DataOnly,
+    /// Remove both the data and installation directories.
+    Full,
+    /// Skip cleanup entirely (useful for debugging).
+    None,
+}
 
 /// Structured settings returned from [`bootstrap_for_tests`].
 #[derive(Debug, Clone)]
@@ -47,6 +60,8 @@ pub struct TestBootstrapSettings {
     pub start_timeout: Duration,
     /// Grace period granted to `PostgreSQL` during drop before teardown proceeds regardless.
     pub shutdown_timeout: Duration,
+    /// Controls cleanup behaviour when the cluster drops.
+    pub cleanup_mode: CleanupMode,
     /// Optional override for the binary cache directory.
     ///
     /// When set, `TestCluster` uses this directory instead of the default
@@ -134,6 +149,7 @@ fn orchestrate_bootstrap() -> BootstrapResult<TestBootstrapSettings> {
         setup_timeout: DEFAULT_SETUP_TIMEOUT,
         start_timeout: DEFAULT_START_TIMEOUT,
         shutdown_timeout,
+        cleanup_mode: CleanupMode::default(),
         binary_cache_dir: cfg.binary_cache_dir,
     })
 }

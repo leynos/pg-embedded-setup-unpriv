@@ -1,25 +1,24 @@
 # Fix TestCluster RAII cleanup (issue 66)
 
 
-This ExecPlan is a living document. The sections `Constraints`,
-`Tolerances`, `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`,
-and `Outcomes & Retrospective` must be kept up to date as work proceeds.
+This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
+`Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
+`Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-Status: DRAFT
+Status: COMPLETE (2026-01-28)
 
 PLANS.md: not present in this repository.
 
 
 ## Purpose / big picture
 
-After this change, dropping `TestCluster` (a RAII fixture: Resource
-Acquisition Is Initialization) removes its PostgreSQL data directory from
-`/var/tmp` so test runs no longer leak 38-160 MB per run. This closes
-issue 66. The behaviour is observable by running tests that use
-`TestCluster` and confirming that `/var/tmp/pg-embed-{uid}/data` (and,
-when configured, `/var/tmp/pg-embed-{uid}/install`) is removed after the
-fixture is dropped. Shared clusters created by `shared_cluster()` remain
-leaked by design.
+After this change, dropping `TestCluster` (a RAII fixture: Resource Acquisition
+Is Initialization) removes its PostgreSQL data directory from `/var/tmp` so
+test runs no longer leak 38-160 MB per run. This closes issue 66. The behaviour
+is observable by running tests that use `TestCluster` and confirming that
+`/var/tmp/pg-embed-{uid}/data` (and, when configured,
+`/var/tmp/pg-embed-{uid}/install`) is removed after the fixture is dropped.
+Shared clusters created by `shared_cluster()` remain leaked by design.
 
 
 ## Constraints
@@ -53,57 +52,69 @@ leaked by design.
 ## Risks
 
 - Risk: cleanup runs with insufficient privileges and fails silently.
-  Severity: high
-  Likelihood: medium
-  Mitigation: execute cleanup via the worker subprocess running as `nobody`
-  and log warnings on failure.
+  Severity: high Likelihood: medium Mitigation: execute cleanup via the worker
+  subprocess running as `nobody` and log warnings on failure.
 - Risk: cleanup removes a directory still in use by another process.
-  Severity: medium
-  Likelihood: low
-  Mitigation: ensure cleanup runs after stop and only for non-shared
-  clusters.
+  Severity: medium Likelihood: low Mitigation: ensure cleanup runs after stop
+  and only for non-shared clusters.
 - Risk: tests become flaky due to timing of cleanup.
-  Severity: medium
-  Likelihood: low
-  Mitigation: make cleanup synchronous in `Drop` and ensure idempotent
-  deletion with existence checks.
+  Severity: medium Likelihood: low Mitigation: make cleanup synchronous in
+  `Drop` and ensure idempotent deletion with existence checks.
 
 
 ## Progress
 
 - [x] (2026-01-28 00:00Z) Drafted ExecPlan with options and constraints.
-- [ ] Decide on final cleanup mode defaults and document.
-- [ ] Implement cleanup operation and configuration.
-- [ ] Add/extend tests for cleanup behaviour.
-- [ ] Validate with required make targets.
-- [ ] Update documentation and finalise plan.
+- [x] (2026-01-28 01:10Z) Decided cleanup defaults (DataOnly) and documented.
+- [x] (2026-01-28 01:20Z) Implemented cleanup operations and configuration.
+- [x] (2026-01-28 01:30Z) Added tests for cleanup behaviour.
+- [x] (2026-01-28 02:05Z) Validated make targets (fmt/check-fmt/lint/test).
+- [x] (2026-01-28 02:10Z) Updated documentation and finalised plan.
 
 
 ## Surprises & Discoveries
 
-- None yet.
+- The full-cleanup drop test initially left the installation directory behind
+  in root mode. Added install-root cleanup (based on `password_file` parent)
+  and a best-effort in-process cleanup after worker shutdown to keep cleanup
+  deterministic.
 
 
 ## Decision Log
 
 - Decision: prefer a hybrid approach (add `WorkerOperation::Cleanup` and
-  `CleanupMode` with data-only default, optional full cleanup).
-  Rationale: preserves the worker model while allowing correct cleanup and
-  optional install caching.
-  Date/Author: 2026-01-28 (assistant)
+  `CleanupMode` with data-only default, optional full cleanup). Rationale:
+  preserves the worker model while allowing correct cleanup and optional
+  install caching. Date/Author: 2026-01-28 (assistant)
+- Decision: model full cleanup as a distinct worker operation
+  (`CleanupFull`) rather than encoding cleanup mode in the worker payload.
+  Rationale: avoids breaking the public `WorkerRequestArgs` surface and keeps
+  worker invocation arguments stable. Date/Author: 2026-01-28 (assistant)
+- Decision: keep the worker cleanup as the primary root-mode path, but follow
+  it with a best-effort in-process cleanup to cover cases where the worker
+  cannot remove the installation root. Rationale: prevents root-mode leaks
+  without changing the worker sequencing guarantees. Date/Author: 2026-01-28
+  (assistant)
 
 
 ## Outcomes & Retrospective
 
-- Pending.
+- Delivered deterministic cleanup for `TestCluster` drops in both worker and
+  in-process paths, including removal of installation roots when configured for
+  full cleanup. This closes issue 66.
+- Tests executed:
+  - `make fmt` (see `/tmp/issue-66-make-fmt.log`).
+  - `make check-fmt` (see `/tmp/issue-66-check-fmt.log`).
+  - `make lint` (see `/tmp/issue-66-make-lint.log`).
+  - `make test` (see `/tmp/issue-66-make-test.log`).
 
 
 ## Context and orientation
 
 `TestCluster` is a Rust RAII fixture that spins up a PostgreSQL instance for
 integration tests. In privileged (root) mode, lifecycle operations run in
-separate worker subprocesses as the `nobody` user. The worker subprocess
-model performs setup, start, and stop as separate invocations, which is why
+separate worker subprocesses as the `nobody` user. The worker subprocess model
+performs setup, start, and stop as separate invocations, which is why
 `settings.temporary = false` is set during bootstrap in
 `src/bootstrap/prepare/mod.rs`. Today, `TestCluster::drop()` only invokes
 `WorkerOperation::Stop`, leaving `/var/tmp/pg-embed-{uid}/install` and
@@ -124,8 +135,8 @@ Key files for this change:
 
 ## Plan of work
 
-Stage A: confirm current behaviour and decide defaults. Read the listed
-source files to confirm where cleanup is best inserted. Decide whether
+Stage A: confirm current behaviour and decide defaults. Read the listed source
+files to confirm where cleanup is best inserted. Decide whether
 `CleanupMode::DataOnly` is the default (recommended) and confirm if install
 cleanup should be opt-in only. Go/no-go: if the worker process cannot access
 paths needed for cleanup, stop and ask for guidance.
@@ -138,16 +149,16 @@ and timeout. Add `CleanupMode` to `TestBootstrapSettings` with a default of
 Stage C: implement cleanup behaviour. Update the worker dispatcher in
 `src/worker.rs` to handle `Cleanup`. Implement idempotent deletion of the
 `data` directory and optionally the `install` directory. Update
-`TestCluster::drop()` (sync and async paths) to invoke `Cleanup` after
-`Stop`, skipping cleanup for leaked shared clusters or when
-`CleanupMode::None` is configured. Ensure non-worker (unprivileged) clusters
-perform local cleanup without invoking the worker.
+`TestCluster::drop()` (sync and async paths) to invoke `Cleanup` after `Stop`,
+skipping cleanup for leaked shared clusters or when `CleanupMode::None` is
+configured. Ensure non-worker (unprivileged) clusters perform local cleanup
+without invoking the worker.
 
-Stage D: tests and documentation. Extend `tests/test_cluster_drop.rs` to
-assert directory removal and add new test coverage for `CleanupMode::Full`
-and `CleanupMode::None`. Add a new integration test file only if existing
-fixtures cannot represent the cases. Update documentation for `TestCluster`
-and `CleanupMode` in `docs/` and any relevant module-level comments. Run all
+Stage D: tests and documentation. Extend `tests/test_cluster_drop.rs` to assert
+directory removal and add new test coverage for `CleanupMode::Full` and
+`CleanupMode::None`. Add a new integration test file only if existing fixtures
+cannot represent the cases. Update documentation for `TestCluster` and
+`CleanupMode` in `docs/` and any relevant module-level comments. Run all
 required make targets and fix any failures.
 
 
@@ -208,10 +219,10 @@ migration or irreversible change is expected.
 
 ## Artifacts and notes
 
-When implemented, capture a brief log excerpt confirming cleanup. Example
-shape only (replace with actual output):
+When implemented, capture a brief log excerpt confirming cleanup. Example shape
+only (replace with actual output):
 
-    INFO ... cleanup removed data directory /var/tmp/pg-embed-1234/data
+    INFO … cleanup removed data directory /var/tmp/pg-embed-1234/data
 
 
 ## Interfaces and dependencies
@@ -232,10 +243,11 @@ Add a new worker operation in `src/cluster/worker_operation.rs`:
         Start,
         Stop,
         Cleanup,
+        CleanupFull,
     }
 
-Update the worker dispatcher in `src/worker.rs` to handle `Cleanup`, and
-update `TestCluster` drop logic in `src/cluster/mod.rs` to invoke it.
+Update the worker dispatcher in `src/worker.rs` to handle `Cleanup`, and update
+`TestCluster` drop logic in `src/cluster/mod.rs` to invoke it.
 
 
 ## Revision note

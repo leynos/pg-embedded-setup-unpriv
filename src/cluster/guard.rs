@@ -40,9 +40,9 @@
 
 use super::runtime_mode::ClusterRuntime;
 use super::shutdown;
-use crate::TestBootstrapSettings;
 use crate::env::ScopedEnv;
 use crate::observability::LOG_TARGET;
+use crate::{CleanupMode, TestBootstrapSettings};
 use postgresql_embedded::PostgreSQL;
 use tracing::{info, warn};
 
@@ -126,6 +126,26 @@ impl ClusterGuard {
     #[must_use]
     pub fn with_worker_guard(mut self, worker_guard: Option<ScopedEnv>) -> Self {
         self.worker_guard = worker_guard;
+        self
+    }
+
+    /// Overrides the cleanup mode used when the guard is dropped.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::{CleanupMode, TestCluster};
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let (handle, guard) = TestCluster::new_split()?;
+    /// let guard = guard.with_cleanup_mode(CleanupMode::None);
+    /// # drop(handle);
+    /// # drop(guard);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub const fn with_cleanup_mode(mut self, cleanup_mode: CleanupMode) -> Self {
+        self.bootstrap.cleanup_mode = cleanup_mode;
         self
     }
 }
