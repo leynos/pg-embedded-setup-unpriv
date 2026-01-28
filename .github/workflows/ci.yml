@@ -20,7 +20,7 @@ jobs:
       BUILD_PROFILE: debug
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Setup Rust
         uses: leynos/shared-actions/.github/actions/setup-rust@fb861087e1ddbbe32c3f44d7896f1d2364dd7711
       - name: Format
