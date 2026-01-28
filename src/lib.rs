@@ -314,6 +314,7 @@ impl PgEnvCfg {
         self.apply_connection(&mut s);
         self.apply_paths(&mut s);
         self.apply_locale(&mut s);
+        Self::apply_worker_limits(&mut s);
 
         Ok(s)
     }
@@ -360,6 +361,26 @@ impl PgEnvCfg {
             settings
                 .configuration
                 .insert("encoding".into(), enc.clone());
+        }
+    }
+
+    fn apply_worker_limits(settings: &mut Settings) {
+        let defaults = [
+            ("max_connections", "20"),
+            ("max_worker_processes", "2"),
+            ("max_parallel_workers", "0"),
+            ("max_parallel_workers_per_gather", "0"),
+            ("max_parallel_maintenance_workers", "0"),
+            ("autovacuum", "off"),
+            ("max_wal_senders", "0"),
+            ("max_replication_slots", "0"),
+        ];
+
+        for (key, value) in defaults {
+            settings
+                .configuration
+                .entry(key.to_owned())
+                .or_insert_with(|| value.to_owned());
         }
     }
 }

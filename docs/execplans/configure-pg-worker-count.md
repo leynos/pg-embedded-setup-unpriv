@@ -4,7 +4,7 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprizes & Discoveries`, `Decision Log`, and
 `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-Status: DRAFT
+Status: COMPLETE
 
 PLANS.md does not exist in this repository.
 
@@ -43,49 +43,53 @@ setup and confirming the expected Postgres server settings (e.g.
 ## Risks
 
 - Risk: applying the settings to non-test clusters could reduce performance or
-  disable required parallelism.
-  Severity: high
-  Likelihood: medium
-  Mitigation: confirm where `postgresql_embedded` is used and scope changes to
+  disable required parallelism. Severity: high Likelihood: medium Mitigation:
+  confirm where `postgresql_embedded` is used and scope changes to
   ephemeral/test cluster setup.
 - Risk: disabling autovacuum may cause bloat or slow tests that rely on vacuum
-  behaviour.
-  Severity: medium
-  Likelihood: medium
-  Mitigation: gate autovacuum changes to short-lived clusters and document the
-  trade-off.
+  behaviour. Severity: medium Likelihood: medium Mitigation: gate autovacuum
+  changes to short-lived clusters and document the trade-off.
 - Risk: existing code already sets server configuration, and new inserts could
-  override required settings.
-  Severity: medium
-  Likelihood: medium
-  Mitigation: inspect current settings and merge carefully; add comments
-  documenting intent.
+  override required settings. Severity: medium Likelihood: medium Mitigation:
+  inspect current settings and merge carefully; add comments documenting intent.
 
 ## Progress
 
 - [x] (2026-01-28 00:00Z) Drafted initial ExecPlan.
-- [ ] Confirm where embedded Postgres clusters are created in the codebase.
-- [ ] Add worker-related server configuration to `Settings.configuration`.
-- [ ] Validate settings via tests and (optionally) manual `SHOW` checks.
-- [ ] Update documentation if any user-facing behaviour changes.
+- [x] (2026-01-28 18:35Z) Located bootstrap settings creation and cluster
+  startup paths.
+- [x] (2026-01-28 18:40Z) Added worker-related configuration defaults to
+  `Settings.configuration` during settings creation.
+- [x] (2026-01-28 19:35Z) Validated settings via formatting, lint, and test
+  gates.
+- [x] (2026-01-28 18:45Z) Updated documentation to reflect the new defaults.
 
 ## Surprizes & discoveries
 
-- Observation: none yet.
-  Evidence: not applicable.
-  Impact: not applicable.
+- Observation: `make test` initially failed because `cargo nextest` was
+  missing. Evidence: `error: no such command: \`nextest\`` during `make test`.
+  Impact: Installed `cargo-nextest` via `cargo install --locked cargo-nextest`
+  before rerunning the test suite.
 
 ## Decision log
 
 - Decision: use `Settings.configuration: HashMap<String, String>` to set server
-  configuration for embedded Postgres.
-  Rationale: this is the supported knob for server configuration in
-  `postgresql_embedded` and matches the upstream examples.[^1]
-  Date/Author: 2026-01-28 / Codex
+  configuration for embedded Postgres. Rationale: this is the supported knob
+  for server configuration in `postgresql_embedded` and matches the upstream
+  examples.[^1] Date/Author: 2026-01-28 / Codex
+- Decision: apply worker limits inside `PgEnvCfg::to_settings` so every
+  bootstrap-derived `Settings` instance receives the defaults. Rationale:
+  `to_settings` is the shared entry point for cluster setup, keeping
+  configuration centralised without adding new public APIs. Date/Author:
+  2026-01-28 / Codex
 
 ## Outcomes & retrospective
 
-To be completed after implementation.
+Default embedded PostgreSQL settings now include worker and parallelism limits,
+with autovacuum disabled to keep ephemeral test clusters lightweight. Added a
+settings test to verify the configuration map is populated, updated user-facing
+documentation, and ran formatting, lint, and test gates. Future work could add
+a user-facing override if production-style settings are needed.
 
 ## Context and orientation
 
@@ -202,6 +206,13 @@ had the intended effect.
 
 Initial draft created from the user-provided configuration guidance and
 repository constraints.
+
+Revision 2026-01-28: marked the plan in progress, recorded implementation
+location decisions, and updated progress to reflect configuration and
+documentation changes. Remaining work is limited to validation.
+
+Revision 2026-01-28: marked the plan complete after implementing the settings
+defaults, validating via the standard gates, and documenting the new behaviour.
 
 [^1]: https://docs.rs/postgresql_embedded/latest/postgresql_embedded/struct.Settings.html
 [^2]: https://docs.rs/postgresql_embedded/latest/postgresql_embedded/struct.PostgreSQL.html

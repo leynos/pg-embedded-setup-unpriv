@@ -97,6 +97,35 @@ fn to_settings_default_config() -> color_eyre::Result<()> {
     Ok(())
 }
 
+#[rstest]
+fn to_settings_applies_worker_limits() -> color_eyre::Result<()> {
+    let cfg = PgEnvCfg::default();
+    let settings = cfg.to_settings()?;
+
+    let expected = [
+        ("max_connections", "20"),
+        ("max_worker_processes", "2"),
+        ("max_parallel_workers", "0"),
+        ("max_parallel_workers_per_gather", "0"),
+        ("max_parallel_maintenance_workers", "0"),
+        ("autovacuum", "off"),
+        ("max_wal_senders", "0"),
+        ("max_replication_slots", "0"),
+    ];
+
+    for (key, value) in expected {
+        ensure!(
+            settings
+                .configuration
+                .get(key)
+                .is_some_and(|observed| observed == value),
+            "{key} should be configured as {value}",
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(all(unix, feature = "privileged-tests"))]
 #[rstest]
 /// Verify that the effective uid is changed within the passed block
