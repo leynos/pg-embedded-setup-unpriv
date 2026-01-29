@@ -16,7 +16,7 @@ use pg_embedded_setup_unpriv::{ExecutionPrivileges, PgEnvCfg, detect_execution_p
 #[cfg(all(unix, feature = "cluster-unit-tests"))]
 use pg_embedded_setup_unpriv::{make_data_dir_private, make_dir_accessible};
 use postgresql_embedded::VersionReq;
-use rstest::rstest;
+use rstest::{fixture, rstest};
 
 #[cfg(feature = "privileged-tests")]
 #[expect(
@@ -97,10 +97,14 @@ fn to_settings_default_config() -> color_eyre::Result<()> {
     Ok(())
 }
 
+#[fixture]
+fn default_pg_env() -> PgEnvCfg {
+    PgEnvCfg::default()
+}
+
 #[rstest]
-fn to_settings_for_tests_applies_worker_limits() -> color_eyre::Result<()> {
-    let cfg = PgEnvCfg::default();
-    let settings = cfg.to_settings_for_tests()?;
+fn to_settings_for_tests_applies_worker_limits(default_pg_env: PgEnvCfg) -> color_eyre::Result<()> {
+    let settings = default_pg_env.to_settings_for_tests()?;
 
     ensure!(
         settings
@@ -121,9 +125,8 @@ fn to_settings_for_tests_applies_worker_limits() -> color_eyre::Result<()> {
 }
 
 #[rstest]
-fn to_settings_omits_worker_limits_by_default() -> color_eyre::Result<()> {
-    let cfg = PgEnvCfg::default();
-    let settings = cfg.to_settings()?;
+fn to_settings_omits_worker_limits_by_default(default_pg_env: PgEnvCfg) -> color_eyre::Result<()> {
+    let settings = default_pg_env.to_settings()?;
 
     ensure!(
         !settings.configuration.contains_key("autovacuum"),

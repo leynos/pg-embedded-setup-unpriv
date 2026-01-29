@@ -68,7 +68,7 @@ setup and confirming the expected Postgres server settings (e.g.
 ## Surprises & discoveries
 
 - Observation: `make test` initially failed because `cargo nextest` was
-  missing. Evidence: `error: no such command: \`nextest\`` during `make test`.
+  missing. Evidence: error: no such command: `nextest` during `make test`.
   Impact: Installed `cargo-nextest` via `cargo install --locked cargo-nextest`
   before rerunning the test suite.
 
