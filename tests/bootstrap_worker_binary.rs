@@ -136,6 +136,32 @@ const fn pg_worker_binary() -> Option<&'static str> {
     option_env!("CARGO_BIN_EXE_pg_worker")
 }
 
+/// Asserts that `pg_worker` fails with a specific error message in stderr.
+fn assert_pg_worker_fails_with_message(
+    args: &[&str],
+    expected_message: &str,
+    test_description: &str,
+) -> Result<()> {
+    let Some(binary) = pg_worker_binary() else {
+        return Ok(());
+    };
+
+    let output = Command::new(binary).args(args).output()?;
+
+    ensure!(
+        !output.status.success(),
+        "pg_worker should fail with {test_description}"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        stderr.contains(expected_message),
+        eyre!("stderr should contain '{expected_message}', got: {stderr}")
+    );
+
+    Ok(())
+}
+
 #[test]
 fn pg_worker_binary_rejects_invalid_operation() -> Result<()> {
     let Some(binary) = pg_worker_binary() else {
@@ -166,46 +192,12 @@ fn pg_worker_binary_rejects_invalid_operation() -> Result<()> {
 
 #[test]
 fn pg_worker_binary_missing_operation_shows_error() -> Result<()> {
-    let Some(binary) = pg_worker_binary() else {
-        return Ok(());
-    };
-
-    let output = Command::new(binary).output()?;
-
-    ensure!(
-        !output.status.success(),
-        "pg_worker should fail with missing operation"
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    ensure!(
-        stderr.contains("missing operation"),
-        eyre!("stderr should mention 'missing operation', got: {stderr}")
-    );
-
-    Ok(())
+    assert_pg_worker_fails_with_message(&[], "missing operation", "missing operation")
 }
 
 #[test]
 fn pg_worker_binary_missing_config_shows_error() -> Result<()> {
-    let Some(binary) = pg_worker_binary() else {
-        return Ok(());
-    };
-
-    let output = Command::new(binary).args(["setup"]).output()?;
-
-    ensure!(
-        !output.status.success(),
-        "pg_worker should fail with missing config path"
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    ensure!(
-        stderr.contains("missing config path"),
-        eyre!("stderr should mention 'missing config path', got: {stderr}")
-    );
-
-    Ok(())
+    assert_pg_worker_fails_with_message(&["setup"], "missing config path", "missing config path")
 }
 
 #[test]
