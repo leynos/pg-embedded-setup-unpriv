@@ -210,9 +210,9 @@ fn pg_worker_binary_is_available() {
     if std::env::var("CARGO_BIN_EXE_pg_worker").is_err() {
         // Check if we're likely running with --all-targets by looking for other
         // binary environment variables that Cargo sets
-        let has_any_bin_exe = std::env::vars().any(|(k, _)| k.starts_with("CARGO_BIN_EXE_"));
+        let other_binaries_present = std::env::vars().any(|(k, _)| k.starts_with("CARGO_BIN_EXE_"));
         assert!(
-            !has_any_bin_exe,
+            !other_binaries_present,
             "pg_worker binary not found but other binaries are present. \
              This suggests the pg_worker binary failed to build."
         );
