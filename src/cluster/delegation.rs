@@ -4,9 +4,10 @@
 //! `TestCluster`, eliminating the need for callers to explicitly call `.connection()`
 //! before invoking methods like `create_database` or `drop_database`.
 
-use super::TestCluster;
 use super::lifecycle::DatabaseName;
 use super::temporary_database::TemporaryDatabase;
+use super::{ClusterHandle, TestCluster};
+use crate::CleanupMode;
 use crate::error::BootstrapResult;
 
 /// Generates delegation methods on `TestCluster` that forward to `TestClusterConnection`.
@@ -56,6 +57,27 @@ macro_rules! delegate_to_connection {
             self.connection().$name($arg1, $arg2)
         }
     };
+}
+
+impl TestCluster {
+    /// Overrides the cleanup mode used when the cluster is dropped.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::{CleanupMode, TestCluster};
+    ///
+    /// # fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    /// let cluster = TestCluster::new()?.with_cleanup_mode(CleanupMode::Full);
+    /// # drop(cluster);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_cleanup_mode(mut self, cleanup_mode: CleanupMode) -> Self {
+        self.guard.bootstrap.cleanup_mode = cleanup_mode;
+        self.handle = ClusterHandle::new(self.guard.bootstrap.clone());
+        self
+    }
 }
 
 impl TestCluster {
