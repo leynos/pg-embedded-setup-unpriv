@@ -1,7 +1,11 @@
-//! Exercises failure paths when the worker binary is misconfigured.
+//! Integration tests for the `pg_worker` binary.
 //!
-//! These checks ensure the bootstrapper validates helper paths eagerly so
-//! privileged orchestration does not defer errors to runtime.
+//! This module covers:
+//! - Bootstrap failure paths when the worker binary is misconfigured, ensuring
+//!   the bootstrapper validates helper paths eagerly so privileged orchestration
+//!   does not defer errors to runtime.
+//! - Binary invocation tests validating argument parsing, error messages, and
+//!   output formatting.
 #![cfg(unix)]
 
 use std::ffi::{OsStr, OsString};
