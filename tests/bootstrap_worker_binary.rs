@@ -217,8 +217,8 @@ fn pg_worker_binary_error_format_uses_prefix() -> Result<()> {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     ensure!(
-        stderr.contains("invalid arguments:"),
-        eyre!("error output should contain 'invalid arguments:' prefix, got: {stderr}")
+        stderr.contains("InvalidArgs"),
+        eyre!("error output should contain 'InvalidArgs' prefix, got: {stderr}")
     );
 
     Ok(())
