@@ -16,7 +16,9 @@ images where direct access to the `nobody` account is required.
 
 Configuration is discovered via environment variables, files, and CLI arguments
 thanks to `ortho_config`. All fields are optional; when omitted the defaults
-from `postgresql_embedded::Settings::default()` are used.
+from `postgresql_embedded::Settings::default()` are used. The test bootstrap
+helpers (`bootstrap_for_tests` and `TestCluster`) additionally apply server
+configuration defaults that limit background workers for ephemeral clusters.
 
 - `PG_VERSION_REQ` – SemVer requirement such as `^17` or `=16.4.0`.
 - `PG_PORT` – TCP port for the server to listen on. Defaults to `5432`.

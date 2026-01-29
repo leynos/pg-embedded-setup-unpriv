@@ -16,7 +16,7 @@ use pg_embedded_setup_unpriv::{ExecutionPrivileges, PgEnvCfg, detect_execution_p
 #[cfg(all(unix, feature = "cluster-unit-tests"))]
 use pg_embedded_setup_unpriv::{make_data_dir_private, make_dir_accessible};
 use postgresql_embedded::VersionReq;
-use rstest::rstest;
+use rstest::{fixture, rstest};
 
 #[cfg(feature = "privileged-tests")]
 #[expect(
@@ -94,6 +94,49 @@ fn to_settings_roundtrip() -> color_eyre::Result<()> {
 fn to_settings_default_config() -> color_eyre::Result<()> {
     let cfg = PgEnvCfg::default();
     cfg.to_settings()?;
+    Ok(())
+}
+
+#[fixture]
+fn default_pg_env() -> PgEnvCfg {
+    PgEnvCfg::default()
+}
+
+#[rstest]
+fn to_settings_for_tests_applies_worker_limits(default_pg_env: PgEnvCfg) -> color_eyre::Result<()> {
+    let settings = default_pg_env.to_settings_for_tests()?;
+
+    ensure!(
+        settings
+            .configuration
+            .get("autovacuum")
+            .is_some_and(|value| value == "off"),
+        "expected autovacuum to be disabled for tests",
+    );
+    ensure!(
+        settings
+            .configuration
+            .get("max_connections")
+            .is_some_and(|value| value == "20"),
+        "expected max_connections to be capped for tests",
+    );
+
+    Ok(())
+}
+
+#[rstest]
+fn to_settings_omits_worker_limits_by_default(default_pg_env: PgEnvCfg) -> color_eyre::Result<()> {
+    let settings = default_pg_env.to_settings()?;
+
+    ensure!(
+        !settings.configuration.contains_key("autovacuum"),
+        "expected autovacuum to remain at PostgreSQL defaults",
+    );
+    ensure!(
+        !settings.configuration.contains_key("max_connections"),
+        "expected max_connections to remain at PostgreSQL defaults",
+    );
+
     Ok(())
 }
 

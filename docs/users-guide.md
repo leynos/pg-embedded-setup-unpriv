@@ -93,6 +93,12 @@ missing, the helper returns an error advising the caller to install `tzdata` or
 set `TZDIR` explicitly, making the dependency visible during test startup
 rather than when PostgreSQL launches.
 
+`bootstrap_for_tests()` also inserts a small set of PostgreSQL server
+configuration entries into `bootstrap.settings.configuration` to minimize
+background and parallel worker processes for ephemeral test clusters. Override
+these values by mutating the configuration map before starting the cluster if
+your tests need different behaviour.
+
 ## Resource Acquisition Is Initialization (RAII) test clusters
 
 `pg_embedded_setup_unpriv::TestCluster` wraps `bootstrap_for_tests()` with a
