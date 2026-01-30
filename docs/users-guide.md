@@ -33,7 +33,7 @@ tool and integrate it into automated test flows.
 - unset or empty: `postgresql_embedded`
 - `postgresql_embedded`: run the embedded PostgreSQL backend
 
-Any other value triggers a `SKIP-TEST-CLUSTER` error so test harnesses can
+Any other value triggers a `SKIP-TEST-CLUSTER` error, so test harnesses can
 intentionally skip the embedded cluster in mixed environments.
 
 The embedded backend downloads PostgreSQL binaries, initializes the data

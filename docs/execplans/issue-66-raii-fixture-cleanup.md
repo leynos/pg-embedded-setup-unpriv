@@ -119,7 +119,7 @@ performs setup, start, and stop as separate invocations, which is why
 `src/bootstrap/prepare/mod.rs`. Today, `TestCluster::drop()` only invokes
 `WorkerOperation::Stop`, leaving `/var/tmp/pg-embed-{uid}/install` and
 `/var/tmp/pg-embed-{uid}/data` behind. The tests in
-`tests/test_cluster_drop.rs` verify process shutdown and env restoration but
+`tests/test_cluster_drop.rs` verify process shutdown and env restoration, but
 not directory cleanup.
 
 Key files for this change:

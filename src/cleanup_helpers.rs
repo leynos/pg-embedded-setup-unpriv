@@ -19,6 +19,11 @@ pub(crate) enum RemovalOutcome {
     Missing,
 }
 
+pub(crate) fn has_parent_dir(path: &Path) -> bool {
+    path.components()
+        .any(|component| matches!(component, Component::ParentDir))
+}
+
 /// Attempts to remove a directory tree, rejecting unsafe paths before deletion.
 ///
 /// # Examples
@@ -45,11 +50,6 @@ fn guard_removal_path(path: &Path) -> Result<(), std::io::Error> {
         ));
     }
     Ok(())
-}
-
-fn has_parent_dir(path: &Path) -> bool {
-    path.components()
-        .any(|component| matches!(component, Component::ParentDir))
 }
 
 fn is_empty_or_root(path: &Path) -> bool {

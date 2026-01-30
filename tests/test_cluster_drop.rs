@@ -28,10 +28,6 @@ use env_snapshot::EnvSnapshot;
 use sandbox::TestSandbox;
 use serial::{ScenarioSerialGuard, serial_guard};
 
-fn run_cluster_lifecycle_test() -> std::result::Result<(Utf8PathBuf, Utf8PathBuf), Report> {
-    run_cluster_lifecycle_with_cleanup_mode(CleanupMode::DataOnly)
-}
-
 fn run_cluster_lifecycle_with_cleanup_mode(
     cleanup_mode: CleanupMode,
 ) -> std::result::Result<(Utf8PathBuf, Utf8PathBuf), Report> {
@@ -136,9 +132,8 @@ fn run_cluster_drop_test(
     let sandbox = TestSandbox::new(sandbox_name).context("create test cluster sandbox")?;
     sandbox.reset()?;
     let env_before = EnvSnapshot::capture();
-    let result = sandbox.with_env(sandbox.env_without_timezone(), || match cleanup_mode {
-        CleanupMode::DataOnly => run_cluster_lifecycle_test(),
-        _ => run_cluster_lifecycle_with_cleanup_mode(cleanup_mode),
+    let result = sandbox.with_env(sandbox.env_without_timezone(), || {
+        run_cluster_lifecycle_with_cleanup_mode(cleanup_mode)
     });
     if should_skip_test(&result) {
         return Ok(());

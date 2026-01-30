@@ -165,17 +165,17 @@ pub(super) fn drop_sync_cluster(runtime: &tokio::runtime::Runtime, ctx: DropCont
 
     let timeout = bootstrap.shutdown_timeout;
     let timeout_secs = timeout.as_secs();
-    let mut stop_ok = false;
+    let mut is_stop_ok = false;
     if let Some(pg) = postgres.take() {
         let outcome = runtime.block_on(async { time::timeout(timeout, pg.stop()).await });
         match outcome {
-            Ok(Ok(())) => stop_ok = true,
+            Ok(Ok(())) => is_stop_ok = true,
             Ok(Err(err)) => warn_stop_failure(context, &err),
             Err(_) => warn_stop_timeout(timeout_secs, context),
         }
     }
 
-    if stop_ok {
+    if is_stop_ok {
         cleanup::cleanup_in_process(bootstrap.cleanup_mode, &bootstrap.settings, context);
     }
 }

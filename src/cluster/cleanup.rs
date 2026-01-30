@@ -1,11 +1,11 @@
 //! Cleanup helpers for `TestCluster` shutdown.
 
-use crate::cleanup_helpers::{RemovalOutcome, try_remove_dir_all};
+use crate::cleanup_helpers::{RemovalOutcome, has_parent_dir, try_remove_dir_all};
 use crate::observability::LOG_TARGET;
 use crate::{CleanupMode, TestBootstrapSettings};
 use postgresql_embedded::Settings;
 use std::error::Error;
-use std::path::{Component, Path};
+use std::path::Path;
 
 use super::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use super::worker_operation;
@@ -95,20 +95,19 @@ fn cleanup_data_dir(cleanup_mode: CleanupMode, settings: &Settings, context: &st
 }
 
 fn cleanup_install_dir(cleanup_mode: CleanupMode, settings: &Settings, context: &str) {
-    if should_remove_install(cleanup_mode) {
-        remove_dir_all_if_exists(
-            &settings.installation_dir,
-            DirectoryLabel::Installation,
-            context,
-        );
-        if let Some(parent) = settings.password_file.parent() {
-            if parent != settings.installation_dir.as_path()
-                && !has_parent_dir(parent)
-                && parent.starts_with(&settings.installation_dir)
-            {
-                remove_dir_all_if_exists(parent, DirectoryLabel::InstallationRoot, context);
-            }
-        }
+    if !should_remove_install(cleanup_mode) {
+        return;
+    }
+    remove_dir_all_if_exists(
+        &settings.installation_dir,
+        DirectoryLabel::Installation,
+        context,
+    );
+    let Some(parent) = settings.password_file.parent() else {
+        return;
+    };
+    if should_remove_install_root(parent, settings) {
+        remove_dir_all_if_exists(parent, DirectoryLabel::InstallationRoot, context);
     }
 }
 
@@ -128,9 +127,10 @@ const fn cleanup_operation(cleanup_mode: CleanupMode) -> Option<worker_operation
     }
 }
 
-fn has_parent_dir(path: &Path) -> bool {
-    path.components()
-        .any(|component| matches!(component, Component::ParentDir))
+fn should_remove_install_root(parent: &Path, settings: &Settings) -> bool {
+    parent != settings.installation_dir.as_path()
+        && !has_parent_dir(parent)
+        && parent.starts_with(&settings.installation_dir)
 }
 
 fn is_dangerous_cleanup_path(path: &Path) -> bool {
