@@ -15,6 +15,7 @@ use std::process::Command;
 
 use color_eyre::eyre::{Result, ensure, eyre};
 use pg_embedded_setup_unpriv::{BootstrapErrorKind, bootstrap_for_tests};
+use rstest::rstest;
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs;
@@ -162,12 +163,20 @@ fn run_pg_worker(args: &[&str]) -> Result<Option<std::process::Output>> {
     Ok(Some(output))
 }
 
-/// Generates a platform-appropriate temporary config path for testing.
+/// Generates a unique, platform-appropriate temporary config path for testing.
 ///
 /// The path does not need to exist; it is used only to test argument parsing.
+/// Uses a unique suffix to prevent collisions in parallel test runs.
 fn temp_config_path() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let unique_id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let thread_id = std::thread::current().id();
     std::env::temp_dir()
-        .join("pg_worker_test_config.json")
+        .join(format!(
+            "pg_worker_test_config_{thread_id:?}_{unique_id}.json"
+        ))
         .to_string_lossy()
         .into_owned()
 }
@@ -213,8 +222,10 @@ fn pg_worker_binary_is_available() {
         let other_binaries_present = std::env::vars().any(|(k, _)| k.starts_with("CARGO_BIN_EXE_"));
         assert!(
             !other_binaries_present,
-            "pg_worker binary not found but other binaries are present. \
-             This suggests the pg_worker binary failed to build."
+            concat!(
+                "pg_worker binary not found but other binaries are present. ",
+                "This suggests the pg_worker binary failed to build."
+            )
         );
         // Not running with --all-targets, so binary tests are expected to be skipped
         return;
@@ -252,14 +263,14 @@ fn pg_worker_binary_rejects_invalid_operation() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn pg_worker_binary_missing_operation_shows_error() -> Result<()> {
-    assert_pg_worker_fails_with_message(&[], "missing operation", "missing operation")
-}
-
-#[test]
-fn pg_worker_binary_missing_config_shows_error() -> Result<()> {
-    assert_pg_worker_fails_with_message(&["setup"], "missing config path", "missing config path")
+#[rstest]
+#[case::missing_operation(&[], "missing operation")]
+#[case::missing_config(&["setup"], "missing config path")]
+fn pg_worker_binary_shows_expected_errors(
+    #[case] args: &[&str],
+    #[case] expected_message: &str,
+) -> Result<()> {
+    assert_pg_worker_fails_with_message(args, expected_message, expected_message)
 }
 
 #[test]
