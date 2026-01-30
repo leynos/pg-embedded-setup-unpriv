@@ -79,12 +79,12 @@ Known uncertainties that might affect the plan.
   for already-complete setups.
 
 - Risk: When the worker runs with dropped privileges (as `nobody`), it may lack
-  permission to delete a data directory whose parent is owned by root. Severity:
-  medium Likelihood: medium (occurs when `PG_DATA_DIR` is explicitly set).
-  Mitigation: The recovery logic now skips reset for **empty** directories
-  (checked via `is_dir_empty`). Empty directories are a valid pre-setup state
-  created by bootstrap, not a partial initialization requiring cleanup. This
-  avoids permission errors and allows setup to proceed normally.
+  permission to delete a data directory whose parent is owned by root.
+  Severity: medium Likelihood: medium (occurs when `PG_DATA_DIR` is explicitly
+  set). Mitigation: The recovery logic now skips reset for **empty**
+  directories (checked via `is_dir_empty`). Empty directories are a valid
+  pre-setup state created by bootstrap, not a partial initialization requiring
+  cleanup. This avoids permission errors and allows setup to proceed normally.
 
 ## Progress
 
@@ -165,10 +165,9 @@ case where a previous setup attempt left a partial data directory.
 
 A valid PostgreSQL data directory contains the file `global/pg_filenode.map`,
 which is created during successful initialization. The function
-`ambient_dir_and_path` (from `pg_embedded_setup_unpriv`) returns
-a tuple of `(Dir, Utf8PathBuf)` where `Dir` is a capability-safe handle to a
-parent directory and `Utf8PathBuf` is the relative path from that parent to the
-target.
+`ambient_dir_and_path` (from `pg_embedded_setup_unpriv`) returns a tuple of
+`(Dir, Utf8PathBuf)` where `Dir` is a capability-safe handle to a parent
+directory and `Utf8PathBuf` is the relative path from that parent to the target.
 
 The existing error enum `WorkerError` has a variant `DataDirRecovery`
 (currently lines 41-42) that is used for data directory recovery errors.
@@ -179,8 +178,7 @@ The implementation proceeds in three stages.
 
 ### Stage A: Add function implementations
 
-Add the two new helper functions and integrate them into
-`run_postgres_setup`.
+Add the two new helper functions and integrate them into `run_postgres_setup`.
 
 1. Add imports to the existing import block (around line 40-50):
    - `use cap_std::fs::Dir;`
@@ -342,8 +340,8 @@ Step 3: Add has_valid_data_dir function
   Working directory: repository root
 
   Command: Edit `tests/support/pg_worker.rs` and insert the
-  `has_valid_data_dir` function after line 208 (after `run_postgres_setup`
-  and before the test module).
+  `has_valid_data_dir` function after line 208 (after `run_postgres_setup` and
+  before the test module).
 
   Expected result: Code compiles, new function is callable.
 
@@ -520,8 +518,7 @@ The pattern for safe directory removal (from cap_fs_privileged.rs:39-42):
   }
   ```
 
-The pattern for using ambient_dir_and_path (from
-src/bin/pg_worker.rs):
+The pattern for using ambient_dir_and_path (from src/bin/pg_worker.rs):
 
   ```rust
   let (dir, relative) = ambient_dir_and_path(path)?;

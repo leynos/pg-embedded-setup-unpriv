@@ -118,21 +118,19 @@ Document with evidence so future work benefits.
 ## Decision log
 
 Record every significant decision made while working on the plan. Include
-decisions to escalate, decisions on ambiguous requirements, and design
-choices.
+decisions to escalate, decisions on ambiguous requirements, and design choices.
 
 - Decision: Add `#[must_use]` attributes to `TestEnvStore::new()` and
   `TestEnvStore::get()` methods, and implement `Default` trait for
   `TestEnvStore`. Rationale: Clippy requires `#[must_use]` for methods
   returning values that should not be ignored, and suggests `Default`
-  implementation when a `new()` method exists. Date/Author: 2026-01-21
-  (Codex).
+  implementation when a `new()` method exists. Date/Author: 2026-01-21 (Codex).
 
 ## Outcomes & retrospective
 
 Summarize outcomes, gaps, and lessons learned at major milestones or at
-completion. Compare the result against the original purpose. Note what would
-be done differently next time.
+completion. Compare the result against the original purpose. Note what would be
+done differently next time.
 
 All objectives achieved:
 
@@ -162,9 +160,9 @@ lines added, and 10 lines removed, well within the 150-line tolerance.
 
 ## Rebase notes
 
-Rebased onto origin/main (commit db74783: Issue 60.5 - Implement
-idempotent lifecycle helpers). One conflict was automatically resolved by
-zdiff3 in the imports section:
+Rebased onto origin/main (commit db74783: Issue 60.5 - Implement idempotent
+lifecycle helpers). One conflict was automatically resolved by zdiff3 in the
+imports section:
 
 Conflict: Both branches modified imports in pg_worker.rs.
 
@@ -172,12 +170,12 @@ Conflict: Both branches modified imports in pg_worker.rs.
   and `use tracing::info;`
 - Issue 60.3 added: `use std::collections::HashMap;`
 
-Resolution: zdiff3 correctly preserved all imports, combining
-`PostgreSQL`, `Status`, `HashMap`, and `tracing::info`.
+Resolution: zdiff3 correctly preserved all imports, combining `PostgreSQL`,
+`Status`, `HashMap`, and `tracing::info`.
 
 The rebase successfully integrated Issue 60.3's `EnvStore` trait and
-implementations with Issue 60.5's lifecycle helpers. Both features now
-coexist in the same file:
+implementations with Issue 60.5's lifecycle helpers. Both features now coexist
+in the same file:
 
 - Issue 60.5: Lifecycle state management (extract_data_dir,
   is_setup_complete, ensure_postgres_setup, ensure_postgres_started)
@@ -199,10 +197,10 @@ term you will use. Do not refer to prior plans.
 The `pg_worker` binary is a privileged worker process invoked by the main
 `pg_embedded_setup_unpriv` library to perform PostgreSQL bootstrap operations.
 The worker receives a `WorkerPayload` via JavaScript Object Notation (JSON)
-containing PostgreSQL settings
-and environment variable overrides. The `apply_worker_environment` function
-applies these environment overrides to the current process before executing the
-requested operation (setup, start, or stop).
+containing PostgreSQL settings and environment variable overrides. The
+`apply_worker_environment` function applies these environment overrides to the
+current process before executing the requested operation (setup, start, or
+stop).
 
 Currently, `apply_worker_environment` in `tests/support/pg_worker.rs` (lines
 208-221) directly calls `unsafe { env::set_var }` and
