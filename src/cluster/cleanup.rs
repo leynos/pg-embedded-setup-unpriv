@@ -105,7 +105,19 @@ const fn cleanup_operation(cleanup_mode: CleanupMode) -> Option<worker_operation
     }
 }
 
+fn is_dangerous_cleanup_path(path: &Path) -> bool {
+    path.as_os_str().is_empty() || (path.is_absolute() && path.parent().is_none())
+}
+
 fn remove_dir_all_if_exists(path: &Path, label: DirectoryLabel, context: &str) {
+    if is_dangerous_cleanup_path(path) {
+        let err = std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "refusing to remove root or empty path",
+        );
+        warn_cleanup_removal_failure(context, label, path, &err);
+        return;
+    }
     match try_remove_dir_all(path) {
         Ok(outcome) => log_removal_outcome(outcome, path, label, context),
         Err(err) => warn_cleanup_removal_failure(context, label, path, &err),
