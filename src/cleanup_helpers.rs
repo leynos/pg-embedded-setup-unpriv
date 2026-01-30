@@ -3,12 +3,31 @@
 use std::io::ErrorKind;
 use std::path::{Component, Path};
 
+/// Records the outcome of a guarded directory removal attempt.
+///
+/// # Examples
+/// ```rust,ignore
+/// use std::path::Path;
+///
+/// let path = Path::new("/tmp/example");
+/// let outcome = pg_embedded_setup_unpriv::cleanup_helpers::try_remove_dir_all(path);
+/// assert!(outcome.is_ok());
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum RemovalOutcome {
     Removed,
     Missing,
 }
 
+/// Attempts to remove a directory tree, rejecting unsafe paths before deletion.
+///
+/// # Examples
+/// ```rust,ignore
+/// use std::path::Path;
+///
+/// let path = Path::new("/tmp/example");
+/// let _ = pg_embedded_setup_unpriv::cleanup_helpers::try_remove_dir_all(path);
+/// ```
 pub(crate) fn try_remove_dir_all(path: &Path) -> Result<RemovalOutcome, std::io::Error> {
     guard_removal_path(path)?;
     match std::fs::remove_dir_all(path) {
@@ -19,13 +38,18 @@ pub(crate) fn try_remove_dir_all(path: &Path) -> Result<RemovalOutcome, std::io:
 }
 
 fn guard_removal_path(path: &Path) -> Result<(), std::io::Error> {
-    if is_empty_or_root(path) {
+    if is_empty_or_root(path) || has_parent_dir(path) {
         return Err(std::io::Error::new(
             ErrorKind::InvalidInput,
             format!("refuse to remove unsafe path {}", path.display()),
         ));
     }
     Ok(())
+}
+
+fn has_parent_dir(path: &Path) -> bool {
+    path.components()
+        .any(|component| matches!(component, Component::ParentDir))
 }
 
 fn is_empty_or_root(path: &Path) -> bool {

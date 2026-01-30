@@ -33,8 +33,8 @@ impl WorkerOperation {
             Self::Setup => "postgresql_embedded::setup() failed",
             Self::Start => "postgresql_embedded::start() failed",
             Self::Stop => "postgresql_embedded::stop() failed",
-            Self::Cleanup => "postgresql_embedded::cleanup() failed",
-            Self::CleanupFull => "postgresql_embedded::cleanup_full() failed",
+            Self::Cleanup => "pg_worker cleanup operation failed",
+            Self::CleanupFull => "pg_worker cleanup-full operation failed",
         }
     }
 

@@ -5,7 +5,7 @@ use crate::observability::LOG_TARGET;
 use crate::{CleanupMode, TestBootstrapSettings};
 use postgresql_embedded::Settings;
 use std::error::Error;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use super::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use super::worker_operation;
@@ -27,6 +27,13 @@ impl DirectoryLabel {
     }
 }
 
+/// Invokes worker-managed cleanup for a dropped cluster.
+///
+/// # Examples
+/// ```rust,ignore
+/// # use pg_embedded_setup_unpriv::test_support::fixtures::test_cluster;
+/// # let _ = test_cluster();
+/// ```
 pub(super) fn cleanup_worker_managed_with_runtime(
     runtime: &tokio::runtime::Runtime,
     bootstrap: &TestBootstrapSettings,
@@ -48,6 +55,21 @@ pub(super) fn cleanup_worker_managed_with_runtime(
     }
 }
 
+/// Removes in-process directories after a successful stop.
+///
+/// # Examples
+/// ```rust,ignore
+/// # use pg_embedded_setup_unpriv::{CleanupMode, TestCluster};
+/// # let cluster = TestCluster::new()?;
+/// # let settings = cluster.settings().clone();
+/// pg_embedded_setup_unpriv::cluster::cleanup::cleanup_in_process(
+///     CleanupMode::DataOnly,
+///     &settings,
+///     "example",
+/// );
+/// # drop(cluster);
+/// # Ok::<(), pg_embedded_setup_unpriv::error::BootstrapError>(())
+/// ```
 pub(super) fn cleanup_in_process(cleanup_mode: CleanupMode, settings: &Settings, context: &str) {
     if cleanup_mode == CleanupMode::None {
         return;
@@ -81,6 +103,7 @@ fn cleanup_install_dir(cleanup_mode: CleanupMode, settings: &Settings, context: 
         );
         if let Some(parent) = settings.password_file.parent() {
             if parent != settings.installation_dir.as_path()
+                && !has_parent_dir(parent)
                 && parent.starts_with(&settings.installation_dir)
             {
                 remove_dir_all_if_exists(parent, DirectoryLabel::InstallationRoot, context);
@@ -103,6 +126,11 @@ const fn cleanup_operation(cleanup_mode: CleanupMode) -> Option<worker_operation
         CleanupMode::Full => Some(worker_operation::WorkerOperation::CleanupFull),
         CleanupMode::None => None,
     }
+}
+
+fn has_parent_dir(path: &Path) -> bool {
+    path.components()
+        .any(|component| matches!(component, Component::ParentDir))
 }
 
 fn is_dangerous_cleanup_path(path: &Path) -> bool {
