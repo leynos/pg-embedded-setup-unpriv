@@ -121,6 +121,13 @@ pub struct TestCluster {
     pub(crate) guard: ClusterGuard,
 }
 
+#[cfg(feature = "async-api")]
+enum StopAsyncPath {
+    WorkerManaged,
+    InProcess(Box<postgresql_embedded::PostgreSQL>),
+    Noop,
+}
+
 impl TestCluster {
     /// Boots a `PostgreSQL` instance configured by [`bootstrap_for_tests`].
     ///
@@ -309,6 +316,17 @@ impl TestCluster {
         }
     }
 
+    #[cfg(feature = "async-api")]
+    fn stop_async_path(&mut self) -> StopAsyncPath {
+        if self.guard.is_managed_via_worker {
+            StopAsyncPath::WorkerManaged
+        } else if let Some(postgres) = self.guard.postgres.take() {
+            StopAsyncPath::InProcess(Box::new(postgres))
+        } else {
+            StopAsyncPath::Noop
+        }
+    }
+
     /// Explicitly shuts down an async cluster.
     ///
     /// This method should be called for clusters created with [`start_async()`](Self::start_async)
@@ -341,27 +359,29 @@ impl TestCluster {
         let context = shutdown::stop_context(self.handle.settings());
         shutdown::log_async_stop(&context, self.guard.is_managed_via_worker);
 
-        if self.guard.is_managed_via_worker {
-            shutdown::stop_worker_managed_async(
-                &self.guard.bootstrap,
-                &self.guard.env_vars,
-                &context,
-            )
-            .await
-        } else if let Some(postgres) = self.guard.postgres.take() {
-            let cleanup = shutdown::InProcessCleanup {
-                cleanup_mode: self.guard.bootstrap.cleanup_mode,
-                settings: &self.guard.bootstrap.settings,
-                context: &context,
-            };
-            shutdown::stop_in_process_async(
-                postgres,
-                self.guard.bootstrap.shutdown_timeout,
-                cleanup,
-            )
-            .await
-        } else {
-            Ok(())
+        match self.stop_async_path() {
+            StopAsyncPath::WorkerManaged => {
+                shutdown::stop_worker_managed_async(
+                    &self.guard.bootstrap,
+                    &self.guard.env_vars,
+                    &context,
+                )
+                .await
+            }
+            StopAsyncPath::InProcess(postgres) => {
+                let cleanup = shutdown::InProcessCleanup {
+                    cleanup_mode: self.guard.bootstrap.cleanup_mode,
+                    settings: &self.guard.bootstrap.settings,
+                    context: &context,
+                };
+                shutdown::stop_in_process_async(
+                    *postgres,
+                    self.guard.bootstrap.shutdown_timeout,
+                    cleanup,
+                )
+                .await
+            }
+            StopAsyncPath::Noop => Ok(()),
         }
     }
 }
