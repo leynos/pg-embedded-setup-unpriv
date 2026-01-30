@@ -1,4 +1,4 @@
-.PHONY: help all clean test build release lint fmt check-fmt markdownlint nixie
+.PHONY: help all clean test build release lint fmt check-fmt markdownlint nixie typecheck
 
 APP ?= pg_embedded_setup_unpriv
 CARGO ?= cargo
@@ -26,6 +26,9 @@ target/%/$(APP): ## Build binary in debug or release mode
 lint: ## Run Clippy with warnings denied
 	RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" $(CARGO) doc --workspace --no-deps $(BUILD_JOBS)
 	$(CARGO) clippy $(CLIPPY_FLAGS)
+
+typecheck: ## Typecheck the workspace
+	$(CARGO) check --workspace --all-targets --all-features $(BUILD_JOBS)
 
 fmt: ## Format Rust and Markdown sources
 	$(CARGO) fmt --all

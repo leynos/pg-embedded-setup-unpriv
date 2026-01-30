@@ -225,8 +225,7 @@ mod tests {
             ("PG_PASSWORD", Some("bootstrap_test_pw")),
             ("PG_EMBEDDED_WORKER", None),
         ]));
-        let settings =
-            orchestrate_bootstrap(BootstrapKind::Default).expect("bootstrap to succeed");
+        let settings = orchestrate_bootstrap(BootstrapKind::Default).expect("bootstrap to succeed");
 
         assert_paths(&settings, &runtime_path, &data_path);
         assert_identity(&settings, "bootstrap_test", "bootstrap_test_pw");
