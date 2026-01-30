@@ -111,7 +111,9 @@ pub(super) async fn stop_in_process_async(
             )))
         }
     };
-    cleanup::cleanup_in_process(cleanup.cleanup_mode, cleanup.settings, cleanup.context);
+    if result.is_ok() {
+        cleanup::cleanup_in_process(cleanup.cleanup_mode, cleanup.settings, cleanup.context);
+    }
     result
 }
 
@@ -137,8 +139,10 @@ fn stop_worker_managed_with_runtime(
     if let Err(err) = &result {
         warn_stop_failure(context, err);
     }
-    cleanup::cleanup_worker_managed_with_runtime(runtime, bootstrap, env_vars, context);
-    cleanup::cleanup_in_process(bootstrap.cleanup_mode, &bootstrap.settings, context);
+    if result.is_ok() {
+        cleanup::cleanup_worker_managed_with_runtime(runtime, bootstrap, env_vars, context);
+        cleanup::cleanup_in_process(bootstrap.cleanup_mode, &bootstrap.settings, context);
+    }
     result
 }
 
@@ -161,16 +165,19 @@ pub(super) fn drop_sync_cluster(runtime: &tokio::runtime::Runtime, ctx: DropCont
 
     let timeout = bootstrap.shutdown_timeout;
     let timeout_secs = timeout.as_secs();
+    let mut stop_ok = false;
     if let Some(pg) = postgres.take() {
         let outcome = runtime.block_on(async { time::timeout(timeout, pg.stop()).await });
         match outcome {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => stop_ok = true,
             Ok(Err(err)) => warn_stop_failure(context, &err),
             Err(_) => warn_stop_timeout(timeout_secs, context),
         }
     }
 
-    cleanup::cleanup_in_process(bootstrap.cleanup_mode, &bootstrap.settings, context);
+    if stop_ok {
+        cleanup::cleanup_in_process(bootstrap.cleanup_mode, &bootstrap.settings, context);
+    }
 }
 
 /// Best-effort cleanup for async clusters dropped without `stop_async()`.
@@ -243,6 +250,11 @@ fn spawn_async_cleanup(
         match time::timeout(timeout, postgres.stop()).await {
             Ok(Ok(())) => {
                 tracing::debug!(target: LOG_TARGET, "async cleanup completed successfully");
+                cleanup::cleanup_in_process(
+                    cleanup.cleanup_mode,
+                    &cleanup.settings,
+                    &cleanup.context,
+                );
             }
             Ok(Err(err)) => {
                 tracing::debug!(
@@ -259,8 +271,6 @@ fn spawn_async_cleanup(
                 );
             }
         }
-
-        cleanup::cleanup_in_process(cleanup.cleanup_mode, &cleanup.settings, &cleanup.context);
     }));
 }
 

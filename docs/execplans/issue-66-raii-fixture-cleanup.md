@@ -39,7 +39,7 @@ Shared clusters created by `shared_cluster()` remain leaked by design.
 
 - Scope: if implementing this requires modifying more than 10 files or more
   than 400 net lines, stop and escalate.
-- Interface: if any public API signature must change outside of
+- Interface: if any public API signature must change outside
   `TestBootstrapSettings` or `WorkerOperation`, stop and escalate.
 - Dependencies: if a new crate is required, stop and escalate.
 - Iterations: if tests still fail after two full fix attempts, stop and
@@ -69,7 +69,7 @@ Shared clusters created by `shared_cluster()` remain leaked by design.
 - [x] (2026-01-28 01:20Z) Implemented cleanup operations and configuration.
 - [x] (2026-01-28 01:30Z) Added tests for cleanup behaviour.
 - [x] (2026-01-28 02:05Z) Validated make targets (fmt/check-fmt/lint/test).
-- [x] (2026-01-28 02:10Z) Updated documentation and finalised plan.
+- [x] (2026-01-28 02:10Z) Updated documentation and finalized plan.
 
 
 ## Surprises & Discoveries
@@ -85,7 +85,7 @@ Shared clusters created by `shared_cluster()` remain leaked by design.
 - Decision: prefer a hybrid approach (add `WorkerOperation::Cleanup` and
   `CleanupMode` with data-only default, optional full cleanup). Rationale:
   preserves the worker model while allowing correct cleanup and optional
-  install caching. Date/Author: 2026-01-28 (assistant)
+  installation caching. Date/Author: 2026-01-28 (assistant)
 - Decision: model full cleanup as a distinct worker operation
   (`CleanupFull`) rather than encoding cleanup mode in the worker payload.
   Rationale: avoids breaking the public `WorkerRequestArgs` surface and keeps
@@ -193,7 +193,7 @@ Expected success signal: each command exits 0 and logs show no errors.
 
 ## Validation and acceptance
 
-Acceptance is met when all of the following are true:
+Acceptance is met when all following statements are true:
 
 - After a test run that creates a `TestCluster`, the corresponding
   `/var/tmp/pg-embed-{uid}/data` directory is removed on drop in privileged
@@ -217,7 +217,7 @@ intervention. If tests fail, re-run them after fixing code or tests; no data
 migration or irreversible change is expected.
 
 
-## Artifacts and notes
+## Artefacts and notes
 
 When implemented, capture a brief log excerpt confirming cleanup. Example shape
 only (replace with actual output):

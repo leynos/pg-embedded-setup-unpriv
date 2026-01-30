@@ -7,6 +7,7 @@
 
 mod bootstrap;
 pub mod cache;
+mod cleanup_helpers;
 mod cluster;
 mod env;
 mod error;

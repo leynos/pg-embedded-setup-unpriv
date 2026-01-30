@@ -1,9 +1,11 @@
 //! Cleanup helpers for `TestCluster` shutdown.
 
+use crate::cleanup_helpers::{RemovalOutcome, try_remove_dir_all};
 use crate::observability::LOG_TARGET;
 use crate::{CleanupMode, TestBootstrapSettings};
 use postgresql_embedded::Settings;
-use std::{fmt::Display, io::ErrorKind, path::Path};
+use std::error::Error;
+use std::path::Path;
 
 use super::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use super::worker_operation;
@@ -78,7 +80,9 @@ fn cleanup_install_dir(cleanup_mode: CleanupMode, settings: &Settings, context: 
             context,
         );
         if let Some(parent) = settings.password_file.parent() {
-            if parent != settings.installation_dir.as_path() {
+            if parent != settings.installation_dir.as_path()
+                && parent.starts_with(&settings.installation_dir)
+            {
                 remove_dir_all_if_exists(parent, DirectoryLabel::InstallationRoot, context);
             }
         }
@@ -99,12 +103,6 @@ const fn cleanup_operation(cleanup_mode: CleanupMode) -> Option<worker_operation
         CleanupMode::Full => Some(worker_operation::WorkerOperation::CleanupFull),
         CleanupMode::None => None,
     }
-}
-
-#[derive(Clone, Copy)]
-enum RemovalOutcome {
-    Removed,
-    Missing,
 }
 
 fn remove_dir_all_if_exists(path: &Path, label: DirectoryLabel, context: &str) {
@@ -141,18 +139,10 @@ fn log_dir_missing(path: &Path, label: DirectoryLabel, context: &str) {
     );
 }
 
-fn try_remove_dir_all(path: &Path) -> Result<RemovalOutcome, std::io::Error> {
-    match std::fs::remove_dir_all(path) {
-        Ok(()) => Ok(RemovalOutcome::Removed),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(RemovalOutcome::Missing),
-        Err(err) => Err(err),
-    }
-}
-
 fn warn_cleanup_failure(
     context: &str,
     operation: worker_operation::WorkerOperation,
-    err: &impl Display,
+    err: &dyn Error,
 ) {
     tracing::warn!(
         "SKIP-TEST-CLUSTER: failed to clean up postgres directories ({} via {}): {}",
@@ -166,7 +156,7 @@ fn warn_cleanup_removal_failure(
     context: &str,
     label: DirectoryLabel,
     path: &Path,
-    err: &impl Display,
+    err: &dyn Error,
 ) {
     tracing::warn!(
         "SKIP-TEST-CLUSTER: failed to remove {} directory {} ({context}): {err}",

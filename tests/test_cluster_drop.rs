@@ -153,20 +153,15 @@ fn run_cluster_drop_test(
     Ok(())
 }
 
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "rstest binds the guard even though the test ignores it"
-)]
 #[rstest]
-fn drops_stop_cluster_and_restore_environment(_serial_guard: ScenarioSerialGuard) -> Result<()> {
-    run_cluster_drop_test("test-cluster-unit", CleanupMode::DataOnly, false)
-}
-
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "rstest binds the guard even though the test ignores it"
-)]
-#[rstest]
-fn drops_remove_install_dir_when_cleanup_full(_serial_guard: ScenarioSerialGuard) -> Result<()> {
-    run_cluster_drop_test("test-cluster-unit-full-cleanup", CleanupMode::Full, true)
+#[case::data_only("test-cluster-unit", CleanupMode::DataOnly, false)]
+#[case::full("test-cluster-unit-full-cleanup", CleanupMode::Full, true)]
+fn drops_stop_cluster_and_restore_environment(
+    #[case] sandbox_name: &str,
+    #[case] cleanup_mode: CleanupMode,
+    #[case] verify_install_cleanup: bool,
+    serial_guard: ScenarioSerialGuard,
+) -> Result<()> {
+    let _serial_guard = &serial_guard;
+    run_cluster_drop_test(sandbox_name, cleanup_mode, verify_install_cleanup)
 }

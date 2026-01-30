@@ -25,6 +25,31 @@ tool and integrate it into automated test flows.
 - Windows always behaves as unprivileged, so the helper runs in-process and
   ignores root-only scenarios.
 
+## Test backend selection
+
+`PG_TEST_BACKEND` selects the backend used by `bootstrap_for_tests()` and
+`TestCluster`. Supported values are:
+
+- unset or empty: `postgresql_embedded`
+- `postgresql_embedded`: run the embedded PostgreSQL backend
+
+Any other value triggers a `SKIP-TEST-CLUSTER` error so test harnesses can
+intentionally skip the embedded cluster in mixed environments.
+
+The embedded backend downloads PostgreSQL binaries, initializes the data
+directory, and writes to the configured runtime and data paths. It requires
+outbound network access. On Linux, root workflows must supply
+`PG_EMBEDDED_WORKER` so the helper can drop privileges. On macOS, root
+execution is unsupported and expected to fail fast; on Windows the backend
+always runs in-process.
+
+Troubleshooting guidance:
+
+- If tests skip with `SKIP-TEST-CLUSTER: unsupported PG_TEST_BACKEND`, unset
+  `PG_TEST_BACKEND` or set it to `postgresql_embedded`.
+- If setup fails under root, verify `PG_EMBEDDED_WORKER` points to the worker
+  binary.
+
 ## Quick start
 
 1. Choose directories for the staged PostgreSQL distribution and the cluster’s
