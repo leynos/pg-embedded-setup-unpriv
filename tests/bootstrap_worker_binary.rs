@@ -293,3 +293,101 @@ fn pg_worker_binary_error_format_uses_prefix() -> Result<()> {
 
     Ok(())
 }
+
+// =============================================================================
+// Data Directory Recovery Integration Tests (Issue #80)
+// =============================================================================
+
+/// Creates a minimal worker config for testing recovery scenarios.
+///
+/// The config points to the specified data directory and uses a non-existent
+/// installation directory, which is sufficient to trigger recovery detection
+/// before the actual setup fails.
+fn create_minimal_worker_config(
+    temp_dir: &std::path::Path,
+    data_dir: &std::path::Path,
+) -> Result<std::path::PathBuf> {
+    use pg_embedded_setup_unpriv::worker::{SettingsSnapshot, WorkerPayload};
+    use postgresql_embedded::Settings;
+
+    let install_dir = temp_dir.join("install");
+    fs::create_dir_all(&install_dir)?;
+
+    let settings = Settings {
+        installation_dir: install_dir,
+        data_dir: data_dir.to_path_buf(),
+        password_file: temp_dir.join(".pgpass"),
+        trust_installation_dir: true,
+        ..Settings::default()
+    };
+
+    let snapshot = SettingsSnapshot::try_from(&settings)
+        .map_err(|e| eyre!("failed to create settings snapshot: {e}"))?;
+    let payload = WorkerPayload {
+        settings: snapshot,
+        environment: vec![],
+    };
+
+    let config_path = temp_dir.join("config.json");
+    let config_json = serde_json::to_string(&payload)?;
+    fs::write(&config_path, config_json)?;
+
+    Ok(config_path)
+}
+
+/// Issue #80: Validates that `pg_worker` detects a partial data directory
+/// (missing `global/pg_filenode.map`) and triggers recovery.
+///
+/// This test creates a partial data directory with `PG_VERSION` but without
+/// the marker file, runs `pg_worker` with setup operation, and verifies the
+/// recovery log messages are emitted before the binary fails (due to missing
+/// `PostgreSQL` binaries in the fake install directory).
+#[test]
+fn pg_worker_binary_detects_partial_data_dir_and_triggers_recovery() -> Result<()> {
+    let Some(_) = pg_worker_binary() else {
+        return Ok(());
+    };
+
+    let temp_dir = tempfile::tempdir()?;
+    let data_dir = temp_dir.path().join("data");
+
+    // Create a partial data directory: has structure but missing the marker file
+    fs::create_dir_all(data_dir.join("global"))?;
+    fs::write(data_dir.join("PG_VERSION"), "16\n")?;
+    fs::create_dir_all(data_dir.join("base"))?;
+
+    let config_path = create_minimal_worker_config(temp_dir.path(), &data_dir)?;
+    let config_str = config_path.to_string_lossy();
+
+    let output =
+        run_pg_worker(&["setup", &config_str])?.ok_or_else(|| eyre!("binary unavailable"))?;
+
+    // The binary will fail because there's no real PostgreSQL installation,
+    // but the recovery logic runs first. We verify the partial directory was
+    // removed by recovery before setup was attempted.
+    ensure!(
+        !data_dir.exists(),
+        eyre!(
+            "partial data directory should be removed by recovery; \
+            binary exit code: {:?}, stderr: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    );
+
+    Ok(())
+}
+
+// Note on Issue #80 testing strategy:
+//
+// The integration test for partial data directory recovery is
+// `pg_worker_binary_detects_partial_data_dir_and_triggers_recovery`.
+//
+// The validation that a valid data directory (with `global/pg_filenode.map`)
+// is NOT removed by recovery is covered by the unit test
+// `has_valid_data_dir::valid_data_dir_detected` in `src/bin/pg_worker.rs`.
+//
+// We cannot easily test that a valid data directory survives the full
+// binary invocation because `pg.setup()` may modify or reset the data directory
+// when the PostgreSQL installation is incomplete. The recovery logic itself
+// correctly preserves valid directories - this is verified by unit tests.
