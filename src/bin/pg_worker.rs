@@ -413,6 +413,28 @@ mod tests {
     }
 
     #[rstest]
+    fn recover_removes_partial_initialisation(temp_data_dir: TempDir2) -> R {
+        let (_, p) = temp_data_dir?;
+        // Create a partial data directory: has PG_VERSION but missing marker file
+        fs::create_dir_all(&p)?;
+        fs::write(p.join("PG_VERSION"), "16\n")?;
+        // Intentionally do NOT create global/pg_filenode.map
+
+        // Verify initial state
+        ensure(p.exists(), "data dir should exist before recovery")?;
+        ensure(!has_valid_data_dir(&p)?, "should be detected as invalid")?;
+
+        // Run recovery
+        recover_invalid_data_dir(&p)?;
+
+        // Verify recovery removed the partial directory
+        ensure(
+            !p.exists(),
+            "partial data dir should be removed by recovery",
+        )
+    }
+
+    #[rstest]
     #[case::empty(
         "",
         "operation cannot be empty; valid operations are setup, start, stop"

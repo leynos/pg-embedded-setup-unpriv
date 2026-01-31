@@ -256,7 +256,7 @@ fn pg_worker_binary_rejects_invalid_operation() -> Result<()> {
         eyre!("stderr should contain 'unknown operation', got: {stderr}")
     );
     ensure!(
-        stderr.contains("expected setup, start, or stop"),
+        stderr.contains("valid operations are setup, start, stop"),
         eyre!("stderr should list valid operations, got: {stderr}")
     );
 
