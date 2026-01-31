@@ -47,6 +47,11 @@ path = "tests/bootstrap_worker_binary.rs"
 required-features = ["cluster-unit-tests"]
 
 [[test]]
+name = "data_dir_recovery"
+path = "tests/data_dir_recovery.rs"
+required-features = ["cluster-unit-tests", "privileged-tests"]
+
+[[test]]
 name = "database_lifecycle"
 path = "tests/database_lifecycle.rs"
 required-features = ["cluster-unit-tests"]
