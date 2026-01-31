@@ -185,8 +185,8 @@ impl TestClusterConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TestBootstrapSettings;
     use crate::bootstrap::{ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment};
+    use crate::{CleanupMode, TestBootstrapSettings};
     use postgresql_embedded::Settings;
     use std::time::Duration;
 
@@ -217,6 +217,7 @@ mod tests {
             setup_timeout: Duration::from_secs(1),
             start_timeout: Duration::from_secs(1),
             shutdown_timeout: Duration::from_secs(1),
+            cleanup_mode: CleanupMode::default(),
             binary_cache_dir: None,
         }
     }

@@ -4,7 +4,7 @@
 use camino::Utf8PathBuf;
 use color_eyre::Report;
 use color_eyre::eyre::{Context, Result, ensure, eyre};
-use pg_embedded_setup_unpriv::TestCluster;
+use pg_embedded_setup_unpriv::{CleanupMode, TestCluster};
 use rstest::rstest;
 use std::{thread, time::Duration};
 
@@ -28,19 +28,29 @@ use env_snapshot::EnvSnapshot;
 use sandbox::TestSandbox;
 use serial::{ScenarioSerialGuard, serial_guard};
 
-fn run_cluster_lifecycle_test() -> std::result::Result<Utf8PathBuf, Report> {
+fn run_cluster_lifecycle_with_cleanup_mode(
+    cleanup_mode: CleanupMode,
+) -> std::result::Result<(Utf8PathBuf, Utf8PathBuf), Report> {
     let before_cluster = EnvSnapshot::capture();
-    let cluster = TestCluster::new().map_err(Report::from)?;
+    let cluster = TestCluster::new()
+        .map_err(Report::from)?
+        .with_cleanup_mode(cleanup_mode);
     let during_cluster = EnvSnapshot::capture();
     let data_dir = extract_data_dir(&cluster)?;
+    let install_dir = extract_install_dir(&cluster)?;
     verify_cluster_running(&data_dir, &before_cluster, &during_cluster)?;
     drop(cluster);
-    Ok(data_dir)
+    Ok((data_dir, install_dir))
 }
 
 fn extract_data_dir(cluster: &TestCluster) -> std::result::Result<Utf8PathBuf, Report> {
     Utf8PathBuf::from_path_buf(cluster.settings().data_dir.clone())
         .map_err(|_| eyre!("data_dir is not valid UTF-8"))
+}
+
+fn extract_install_dir(cluster: &TestCluster) -> std::result::Result<Utf8PathBuf, Report> {
+    Utf8PathBuf::from_path_buf(cluster.settings().installation_dir.clone())
+        .map_err(|_| eyre!("installation_dir is not valid UTF-8"))
 }
 
 fn verify_cluster_running(
@@ -63,7 +73,7 @@ fn verify_cluster_running(
     Ok(())
 }
 
-fn should_skip_test(result: &std::result::Result<Utf8PathBuf, Report>) -> bool {
+fn should_skip_test<T>(result: &std::result::Result<T, Report>) -> bool {
     let Err(err) = result else {
         return false;
     };
@@ -100,21 +110,53 @@ fn wait_for_postmaster_shutdown(data_dir: &Utf8PathBuf) -> Result<()> {
     Ok(())
 }
 
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "rstest binds the guard even though the test ignores it"
-)]
-#[rstest]
-fn drops_stop_cluster_and_restore_environment(_serial_guard: ScenarioSerialGuard) -> Result<()> {
-    let sandbox = TestSandbox::new("test-cluster-unit").context("create test cluster sandbox")?;
+fn wait_for_dir_cleanup(dir: &Utf8PathBuf, label: &str) -> Result<()> {
+    for _ in 0..50 {
+        if !dir.exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    ensure!(
+        !dir.exists(),
+        "{label} directory should be removed once the cluster drops",
+    );
+    Ok(())
+}
+
+fn run_cluster_drop_test(
+    sandbox_name: &str,
+    cleanup_mode: CleanupMode,
+    verify_install_cleanup: bool,
+) -> Result<()> {
+    let sandbox = TestSandbox::new(sandbox_name).context("create test cluster sandbox")?;
     sandbox.reset()?;
     let env_before = EnvSnapshot::capture();
-    let result = sandbox.with_env(sandbox.env_without_timezone(), run_cluster_lifecycle_test);
+    let result = sandbox.with_env(sandbox.env_without_timezone(), || {
+        run_cluster_lifecycle_with_cleanup_mode(cleanup_mode)
+    });
     if should_skip_test(&result) {
         return Ok(());
     }
-    let data_dir = result?;
+    let (data_dir, install_dir) = result?;
     verify_environment_restored(&env_before)?;
     wait_for_postmaster_shutdown(&data_dir)?;
+    wait_for_dir_cleanup(&data_dir, "data")?;
+    if verify_install_cleanup {
+        wait_for_dir_cleanup(&install_dir, "installation")?;
+    }
     Ok(())
+}
+
+#[rstest]
+#[case::data_only("test-cluster-unit", CleanupMode::DataOnly, false)]
+#[case::full("test-cluster-unit-full-cleanup", CleanupMode::Full, true)]
+fn drops_stop_cluster_and_restore_environment(
+    #[case] sandbox_name: &str,
+    #[case] cleanup_mode: CleanupMode,
+    #[case] verify_install_cleanup: bool,
+    serial_guard: ScenarioSerialGuard,
+) -> Result<()> {
+    let _serial_guard = &serial_guard;
+    run_cluster_drop_test(sandbox_name, cleanup_mode, verify_install_cleanup)
 }

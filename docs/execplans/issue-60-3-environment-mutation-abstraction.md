@@ -160,7 +160,7 @@ lines added, and 10 lines removed, well within the 150-line tolerance.
 
 ## Rebase notes
 
-Rebased onto origin/main (commit db74783: Issue 60.5 - Implement idempotent
+Rebased onto origin/main (commit db74783: Issue 60.5 — Implement idempotent
 lifecycle helpers). One conflict was automatically resolved by zdiff3 in the
 imports section:
 

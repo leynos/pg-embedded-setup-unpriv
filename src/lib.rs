@@ -7,6 +7,7 @@
 
 mod bootstrap;
 pub mod cache;
+mod cleanup_helpers;
 mod cluster;
 mod env;
 mod error;
@@ -181,8 +182,9 @@ pub use crate::fs::ambient_dir_and_path;
 #[doc(hidden)]
 pub use crate::env::ScopedEnv;
 pub use bootstrap::{
-    ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
-    bootstrap_for_tests, detect_execution_privileges, find_timezone_dir, run,
+    CleanupMode, ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment,
+    TestBootstrapSettings, bootstrap_for_tests, detect_execution_privileges, find_timezone_dir,
+    run,
 };
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[doc(hidden)]

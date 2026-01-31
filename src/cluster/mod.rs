@@ -47,6 +47,7 @@
 //! ```
 
 mod cache_integration;
+mod cleanup;
 mod connection;
 mod delegation;
 mod guard;
@@ -118,6 +119,13 @@ pub struct TestCluster {
     pub(crate) handle: ClusterHandle,
     /// Lifecycle guard managing shutdown and environment restoration.
     pub(crate) guard: ClusterGuard,
+}
+
+#[cfg(feature = "async-api")]
+enum StopAsyncPath {
+    WorkerManaged,
+    InProcess(Box<postgresql_embedded::PostgreSQL>),
+    Noop,
 }
 
 impl TestCluster {
@@ -308,6 +316,17 @@ impl TestCluster {
         }
     }
 
+    #[cfg(feature = "async-api")]
+    fn stop_async_path(&mut self) -> StopAsyncPath {
+        if self.guard.is_managed_via_worker {
+            StopAsyncPath::WorkerManaged
+        } else if let Some(postgres) = self.guard.postgres.take() {
+            StopAsyncPath::InProcess(Box::new(postgres))
+        } else {
+            StopAsyncPath::Noop
+        }
+    }
+
     /// Explicitly shuts down an async cluster.
     ///
     /// This method should be called for clusters created with [`start_async()`](Self::start_async)
@@ -340,22 +359,29 @@ impl TestCluster {
         let context = shutdown::stop_context(self.handle.settings());
         shutdown::log_async_stop(&context, self.guard.is_managed_via_worker);
 
-        if self.guard.is_managed_via_worker {
-            shutdown::stop_worker_managed_async(
-                &self.guard.bootstrap,
-                &self.guard.env_vars,
-                &context,
-            )
-            .await
-        } else if let Some(postgres) = self.guard.postgres.take() {
-            shutdown::stop_in_process_async(
-                postgres,
-                self.guard.bootstrap.shutdown_timeout,
-                &context,
-            )
-            .await
-        } else {
-            Ok(())
+        match self.stop_async_path() {
+            StopAsyncPath::WorkerManaged => {
+                shutdown::stop_worker_managed_async(
+                    &self.guard.bootstrap,
+                    &self.guard.env_vars,
+                    &context,
+                )
+                .await
+            }
+            StopAsyncPath::InProcess(postgres) => {
+                let cleanup = shutdown::InProcessCleanup {
+                    cleanup_mode: self.guard.bootstrap.cleanup_mode,
+                    settings: &self.guard.bootstrap.settings,
+                    context: &context,
+                };
+                shutdown::stop_in_process_async(
+                    *postgres,
+                    self.guard.bootstrap.shutdown_timeout,
+                    cleanup,
+                )
+                .await
+            }
+            StopAsyncPath::Noop => Ok(()),
         }
     }
 }
@@ -379,31 +405,7 @@ impl Deref for TestCluster {
 mod mod_tests;
 
 #[cfg(all(test, feature = "cluster-unit-tests"))]
-mod drop_logging_tests {
-    use crate::test_support::capture_warn_logs;
-
-    use super::shutdown;
-
-    #[test]
-    fn warn_stop_timeout_emits_warning() {
-        let (logs, ()) = capture_warn_logs(|| shutdown::warn_stop_timeout(5, "ctx"));
-        assert!(
-            logs.iter()
-                .any(|line| line.contains("stop() timed out after 5s (ctx)")),
-            "expected timeout warning, got {logs:?}"
-        );
-    }
-
-    #[test]
-    fn warn_stop_failure_emits_warning() {
-        let (logs, ()) = capture_warn_logs(|| shutdown::warn_stop_failure("ctx", &"boom"));
-        assert!(
-            logs.iter()
-                .any(|line| line.contains("failed to stop embedded postgres instance")),
-            "expected failure warning, got {logs:?}"
-        );
-    }
-}
+mod drop_logging_tests;
 
 #[cfg(all(test, not(feature = "cluster-unit-tests")))]
 #[path = "../../tests/test_cluster.rs"]

@@ -3,12 +3,12 @@
 
 #[cfg(unix)]
 use {
-    camino::{Utf8Path, Utf8PathBuf},
+    camino::{Utf8Component, Utf8Path, Utf8PathBuf},
     pg_embedded_setup_unpriv::{
         ambient_dir_and_path,
         worker::{PlainSecret, WorkerPayload},
     },
-    postgresql_embedded::{PostgreSQL, Status},
+    postgresql_embedded::{PostgreSQL, Settings, Status},
     std::{
         env,
         ffi::{OsStr, OsString},
@@ -23,6 +23,12 @@ use {
 #[cfg(unix)]
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+#[cfg(unix)]
+#[path = "../cleanup_helpers.rs"]
+mod cleanup_helpers;
+#[cfg(unix)]
+#[path = "pg_worker/removal.rs"]
+mod removal;
 /// Marker file that indicates a valid `PostgreSQL` data directory.
 ///
 /// This path is created by `initdb` during successful initialization and is used
@@ -30,7 +36,6 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// `tests/support/fixtures/pg_ctl_stub.sh` must create this file to match.
 #[cfg(unix)]
 const PG_FILENODE_MAP_MARKER: &str = "global/pg_filenode.map";
-
 #[cfg(unix)]
 #[derive(Debug, Error)]
 enum WorkerError {
@@ -46,6 +51,8 @@ enum WorkerError {
     RuntimeInit(#[source] std::io::Error),
     #[error("postgres operation failed: {0}")]
     PostgresOperation(String),
+    #[error("cleanup failed: {0}")]
+    CleanupFailed(String),
     #[error("data dir recovery: {0}")]
     DataDirRecovery(String),
 }
@@ -56,23 +63,21 @@ enum Operation {
     Setup,
     Start,
     Stop,
+    Cleanup,
+    CleanupFull,
 }
 
 #[cfg(unix)]
 impl Operation {
     fn parse(arg: &OsStr) -> Result<Self, WorkerError> {
-        let arg_str = arg.to_string_lossy();
-        if arg_str.is_empty() {
-            return Err(WorkerError::InvalidArgs(
-                "operation cannot be empty; valid operations are setup, start, stop".into(),
-            ));
-        }
-        match arg_str.as_ref() {
+        match arg.to_string_lossy().as_ref() {
             "setup" => Ok(Self::Setup),
             "start" => Ok(Self::Start),
             "stop" => Ok(Self::Stop),
+            "cleanup" => Ok(Self::Cleanup),
+            "cleanup-full" => Ok(Self::CleanupFull),
             other => Err(WorkerError::InvalidArgs(format!(
-                "unknown operation '{other}'; valid operations are setup, start, stop"
+                "unknown operation '{other}'; expected setup, start, stop, cleanup, or cleanup-full"
             ))),
         }
     }
@@ -92,25 +97,18 @@ fn run_worker(args: impl Iterator<Item = OsString>) -> Result<(), WorkerError> {
         .into_settings()
         .map_err(|e| WorkerError::SettingsConversion(e.to_string()))?;
     let data_dir = extract_data_dir(&settings)?;
-    let runtime = build_runtime()?;
     apply_worker_environment(&payload.environment);
-    let mut pg = Some(PostgreSQL::new(settings));
-    runtime.block_on(async {
-        let pg_err = || WorkerError::PostgresOperation("no pg".into());
-        match op {
-            Operation::Setup => {
-                run_postgres_setup(pg.as_mut().ok_or_else(pg_err)?, &data_dir).await
-            }
-            Operation::Start => {
-                ensure_postgres_started(pg.as_mut().ok_or_else(pg_err)?, &data_dir).await?;
-                if let Some(i) = pg.take() {
-                    std::mem::forget(i); // Leak to keep PostgreSQL running after worker exit.
-                }
-                Ok(())
-            }
-            Operation::Stop => execute_stop(&mut pg).await,
+    match op {
+        Operation::Cleanup => execute_cleanup(&data_dir, None, None),
+        Operation::CleanupFull => {
+            let install_dir = extract_install_dir(&settings)?;
+            let install_root = extract_install_root(&settings, &install_dir)?;
+            execute_cleanup(&data_dir, Some(&install_dir), install_root.as_deref())
         }
-    })
+        Operation::Setup => run_setup_op(settings, &data_dir),
+        Operation::Start => run_start_op(settings, &data_dir),
+        Operation::Stop => run_stop_op(settings),
+    }
 }
 
 #[cfg(unix)]
@@ -159,6 +157,63 @@ fn build_runtime() -> Result<tokio::runtime::Runtime, WorkerError> {
 fn extract_data_dir(settings: &postgresql_embedded::Settings) -> Result<Utf8PathBuf, WorkerError> {
     Utf8PathBuf::from_path_buf(settings.data_dir.clone())
         .map_err(|_| WorkerError::SettingsConversion("data_dir must be valid UTF-8".into()))
+}
+
+#[cfg(unix)]
+fn extract_install_dir(settings: &Settings) -> Result<Utf8PathBuf, WorkerError> {
+    Utf8PathBuf::from_path_buf(settings.installation_dir.clone())
+        .map_err(|_| WorkerError::SettingsConversion("installation_dir must be valid UTF-8".into()))
+}
+
+#[cfg(unix)]
+fn extract_install_root(
+    settings: &Settings,
+    install_dir: &Utf8Path,
+) -> Result<Option<Utf8PathBuf>, WorkerError> {
+    let pgpass = Utf8PathBuf::from_path_buf(settings.password_file.clone())
+        .map_err(|_| WorkerError::SettingsConversion("password_file must be valid UTF-8".into()))?;
+    let Some(parent) = pgpass.parent() else {
+        return Ok(None);
+    };
+    if parent.as_str().is_empty() || parent == Utf8Path::new("/") {
+        return Ok(None);
+    }
+    if parent == install_dir {
+        return Ok(None);
+    }
+    if parent
+        .components()
+        .any(|component| matches!(component, Utf8Component::ParentDir))
+    {
+        return Ok(None);
+    }
+    if !parent.starts_with(install_dir) {
+        return Ok(None);
+    }
+    Ok(Some(parent.to_owned()))
+}
+
+#[cfg(unix)]
+fn run_setup_op(settings: Settings, data_dir: &Utf8Path) -> Result<(), WorkerError> {
+    let runtime = build_runtime()?;
+    let mut pg = PostgreSQL::new(settings);
+    runtime.block_on(async { execute_setup(&mut pg, data_dir).await })
+}
+
+#[cfg(unix)]
+fn run_start_op(settings: Settings, data_dir: &Utf8Path) -> Result<(), WorkerError> {
+    let runtime = build_runtime()?;
+    let mut pg = PostgreSQL::new(settings);
+    runtime.block_on(async { execute_start(&mut pg, data_dir).await })?;
+    std::mem::forget(pg);
+    Ok(())
+}
+
+#[cfg(unix)]
+fn run_stop_op(settings: Settings) -> Result<(), WorkerError> {
+    let runtime = build_runtime()?;
+    let mut pg = PostgreSQL::new(settings);
+    runtime.block_on(async { execute_stop(&mut pg).await })
 }
 
 #[cfg(unix)]
@@ -248,14 +303,52 @@ async fn start_if_not_started(pg: &mut PostgreSQL) -> Result<(), WorkerError> {
 }
 
 #[cfg(unix)]
-async fn execute_stop(pg: &mut Option<PostgreSQL>) -> Result<(), WorkerError> {
-    let h = pg
-        .as_mut()
-        .ok_or_else(|| WorkerError::PostgresOperation("pg handle missing".into()))?;
-    match h.stop().await {
+async fn execute_setup(pg: &mut PostgreSQL, data_dir: &Utf8Path) -> Result<(), WorkerError> {
+    run_postgres_setup(pg, data_dir).await
+}
+
+#[cfg(unix)]
+async fn execute_start(pg: &mut PostgreSQL, data_dir: &Utf8Path) -> Result<(), WorkerError> {
+    ensure_postgres_started(pg, data_dir).await
+}
+
+#[cfg(unix)]
+async fn execute_stop(pg: &mut PostgreSQL) -> Result<(), WorkerError> {
+    match pg.stop().await {
         Ok(()) => Ok(()),
         Err(e) if stop_missing_pid_is_ok(&e) => Ok(()),
         Err(e) => Err(WorkerError::PostgresOperation(format!("stop failed: {e}"))),
+    }
+}
+
+#[cfg(unix)]
+fn collect_removal_error(failures: &mut Vec<String>, path: &Utf8Path, label: &str) {
+    if let Err(err) = removal::remove_dir_all_if_exists(path, label) {
+        failures.push(err);
+    }
+}
+
+#[cfg(unix)]
+fn execute_cleanup(
+    data_dir: &Utf8Path,
+    install_dir: Option<&Utf8Path>,
+    install_root: Option<&Utf8Path>,
+) -> Result<(), WorkerError> {
+    let mut failures = Vec::new();
+    collect_removal_error(&mut failures, data_dir, "data");
+    if let Some(path) = install_dir {
+        collect_removal_error(&mut failures, path, "installation");
+    }
+    if let Some(path) = install_root {
+        let is_already_removed = install_dir.is_some_and(|install_path| install_path == path);
+        if !is_already_removed {
+            collect_removal_error(&mut failures, path, "installation-root");
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(WorkerError::CleanupFailed(failures.join("; ")))
     }
 }
 
@@ -302,130 +395,5 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    //! Unit tests for `pg_worker` data directory recovery and argument parsing.
-
-    use super::*;
-    use rstest::{fixture, rstest};
-    use std::{
-        ffi::{OsStr, OsString},
-        fs,
-        os::unix::ffi::OsStrExt,
-    };
-    use tempfile::{TempDir, tempdir};
-    type R<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
-    type TempDir2 = R<(TempDir, Utf8PathBuf)>;
-    fn ensure(cond: bool, msg: &str) -> R {
-        if cond { Ok(()) } else { Err(msg.into()) }
-    }
-
-    #[fixture]
-    fn temp_data_dir() -> TempDir2 {
-        let temp = tempdir()?;
-        let p = Utf8PathBuf::from_path_buf(temp.path().join("data"))
-            .map_err(|p| format!("not UTF-8: {}", p.display()))?;
-        Ok((temp, p))
-    }
-
-    #[test]
-    fn rejects_extra_argument() -> R {
-        let args = ["pg_worker", "setup", "/tmp/config.json", "unexpected"].map(OsString::from);
-        let err = run_worker(args.into_iter()).err().ok_or("expected error")?;
-        ensure(
-            err.to_string().contains("unexpected extra argument"),
-            "wrong err",
-        )
-    }
-
-    #[test]
-    fn parse_args_rejects_non_utf8_config_path() -> R {
-        let args = [
-            OsString::from("pg_worker"),
-            OsString::from("setup"),
-            OsStr::from_bytes(&[0x80]).to_os_string(),
-        ];
-        match parse_args(args.into_iter()) {
-            Err(WorkerError::InvalidArgs(m)) => ensure(
-                m.to_lowercase().contains("utf-8") && m.contains("config"),
-                "bad msg",
-            ),
-            o => Err(format!("expected InvalidArgs: {o:?}").into()),
-        }
-    }
-
-    #[rstest]
-    fn valid_data_dir_detected(temp_data_dir: TempDir2) -> R {
-        let (_, p) = temp_data_dir?;
-        fs::create_dir_all(p.join("global"))?;
-        fs::write(p.join(PG_FILENODE_MAP_MARKER), "")?;
-        ensure(has_valid_data_dir(&p)?, "should be valid")
-    }
-
-    #[rstest]
-    fn missing_dir_is_invalid(temp_data_dir: TempDir2) -> R {
-        ensure(!has_valid_data_dir(&temp_data_dir?.1)?, "should be invalid")
-    }
-
-    #[rstest]
-    fn dir_without_marker_is_invalid(temp_data_dir: TempDir2) -> R {
-        let (_, p) = temp_data_dir?;
-        fs::create_dir_all(&p)?;
-        ensure(!has_valid_data_dir(&p)?, "should be invalid")
-    }
-
-    #[rstest]
-    fn reset_removes_partial(temp_data_dir: TempDir2) -> R {
-        let (_, p) = temp_data_dir?;
-        fs::create_dir_all(p.join("x"))?;
-        reset_data_dir(&p)?;
-        ensure(!p.exists(), "should be removed")
-    }
-
-    #[rstest]
-    fn reset_ok_for_missing(temp_data_dir: TempDir2) -> R {
-        reset_data_dir(&temp_data_dir?.1)
-    }
-
-    #[test]
-    fn reset_errors_on_root() -> R {
-        let e = reset_data_dir(&Utf8PathBuf::from("/"))
-            .err()
-            .ok_or("expected err")?;
-        ensure(
-            e.to_string().to_lowercase().contains("root"),
-            "should mention root",
-        )
-    }
-
-    #[rstest]
-    fn recover_skips_nonexistent(temp_data_dir: TempDir2) -> R {
-        let (_, p) = temp_data_dir?;
-        recover_invalid_data_dir(&p)?;
-        ensure(!p.exists(), "should not exist")
-    }
-
-    #[rstest]
-    fn recover_skips_empty_dir(temp_data_dir: TempDir2) -> R {
-        let (_, p) = temp_data_dir?;
-        fs::create_dir_all(&p)?;
-        recover_invalid_data_dir(&p)?;
-        ensure(p.exists(), "empty dir should remain")
-    }
-
-    #[rstest]
-    #[case::empty(
-        "",
-        "operation cannot be empty; valid operations are setup, start, stop"
-    )]
-    #[case::unknown(
-        "invalid",
-        "unknown operation 'invalid'; valid operations are setup, start, stop"
-    )]
-    fn operation_parse_rejects_invalid_input(#[case] input: &str, #[case] expected_msg: &str) -> R {
-        let os_input = OsString::from(input);
-        match Operation::parse(&os_input) {
-            Err(WorkerError::InvalidArgs(msg)) => ensure(msg == expected_msg, "unexpected message"),
-            other => Err(format!("expected InvalidArgs, got: {other:?}").into()),
-        }
-    }
-}
+#[path = "pg_worker/tests.rs"]
+mod tests;
