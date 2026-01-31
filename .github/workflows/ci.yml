@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
       - name: Setup Rust
-        uses: leynos/shared-actions/.github/actions/setup-rust@fb861087e1ddbbe32c3f44d7896f1d2364dd7711
+        uses: leynos/shared-actions/.github/actions/setup-rust@9d4c046f2788decc264847622b830e2a4d35b91f
       - name: Format
         run: make check-fmt
       - name: Markdown lint
@@ -43,7 +43,7 @@ jobs:
           cargo nextest run --all-targets --all-features
       - name: Test and Measure Coverage (unprivileged)
         if: ${{ matrix.privilege == 'unprivileged' }}
-        uses: leynos/shared-actions/.github/actions/generate-coverage@fb861087e1ddbbe32c3f44d7896f1d2364dd7711
+        uses: leynos/shared-actions/.github/actions/generate-coverage@9d4c046f2788decc264847622b830e2a4d35b91f
         with:
           output-path: lcov.info
           format: lcov
@@ -72,7 +72,7 @@ jobs:
         env:
           CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}
         if: ${{ env.CS_ACCESS_TOKEN && matrix.privilege == 'unprivileged' }}
-        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@fb861087e1ddbbe32c3f44d7896f1d2364dd7711
+        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@9d4c046f2788decc264847622b830e2a4d35b91f
         with:
           format: lcov
           access-token: ${{ env.CS_ACCESS_TOKEN }}
