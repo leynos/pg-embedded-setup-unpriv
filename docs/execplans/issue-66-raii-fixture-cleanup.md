@@ -45,7 +45,7 @@ Shared clusters created by `shared_cluster()` remain leaked by design.
 - Iterations: if tests still fail after two full fix attempts, stop and
   escalate.
 - Ambiguity: if multiple valid interpretations remain about cleanup behaviour
-  (data-only vs full) and materially affect correctness, stop and request
+  (data-only vs full) and materially affect correctness, stop, and request
   direction.
 
 

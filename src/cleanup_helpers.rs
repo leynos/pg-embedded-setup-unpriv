@@ -19,6 +19,15 @@ pub(crate) enum RemovalOutcome {
     Missing,
 }
 
+/// Checks whether a path contains any parent-directory (`..`) components.
+///
+/// Args:
+/// - path: `&Path` to inspect for `Component::ParentDir` entries.
+///
+/// Returns `true` when any parent-dir component is present.
+///
+/// This is the canonical helper used by cleanup code to detect upward
+/// traversal in paths.
 pub(crate) fn has_parent_dir(path: &Path) -> bool {
     path.components()
         .any(|component| matches!(component, Component::ParentDir))
