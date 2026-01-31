@@ -1,9 +1,10 @@
 # Fix TestCluster RAII cleanup (issue 66)
 
 
-This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
-`Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
-`Outcomes & Retrospective` must be kept up to date as work proceeds.
+This execution plan (ExecPlan) is a living document. The sections
+`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & discoveries`,
+`Decision log`, and `Outcomes & retrospective` must be kept up to date as work
+proceeds.
 
 Status: COMPLETE (2026-01-28)
 
@@ -72,7 +73,7 @@ Shared clusters created by `shared_cluster()` remain leaked by design.
 - [x] (2026-01-28 02:10Z) Updated documentation and finalized plan.
 
 
-## Surprises & Discoveries
+## Surprises & discoveries
 
 - The full-cleanup drop test initially left the installation directory behind
   in root mode. Added install-root cleanup (based on `password_file` parent)
@@ -80,7 +81,7 @@ Shared clusters created by `shared_cluster()` remain leaked by design.
   deterministic.
 
 
-## Decision Log
+## Decision log
 
 - Decision: prefer a hybrid approach (add `WorkerOperation::Cleanup` and
   `CleanupMode` with data-only default, optional full cleanup). Rationale:
@@ -97,7 +98,7 @@ Shared clusters created by `shared_cluster()` remain leaked by design.
   (assistant)
 
 
-## Outcomes & Retrospective
+## Outcomes & retrospective
 
 - Delivered deterministic cleanup for `TestCluster` drops in both worker and
   in-process paths, including removal of installation roots when configured for
