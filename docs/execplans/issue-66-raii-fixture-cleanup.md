@@ -168,11 +168,13 @@ All commands run from `/home/user/project`.
 
 1) Read the current implementation:
 
-    rg --line-number "WorkerOperation" src/cluster/worker_operation.rs
-    rg --line-number "drop" src/cluster/mod.rs
-    rg --line-number "TestBootstrapSettings" -g "*.rs" src
-    rg --line-number "shared_cluster" src/test_support/fixtures.rs
-    rg --line-number "drop" tests/test_cluster_drop.rs
+```plaintext
+rg --line-number "WorkerOperation" src/cluster/worker_operation.rs
+rg --line-number "drop" src/cluster/mod.rs
+rg --line-number "TestBootstrapSettings" -g "*.rs" src
+rg --line-number "shared_cluster" src/test_support/fixtures.rs
+rg --line-number "drop" tests/test_cluster_drop.rs
+```
 
 2) Implement scaffolding changes (Stages B and C).
 
@@ -180,13 +182,15 @@ All commands run from `/home/user/project`.
 
 4) Run formatters and linters (use `tee` so output is preserved):
 
-    set -o pipefail
-    make fmt 2>&1 | tee /tmp/issue-66-make-fmt.log
-    make markdownlint 2>&1 | tee /tmp/issue-66-markdownlint.log
-    make nixie 2>&1 | tee /tmp/issue-66-make-nixie.log
-    make check-fmt 2>&1 | tee /tmp/issue-66-check-fmt.log
-    make lint 2>&1 | tee /tmp/issue-66-make-lint.log
-    make test 2>&1 | tee /tmp/issue-66-make-test.log
+```plaintext
+set -o pipefail
+make fmt 2>&1 | tee /tmp/issue-66-make-fmt.log
+make markdownlint 2>&1 | tee /tmp/issue-66-markdownlint.log
+make nixie 2>&1 | tee /tmp/issue-66-make-nixie.log
+make check-fmt 2>&1 | tee /tmp/issue-66-check-fmt.log
+make lint 2>&1 | tee /tmp/issue-66-make-lint.log
+make test 2>&1 | tee /tmp/issue-66-make-test.log
+```
 
 Expected success signal: each command exits 0 and logs show no errors.
 
@@ -222,7 +226,9 @@ migration or irreversible change is expected.
 When implemented, capture a brief log excerpt confirming cleanup. Example shape
 only (replace with actual output):
 
-    INFO … cleanup removed data directory /var/tmp/pg-embed-1234/data
+```plaintext
+INFO … cleanup removed data directory /var/tmp/pg-embed-1234/data
+```
 
 
 ## Interfaces and dependencies
@@ -230,21 +236,25 @@ only (replace with actual output):
 Add a new configuration enum in `src/bootstrap/mod.rs` (or a dedicated module
 if that is the existing pattern):
 
-    pub enum CleanupMode {
-        DataOnly,
-        Full,
-        None,
-    }
+```rust
+pub enum CleanupMode {
+    DataOnly,
+    Full,
+    None,
+}
+```
 
 Add a new worker operation in `src/cluster/worker_operation.rs`:
 
-    pub enum WorkerOperation {
-        Setup,
-        Start,
-        Stop,
-        Cleanup,
-        CleanupFull,
-    }
+```rust
+pub enum WorkerOperation {
+    Setup,
+    Start,
+    Stop,
+    Cleanup,
+    CleanupFull,
+}
+```
 
 Update the worker dispatcher in `src/worker.rs` to handle `Cleanup`, and update
 `TestCluster` drop logic in `src/cluster/mod.rs` to invoke it.
