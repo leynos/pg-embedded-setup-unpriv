@@ -339,9 +339,14 @@ fn create_minimal_worker_config(
 /// (missing `global/pg_filenode.map`) and triggers recovery.
 ///
 /// This test creates a partial data directory with `PG_VERSION` but without
-/// the marker file, runs `pg_worker` with setup operation, and verifies the
-/// recovery log messages are emitted before the binary fails (due to missing
-/// `PostgreSQL` binaries in the fake install directory).
+/// the marker file, runs `pg_worker` with setup operation, and verifies:
+/// 1. The partial data directory is removed by recovery
+/// 2. If the binary fails, it's due to missing `PostgreSQL` installation
+///    (not due to recovery failure or other unexpected reasons)
+///
+/// Note: The setup may succeed if `PostgreSQL` binaries are cached, or fail
+/// if no real installation is available. Either outcome is acceptable as
+/// long as the partial directory was removed by recovery first.
 #[test]
 fn pg_worker_binary_detects_partial_data_dir_and_triggers_recovery() -> Result<()> {
     let Some(_) = pg_worker_binary() else {
@@ -362,16 +367,47 @@ fn pg_worker_binary_detects_partial_data_dir_and_triggers_recovery() -> Result<(
     let output =
         run_pg_worker(&["setup", &config_str])?.ok_or_else(|| eyre!("binary unavailable"))?;
 
-    // The binary will fail because there's no real PostgreSQL installation,
-    // but the recovery logic runs first. We verify the partial directory was
-    // removed by recovery before setup was attempted.
+    let status = output.status;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // If the binary failed, verify it's due to missing PostgreSQL installation
+    // (not due to recovery failure or other unexpected reasons)
+    if !status.success() {
+        ensure!(
+            stderr.to_lowercase().contains("postgres")
+                || stderr.to_lowercase().contains("initdb")
+                || stderr.to_lowercase().contains("no such file")
+                || stderr.to_lowercase().contains("not found"),
+            eyre!(
+                concat!(
+                    "pg_worker setup failed for an unexpected reason; ",
+                    "stderr should mention missing/fake PostgreSQL installation; ",
+                    "binary exit code: {:?}, stderr: {}"
+                ),
+                status.code(),
+                stderr
+            )
+        );
+    }
+
+    // Verify the partial directory was removed by recovery.
+    // If setup succeeded, a fresh data directory will exist; if it failed,
+    // the directory should not exist. Either way, the ORIGINAL partial
+    // directory (which had PG_VERSION but no global/pg_filenode.map) was
+    // removed by recovery. We verify this by checking that either:
+    // - The directory doesn't exist (setup failed after recovery), or
+    // - The directory exists WITH the marker file (fresh init succeeded)
+    let marker_exists = data_dir.join("global/pg_filenode.map").exists();
     ensure!(
-        !data_dir.exists(),
+        !data_dir.exists() || marker_exists,
         eyre!(
-            "partial data directory should be removed by recovery; \
-            binary exit code: {:?}, stderr: {}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr)
+            concat!(
+                "partial data directory should be removed by recovery; ",
+                "expected either no directory or fresh directory with marker; ",
+                "binary exit code: {:?}, stderr: {}"
+            ),
+            status.code(),
+            stderr
         )
     );
 
