@@ -29,16 +29,27 @@ use rstest::rstest;
 mod cap_fs;
 #[path = "support/env.rs"]
 mod env;
+#[path = "support/partial_data_dir.rs"]
+mod partial_data_dir;
 #[path = "support/sandbox.rs"]
 mod sandbox;
 #[path = "support/serial.rs"]
 mod serial;
 
+use partial_data_dir::create_partial_data_dir;
 use sandbox::TestSandbox;
 use serial::{ScenarioLocalGuard, local_serial_guard};
 
 /// Recursively changes ownership of a directory tree to a user.
+///
+/// Symlinks are explicitly skipped to avoid following unexpected paths
+/// during recursive ownership changes.
 fn chown_recursive(path: &std::path::Path, uid: Uid, gid: Gid) -> Result<()> {
+    // Skip symlinks to avoid following unexpected paths
+    if path.is_symlink() {
+        return Ok(());
+    }
+
     chown(path, Some(uid), Some(gid)).context("chown directory")?;
     if path.is_dir() {
         for raw_entry in fs::read_dir(path).context("read dir")? {
@@ -96,14 +107,8 @@ fn partial_data_dir_recovery_then_fresh_init(local_serial_guard: ScenarioLocalGu
     let data_dir = Utf8PathBuf::from_path_buf(bootstrap.settings.data_dir.clone())
         .map_err(|_| eyre!("data_dir not UTF-8"))?;
 
-    // Create a PARTIAL data directory that simulates an interrupted initdb:
-    // - Has PG_VERSION (created early by initdb)
-    // - Has global directory
-    // - MISSING global/pg_filenode.map (created late by initdb, our marker)
-    fs::create_dir_all(data_dir.join("global")).context("create global dir")?;
-    fs::write(data_dir.join("PG_VERSION"), "16\n").context("write PG_VERSION")?;
-    fs::create_dir_all(data_dir.join("base/1")).context("create base/1")?;
-    fs::write(data_dir.join("base/1/pg_class"), "dummy").context("write dummy file")?;
+    // Create a PARTIAL data directory using the shared helper
+    create_partial_data_dir(data_dir.as_std_path()).context("create partial data dir")?;
 
     // Change ownership of the data directory to 'nobody' so the worker
     // subprocess can delete it during recovery

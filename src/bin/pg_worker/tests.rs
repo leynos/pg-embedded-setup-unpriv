@@ -6,6 +6,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     os::unix::ffi::OsStrExt,
+    path::Path,
 };
 use tempfile::{TempDir, tempdir};
 
@@ -14,6 +15,23 @@ type TempDataDirResult = R<(TempDir, Utf8PathBuf)>;
 
 fn ensure(is_valid: bool, msg: &str) -> R {
     if is_valid { Ok(()) } else { Err(msg.into()) }
+}
+
+/// Creates a partial data directory structure that simulates an interrupted `initdb`.
+///
+/// The directory will have:
+/// - `PG_VERSION` file with version "16"
+/// - `global/` directory (empty, no `pg_filenode.map`)
+/// - `base/1/pg_class` file with dummy content
+///
+/// This structure is detected as invalid by the recovery logic because it
+/// lacks `global/pg_filenode.map`.
+fn create_partial_data_dir(data_dir: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(data_dir.join("global"))?;
+    fs::write(data_dir.join("PG_VERSION"), "16\n")?;
+    fs::create_dir_all(data_dir.join("base/1"))?;
+    fs::write(data_dir.join("base/1/pg_class"), "dummy")?;
+    Ok(())
 }
 
 #[fixture]
@@ -115,14 +133,8 @@ fn recover_skips_empty_dir(temp_data_dir: TempDataDirResult) -> R {
 #[rstest]
 fn recover_removes_partial_initialisation(temp_data_dir: TempDataDirResult) -> R {
     let (_, p) = temp_data_dir?;
-    // Create a partial data directory that simulates an interrupted initdb:
-    // - Has PG_VERSION (created early by initdb)
-    // - Has global directory
-    // - Missing global/pg_filenode.map (created late by initdb)
-    fs::create_dir_all(p.join("global"))?;
-    fs::write(p.join("PG_VERSION"), "16\n")?;
-    fs::create_dir_all(p.join("base/1"))?;
-    fs::write(p.join("base/1/pg_class"), "dummy")?;
+    // Create a partial data directory using the shared helper
+    create_partial_data_dir(p.as_std_path())?;
 
     // Verify the directory is detected as invalid (missing marker)
     ensure(!has_valid_data_dir(&p)?, "partial dir should be invalid")?;
