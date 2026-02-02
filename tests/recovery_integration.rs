@@ -9,11 +9,7 @@ use std::path::Path;
 use std::process::Command;
 
 use color_eyre::eyre::{Result, ensure, eyre};
-
-#[path = "support/partial_data_dir.rs"]
-mod partial_data_dir;
-
-use partial_data_dir::create_partial_data_dir;
+use pg_embedded_setup_unpriv::test_support::create_partial_data_dir;
 
 // =============================================================================
 // Binary Invocation Helpers

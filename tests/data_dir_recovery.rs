@@ -29,14 +29,12 @@ use rstest::rstest;
 mod cap_fs;
 #[path = "support/env.rs"]
 mod env;
-#[path = "support/partial_data_dir.rs"]
-mod partial_data_dir;
 #[path = "support/sandbox.rs"]
 mod sandbox;
 #[path = "support/serial.rs"]
 mod serial;
 
-use partial_data_dir::create_partial_data_dir;
+use pg_embedded_setup_unpriv::test_support::create_partial_data_dir;
 use sandbox::TestSandbox;
 use serial::{ScenarioLocalGuard, local_serial_guard};
 

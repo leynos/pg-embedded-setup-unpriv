@@ -1,12 +1,12 @@
 //! Unit tests for `pg_worker` data directory recovery and argument parsing.
 
 use super::*;
+use pg_embedded_setup_unpriv::test_support::create_partial_data_dir;
 use rstest::{fixture, rstest};
 use std::{
     ffi::{OsStr, OsString},
     fs,
     os::unix::ffi::OsStrExt,
-    path::Path,
 };
 use tempfile::{TempDir, tempdir};
 
@@ -15,23 +15,6 @@ type TempDataDirResult = R<(TempDir, Utf8PathBuf)>;
 
 fn ensure(is_valid: bool, msg: &str) -> R {
     if is_valid { Ok(()) } else { Err(msg.into()) }
-}
-
-/// Creates a partial data directory structure that simulates an interrupted `initdb`.
-///
-/// The directory will have:
-/// - `PG_VERSION` file with version "16"
-/// - `global/` directory (empty, no `pg_filenode.map`)
-/// - `base/1/pg_class` file with dummy content
-///
-/// This structure is detected as invalid by the recovery logic because it
-/// lacks `global/pg_filenode.map`.
-fn create_partial_data_dir(data_dir: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(data_dir.join("global"))?;
-    fs::write(data_dir.join("PG_VERSION"), "16\n")?;
-    fs::create_dir_all(data_dir.join("base/1"))?;
-    fs::write(data_dir.join("base/1/pg_class"), "dummy")?;
-    Ok(())
 }
 
 #[fixture]

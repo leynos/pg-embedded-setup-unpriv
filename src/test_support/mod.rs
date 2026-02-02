@@ -14,6 +14,8 @@ mod hash;
 mod hook;
 #[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod logging;
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+mod partial_data_dir;
 mod scoped_env;
 mod shared_singleton;
 mod worker_env;
@@ -44,5 +46,7 @@ pub use hook::{
 pub use logging::{
     capture_debug_logs, capture_info_logs, capture_info_logs_with_spans, capture_warn_logs,
 };
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+pub use partial_data_dir::create_partial_data_dir;
 pub use scoped_env::scoped_env;
 pub use worker_env::worker_binary_for_tests;

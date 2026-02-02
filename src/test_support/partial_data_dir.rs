@@ -1,13 +1,4 @@
 //! Shared helpers for creating partial `PostgreSQL` data directories in tests.
-//!
-//! A "partial" data directory simulates an interrupted `initdb` operation:
-//! - Has `PG_VERSION` (created early by `initdb`)
-//! - Has `global/` directory
-//! - Has `base/1/` directory with some dummy files
-//! - MISSING `global/pg_filenode.map` (created late by `initdb`, our marker)
-//!
-//! This module provides a consistent way to create such directories across
-//! different test files.
 
 use std::fs;
 use std::path::Path;
@@ -24,7 +15,21 @@ use std::path::Path;
 ///
 /// # Errors
 ///
-/// Returns an error if any filesystem operation fails.
+/// Returns an I/O error if directory or file creation fails.
+///
+/// # Example
+///
+/// ```
+/// use std::path::Path;
+/// use pg_embedded_setup_unpriv::test_support::create_partial_data_dir;
+///
+/// let temp = tempfile::tempdir().unwrap();
+/// let data_dir = temp.path().join("data");
+/// create_partial_data_dir(&data_dir).unwrap();
+/// assert!(data_dir.join("PG_VERSION").exists());
+/// assert!(data_dir.join("global").exists());
+/// assert!(!data_dir.join("global/pg_filenode.map").exists());
+/// ```
 pub fn create_partial_data_dir(data_dir: &Path) -> std::io::Result<()> {
     fs::create_dir_all(data_dir.join("global"))?;
     fs::write(data_dir.join("PG_VERSION"), "16\n")?;
@@ -46,9 +51,8 @@ mod tests {
         create_partial_data_dir(&data_dir).expect("failed to create partial data dir");
 
         assert!(data_dir.join("PG_VERSION").exists());
-        assert!(data_dir.join("global").is_dir());
-        assert!(data_dir.join("base/1/pg_class").exists());
-        // The marker file should NOT exist - that's what makes it "partial"
+        assert!(data_dir.join("global").exists());
         assert!(!data_dir.join("global/pg_filenode.map").exists());
+        assert!(data_dir.join("base/1/pg_class").exists());
     }
 }
