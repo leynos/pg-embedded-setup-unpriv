@@ -14,7 +14,10 @@ mod hash;
 mod hook;
 #[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod logging;
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+mod partial_data_dir;
 mod scoped_env;
+mod shared_singleton;
 mod worker_env;
 
 #[cfg(doc)]
@@ -26,12 +29,13 @@ pub use filesystem::ambient_dir_and_path;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use filesystem::{CapabilityTempDir, ensure_dir_exists, metadata, set_permissions};
 pub use fixtures::{
-    dummy_environment, dummy_settings, ensure_worker_env, shared_cluster, test_runtime,
+    dummy_environment, dummy_settings, ensure_worker_env, shared_cluster, shared_cluster_handle,
+    test_runtime,
 };
 #[cfg(not(doc))]
-pub use fixtures::{shared_test_cluster, test_cluster};
+pub use fixtures::{shared_test_cluster, shared_test_cluster_handle, test_cluster};
 #[cfg(doc)]
-pub use fixtures_docs::{shared_test_cluster, test_cluster};
+pub use fixtures_docs::{shared_test_cluster, shared_test_cluster_handle, test_cluster};
 pub use hash::hash_directory;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use hook::{
@@ -42,5 +46,7 @@ pub use hook::{
 pub use logging::{
     capture_debug_logs, capture_info_logs, capture_info_logs_with_spans, capture_warn_logs,
 };
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+pub use partial_data_dir::create_partial_data_dir;
 pub use scoped_env::scoped_env;
 pub use worker_env::worker_binary_for_tests;

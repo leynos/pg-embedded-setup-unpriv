@@ -25,6 +25,31 @@ tool and integrate it into automated test flows.
 - Windows always behaves as unprivileged, so the helper runs in-process and
   ignores root-only scenarios.
 
+## Test backend selection
+
+`PG_TEST_BACKEND` selects the backend used by `bootstrap_for_tests()` and
+`TestCluster`. Supported values are:
+
+- unset or empty: `postgresql_embedded`
+- `postgresql_embedded`: run the embedded PostgreSQL backend
+
+Any other value triggers a `SKIP-TEST-CLUSTER` error, so test harnesses can
+intentionally skip the embedded cluster in mixed environments.
+
+The embedded backend downloads PostgreSQL binaries, initializes the data
+directory, and writes to the configured runtime and data paths. It requires
+outbound network access. On Linux, root workflows must supply
+`PG_EMBEDDED_WORKER` so the helper can drop privileges. On macOS, root
+execution is unsupported and expected to fail fast; on Windows the backend
+always runs in-process.
+
+Troubleshooting guidance:
+
+- If tests skip with `SKIP-TEST-CLUSTER: unsupported PG_TEST_BACKEND`, unset
+  `PG_TEST_BACKEND` or set it to `postgresql_embedded`.
+- If setup fails under root, verify `PG_EMBEDDED_WORKER` points to the worker
+  binary.
+
 ## Quick start
 
 1. Choose directories for the staged PostgreSQL distribution and the cluster’s
@@ -93,6 +118,12 @@ missing, the helper returns an error advising the caller to install `tzdata` or
 set `TZDIR` explicitly, making the dependency visible during test startup
 rather than when PostgreSQL launches.
 
+`bootstrap_for_tests()` also inserts a small set of PostgreSQL server
+configuration entries into `bootstrap.settings.configuration` to minimize
+background and parallel worker processes for ephemeral test clusters. Override
+these values by mutating the configuration map before starting the cluster if
+your tests need different behaviour.
+
 ## Resource Acquisition Is Initialization (RAII) test clusters
 
 `pg_embedded_setup_unpriv::TestCluster` wraps `bootstrap_for_tests()` with a
@@ -109,7 +140,7 @@ fn exercise_cluster() -> BootstrapResult<()> {
     let cluster = TestCluster::new()?;
     let url = cluster.settings().url("app_db");
     // Issue queries using any preferred client here.
-    drop(cluster); // PostgreSQL shuts down automatically.
+drop(cluster); // PostgreSQL shuts down automatically.
     Ok(())
 }
 ```
@@ -117,6 +148,24 @@ fn exercise_cluster() -> BootstrapResult<()> {
 The guard keeps `PGPASSFILE`, `TZ`, `TZDIR`, and the XDG directories populated
 for the duration of its lifetime, making synchronous tests usable without extra
 setup.
+
+By default the guard removes the PostgreSQL data directory when it drops. Use
+`CleanupMode` to control whether the installation directory is removed or to
+skip cleanup for debugging:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::{CleanupMode, TestCluster};
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let cluster = TestCluster::new()?.with_cleanup_mode(CleanupMode::Full);
+drop(cluster);
+# Ok(())
+# }
+```
+
+Shared clusters created with `test_support::shared_test_cluster()` are
+intentionally leaked for the process lifetime and therefore do not perform
+cleanup on drop.
 
 ### Async API for `#[tokio::test]` contexts
 

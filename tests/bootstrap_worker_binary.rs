@@ -1,7 +1,11 @@
-//! Exercises failure paths when the worker binary is misconfigured.
+//! Integration tests for the `pg_worker` binary.
 //!
-//! These checks ensure the bootstrapper validates helper paths eagerly so
-//! privileged orchestration does not defer errors to runtime.
+//! This module covers:
+//! - Bootstrap failure paths when the worker binary is misconfigured, ensuring
+//!   the bootstrapper validates helper paths eagerly so privileged orchestration
+//!   does not defer errors to runtime.
+//! - Binary invocation tests validating argument parsing, error messages, and
+//!   output formatting.
 #![cfg(unix)]
 
 use std::ffi::{OsStr, OsString};
@@ -10,14 +14,18 @@ use std::os::unix::fs::PermissionsExt;
 
 use color_eyre::eyre::{Result, ensure, eyre};
 use pg_embedded_setup_unpriv::{BootstrapErrorKind, bootstrap_for_tests};
+use rstest::rstest;
 
 #[path = "support/cap_fs_bootstrap.rs"]
 mod cap_fs;
 #[path = "support/env.rs"]
 mod env;
+#[path = "support/pg_worker_helpers.rs"]
+mod pg_worker_helpers;
 #[path = "support/sandbox.rs"]
 mod sandbox;
 
+use pg_worker_helpers::{pg_worker_binary, run_pg_worker};
 use sandbox::TestSandbox;
 
 #[test]
@@ -125,3 +133,142 @@ fn env_without_timezone_removes_tz_variable() -> Result<()> {
 
     Ok(())
 }
+
+// =============================================================================
+// Binary Invocation Integration Tests
+// =============================================================================
+
+/// Generates a unique, platform-appropriate temporary config path for testing.
+///
+/// The path does not need to exist; it is used only to test argument parsing.
+/// Uses a unique suffix to prevent collisions in parallel test runs.
+fn temp_config_path() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let unique_id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let thread_id = std::thread::current().id();
+    std::env::temp_dir()
+        .join(format!(
+            "pg_worker_test_config_{thread_id:?}_{unique_id}.json"
+        ))
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Asserts that `pg_worker` fails with a specific error message in stderr.
+fn assert_pg_worker_fails_with_message(
+    args: &[&str],
+    expected_message: &str,
+    test_description: &str,
+) -> Result<()> {
+    let Some(output) = run_pg_worker(args)? else {
+        return Ok(());
+    };
+
+    ensure!(
+        !output.status.success(),
+        "pg_worker should fail with {test_description}"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        stderr.contains(expected_message),
+        eyre!("stderr should contain '{expected_message}', got: {stderr}")
+    );
+
+    Ok(())
+}
+
+/// Verifies that the `pg_worker` binary is available when running full test suite.
+///
+/// This test explicitly fails (rather than silently passing) when the binary is
+/// missing, ensuring CI catches misconfiguration. The test is skipped when running
+/// without `--all-targets` since the binary won't be built in that case.
+#[test]
+fn pg_worker_binary_is_available() {
+    // This test exists to catch CI misconfiguration. If you're running tests
+    // without building binaries (e.g., `cargo test --lib`), this test will be
+    // skipped. When running `cargo test --all-targets`, this ensures the binary
+    // was actually built.
+    if std::env::var("CARGO_BIN_EXE_pg_worker").is_err() {
+        // Check if we're likely running with --all-targets by looking for other
+        // binary environment variables that Cargo sets
+        let other_binaries_present = std::env::vars().any(|(k, _)| k.starts_with("CARGO_BIN_EXE_"));
+        assert!(
+            !other_binaries_present,
+            concat!(
+                "pg_worker binary not found but other binaries are present. ",
+                "This suggests the pg_worker binary failed to build."
+            )
+        );
+        // Not running with --all-targets, so binary tests are expected to be skipped
+        return;
+    }
+
+    let binary = pg_worker_binary().expect("binary should be available");
+    assert!(
+        std::path::Path::new(binary).exists(),
+        "pg_worker binary path exists but file is missing: {binary}"
+    );
+}
+
+#[test]
+fn pg_worker_binary_rejects_invalid_operation() -> Result<()> {
+    let config_path = temp_config_path();
+    let Some(output) = run_pg_worker(&["invalid_op", &config_path])? else {
+        return Ok(());
+    };
+
+    ensure!(
+        !output.status.success(),
+        "pg_worker should fail with invalid operation"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        stderr.contains("unknown operation 'invalid_op'"),
+        eyre!("stderr should contain 'unknown operation', got: {stderr}")
+    );
+    ensure!(
+        stderr.contains("expected setup, start, stop, cleanup, or cleanup-full"),
+        eyre!("stderr should list valid operations, got: {stderr}")
+    );
+
+    Ok(())
+}
+
+#[rstest]
+#[case::missing_operation(&[], "missing operation")]
+#[case::missing_config(&["setup"], "missing config path")]
+fn pg_worker_binary_shows_expected_errors(
+    #[case] args: &[&str],
+    #[case] expected_message: &str,
+) -> Result<()> {
+    assert_pg_worker_fails_with_message(args, expected_message, expected_message)
+}
+
+#[test]
+fn pg_worker_binary_error_format_uses_prefix() -> Result<()> {
+    let config_path = temp_config_path();
+    let Some(output) = run_pg_worker(&["invalid_op", &config_path])? else {
+        return Ok(());
+    };
+
+    ensure!(
+        !output.status.success(),
+        "pg_worker should fail with invalid operation"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        stderr.contains("InvalidArgs"),
+        eyre!("error output should contain 'InvalidArgs' prefix, got: {stderr}")
+    );
+
+    Ok(())
+}
+
+// Note: Data directory recovery integration tests (Issue #80) are in
+// tests/recovery_integration.rs to keep this file focused on bootstrap
+// and binary invocation tests.

@@ -11,6 +11,8 @@ pub enum WorkerOperation {
     Setup,
     Start,
     Stop,
+    Cleanup,
+    CleanupFull,
 }
 
 impl WorkerOperation {
@@ -20,6 +22,8 @@ impl WorkerOperation {
             Self::Setup => "setup",
             Self::Start => "start",
             Self::Stop => "stop",
+            Self::Cleanup => "cleanup",
+            Self::CleanupFull => "cleanup-full",
         }
     }
 
@@ -29,6 +33,8 @@ impl WorkerOperation {
             Self::Setup => "postgresql_embedded::setup() failed",
             Self::Start => "postgresql_embedded::start() failed",
             Self::Stop => "postgresql_embedded::stop() failed",
+            Self::Cleanup => "pg_worker cleanup operation failed",
+            Self::CleanupFull => "pg_worker cleanup-full operation failed",
         }
     }
 
@@ -37,7 +43,7 @@ impl WorkerOperation {
         match self {
             Self::Setup => bootstrap.setup_timeout,
             Self::Start => bootstrap.start_timeout,
-            Self::Stop => bootstrap.shutdown_timeout,
+            Self::Stop | Self::Cleanup | Self::CleanupFull => bootstrap.shutdown_timeout,
         }
     }
 }

@@ -21,7 +21,13 @@ jobs:
       pull-requests: write
       checks: read
       statuses: read
+      # Needed for reusable workflow introspection via GitHub OIDC:
+      # the called workflow uses an OIDC token to read `job_workflow_ref`/`job_workflow_sha`,
+      # so it can checkout the *reusable workflow repo* (leynos/shared-actions) at the exact
+      # pinned commit, rather than accidentally resolving to the caller repo via `github.workflow_*`.
+      # The token is not used for any external cloud auth.
+      id-token: write
     if: ${{ github.event_name == 'workflow_dispatch' || github.actor == 'dependabot[bot]' }}
-    uses: leynos/shared-actions/.github/workflows/dependabot-automerge.yml@235d2d07b9a321364a742310873f6732d7228e72
+    uses: leynos/shared-actions/.github/workflows/dependabot-automerge.yml@76ba2df2b4b2f4a128d1f9d09ea2482e3f70458c
     with:
       pull-request-number: ${{ inputs.pull-request-number || github.event.pull_request.number }}

@@ -7,6 +7,7 @@
 
 mod bootstrap;
 pub mod cache;
+mod cleanup_helpers;
 mod cluster;
 mod env;
 mod error;
@@ -181,8 +182,9 @@ pub use crate::fs::ambient_dir_and_path;
 #[doc(hidden)]
 pub use crate::env::ScopedEnv;
 pub use bootstrap::{
-    ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment, TestBootstrapSettings,
-    bootstrap_for_tests, detect_execution_privileges, find_timezone_dir, run,
+    CleanupMode, ExecutionMode, ExecutionPrivileges, TestBootstrapEnvironment,
+    TestBootstrapSettings, bootstrap_for_tests, detect_execution_privileges, find_timezone_dir,
+    run,
 };
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 #[doc(hidden)]
@@ -191,7 +193,8 @@ pub use cluster::WorkerInvoker;
 #[doc(hidden)]
 pub use cluster::WorkerOperation;
 pub use cluster::{
-    ConnectionMetadata, DatabaseName, TemporaryDatabase, TestCluster, TestClusterConnection,
+    ClusterGuard, ClusterHandle, ConnectionMetadata, DatabaseName, TemporaryDatabase, TestCluster,
+    TestClusterConnection,
 };
 #[doc(hidden)]
 pub use error::BootstrapResult;
@@ -291,7 +294,17 @@ impl PgEnvCfg {
     /// Converts the configuration into a complete `postgresql_embedded::Settings` object.
     ///
     /// Applies version, connection, path, and locale settings from the current configuration.
-    /// Returns an error if the version requirement is invalid.
+    /// Returns an error if the version requirement is invalid. This variant does not apply
+    /// test-specific worker limits.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::PgEnvCfg;
+    ///
+    /// let cfg = PgEnvCfg::default();
+    /// let settings = cfg.to_settings()?;
+    /// # Ok::<(), pg_embedded_setup_unpriv::Error>(())
+    /// ```
     ///
     /// # Returns
     /// A fully configured `Settings` instance on success, or an error if configuration fails.
@@ -299,6 +312,45 @@ impl PgEnvCfg {
     /// # Errors
     /// Returns an error when the semantic version requirement cannot be parsed.
     pub fn to_settings(&self) -> Result<Settings> {
+        self.to_settings_with_context(false)
+    }
+
+    /// Converts the configuration into `Settings`, applying test-only worker limits.
+    ///
+    /// Use this helper for ephemeral test clusters where resource limits are desirable.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::PgEnvCfg;
+    ///
+    /// let cfg = PgEnvCfg::default();
+    /// let settings = cfg.to_settings_for_tests()?;
+    /// # Ok::<(), pg_embedded_setup_unpriv::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    /// Returns an error when the semantic version requirement cannot be parsed.
+    pub fn to_settings_for_tests(&self) -> Result<Settings> {
+        self.to_settings_with_context(true)
+    }
+
+    /// Converts the configuration into `Settings`, optionally applying test limits.
+    ///
+    /// Set `for_tests` to `true` to apply the worker limits intended for ephemeral
+    /// test clusters.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use pg_embedded_setup_unpriv::PgEnvCfg;
+    ///
+    /// let cfg = PgEnvCfg::default();
+    /// let settings = cfg.to_settings_with_context(true)?;
+    /// # Ok::<(), pg_embedded_setup_unpriv::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    /// Returns an error when the semantic version requirement cannot be parsed.
+    pub fn to_settings_with_context(&self, for_tests: bool) -> Result<Settings> {
         // Disable the internal postgresql_embedded timeout. This crate wraps lifecycle
         // operations with tokio::time::timeout using setup_timeout/start_timeout from
         // TestBootstrapSettings, providing consistent timeout behaviour for both
@@ -313,6 +365,9 @@ impl PgEnvCfg {
         self.apply_connection(&mut s);
         self.apply_paths(&mut s);
         self.apply_locale(&mut s);
+        if for_tests {
+            Self::apply_worker_limits(&mut s);
+        }
 
         Ok(s)
     }
@@ -361,4 +416,24 @@ impl PgEnvCfg {
                 .insert("encoding".into(), enc.clone());
         }
     }
+
+    fn apply_worker_limits(settings: &mut Settings) {
+        for (key, value) in WORKER_LIMIT_DEFAULTS {
+            settings
+                .configuration
+                .entry(key.to_owned())
+                .or_insert_with(|| value.to_owned());
+        }
+    }
 }
+
+const WORKER_LIMIT_DEFAULTS: [(&str, &str); 8] = [
+    ("max_connections", "20"),
+    ("max_worker_processes", "2"),
+    ("max_parallel_workers", "0"),
+    ("max_parallel_workers_per_gather", "0"),
+    ("max_parallel_maintenance_workers", "0"),
+    ("autovacuum", "off"),
+    ("max_wal_senders", "0"),
+    ("max_replication_slots", "0"),
+];
