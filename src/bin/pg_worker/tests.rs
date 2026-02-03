@@ -1,6 +1,7 @@
 //! Unit tests for `pg_worker` data directory recovery and argument parsing.
 
 use super::*;
+use pg_embedded_setup_unpriv::test_support::create_partial_data_dir;
 use rstest::{fixture, rstest};
 use std::{
     ffi::{OsStr, OsString},
@@ -107,4 +108,23 @@ fn recover_skips_empty_dir(temp_data_dir: TempDataDirResult) -> R {
     fs::create_dir_all(&p)?;
     recover_invalid_data_dir(&p)?;
     ensure(p.exists(), "empty dir should remain")
+}
+
+/// Validates the recovery scenario from issue #80: a partial data directory
+/// (missing `global/pg_filenode.map`) is detected as invalid and removed,
+/// allowing fresh initialisation to proceed.
+#[rstest]
+fn recover_removes_partial_initialisation(temp_data_dir: TempDataDirResult) -> R {
+    let (_, p) = temp_data_dir?;
+    // Create a partial data directory using the shared helper
+    create_partial_data_dir(p.as_std_path())?;
+
+    // Verify the directory is detected as invalid (missing marker)
+    ensure(!has_valid_data_dir(&p)?, "partial dir should be invalid")?;
+
+    // Recovery should remove the partial directory
+    recover_invalid_data_dir(&p)?;
+
+    // After recovery, the directory should be gone
+    ensure(!p.exists(), "partial dir should be removed by recovery")
 }

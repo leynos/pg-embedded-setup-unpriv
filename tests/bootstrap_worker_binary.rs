@@ -11,7 +11,6 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::process::Command;
 
 use color_eyre::eyre::{Result, ensure, eyre};
 use pg_embedded_setup_unpriv::{BootstrapErrorKind, bootstrap_for_tests};
@@ -21,9 +20,12 @@ use rstest::rstest;
 mod cap_fs;
 #[path = "support/env.rs"]
 mod env;
+#[path = "support/pg_worker_helpers.rs"]
+mod pg_worker_helpers;
 #[path = "support/sandbox.rs"]
 mod sandbox;
 
+use pg_worker_helpers::{pg_worker_binary, run_pg_worker};
 use sandbox::TestSandbox;
 
 #[test]
@@ -135,33 +137,6 @@ fn env_without_timezone_removes_tz_variable() -> Result<()> {
 // =============================================================================
 // Binary Invocation Integration Tests
 // =============================================================================
-
-/// Returns the `pg_worker` binary path if available via Cargo's test harness.
-///
-/// Returns `None` when `CARGO_BIN_EXE_pg_worker` is not set, which can occur
-/// when running tests without building the binary target.
-const fn pg_worker_binary() -> Option<&'static str> {
-    option_env!("CARGO_BIN_EXE_pg_worker")
-}
-
-/// Runs the `pg_worker` binary with the given arguments.
-///
-/// Returns the command output on success, or `None` if the binary path is
-/// unavailable. Returns an error if the command fails to execute (not to be
-/// confused with the command returning a non-zero exit code, which is expected
-/// for error tests).
-///
-/// When the binary is unavailable, this returns `None` and the calling test
-/// should return early. The `pg_worker_binary_is_available` test ensures that
-/// missing binaries are caught in CI when running with `--all-targets`.
-fn run_pg_worker(args: &[&str]) -> Result<Option<std::process::Output>> {
-    let Some(binary) = pg_worker_binary() else {
-        return Ok(None);
-    };
-
-    let output = Command::new(binary).args(args).output()?;
-    Ok(Some(output))
-}
 
 /// Generates a unique, platform-appropriate temporary config path for testing.
 ///
@@ -293,3 +268,7 @@ fn pg_worker_binary_error_format_uses_prefix() -> Result<()> {
 
     Ok(())
 }
+
+// Note: Data directory recovery integration tests (Issue #80) are in
+// tests/recovery_integration.rs to keep this file focused on bootstrap
+// and binary invocation tests.
