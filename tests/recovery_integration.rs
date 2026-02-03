@@ -6,35 +6,14 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use color_eyre::eyre::{Result, ensure, eyre};
 use pg_embedded_setup_unpriv::test_support::create_partial_data_dir;
 
-// =============================================================================
-// Binary Invocation Helpers
-// =============================================================================
+#[path = "support/pg_worker_helpers.rs"]
+mod pg_worker_helpers;
 
-/// Returns the `pg_worker` binary path if available via Cargo's test harness.
-///
-/// Returns `None` when `CARGO_BIN_EXE_pg_worker` is not set, which can occur
-/// when running tests without building the binary target.
-const fn pg_worker_binary() -> Option<&'static str> {
-    option_env!("CARGO_BIN_EXE_pg_worker")
-}
-
-/// Runs the `pg_worker` binary with the given arguments.
-///
-/// Returns the command output on success, or `None` if the binary path is
-/// unavailable.
-fn run_pg_worker(args: &[&str]) -> Result<Option<std::process::Output>> {
-    let Some(binary) = pg_worker_binary() else {
-        return Ok(None);
-    };
-
-    let output = Command::new(binary).args(args).output()?;
-    Ok(Some(output))
-}
+use pg_worker_helpers::{pg_worker_binary, run_pg_worker};
 
 // =============================================================================
 // Worker Config Helper
