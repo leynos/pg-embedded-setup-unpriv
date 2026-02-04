@@ -1,188 +1,91 @@
 # pg_embedded_setup_unpriv
 
-`pg_embedded_setup_unpriv` prepares a `postgresql_embedded` data directory
-while you are running as `root`, dropping privileges to `nobody` only for the
-filesystem mutations that must occur as the target user. The binary is useful
-when you need to initialize PostgreSQL assets inside build pipelines or CI
-images where direct access to the `nobody` account is required.
+*Zero-configuration PostgreSQL test fixtures for Rust—whether you're root or
+not.*
 
-## Prerequisites
+## Why pg_embedded_setup_unpriv?
 
-- Linux host with `sudo` or direct `root` access.
-- Rust toolchain (matching `rust-toolchain.toml`) and `cargo` installed.
-- Ability to download crates from crates.io.
+Writing integration tests against PostgreSQL should be straightforward, but
+environments vary: CI containers often run as root, developer laptops don't,
+and everyone wants the same tests to pass everywhere. This crate makes that
+happen:
 
-## Configuration model
+- **Zero configuration**: Spin up a real PostgreSQL instance with a single
+  line of code. No environment variables, config files, or manual setup
+  required.
+- **Works anywhere**: The same test code runs on root CI (Codex, containers)
+  and unprivileged machines (GitHub Actions, your laptop)—the library detects
+  privileges at runtime and adapts.
+- **RAII lifecycle**: `TestCluster` starts PostgreSQL on construction and
+  stops it on drop. No orphan processes, no cleanup code.
+- **Fast test isolation**: Clone pre-migrated template databases in
+  milliseconds instead of bootstrapping fresh clusters for each test.
 
-Configuration is discovered via environment variables, files, and CLI arguments
-thanks to `ortho_config`. All fields are optional; when omitted the defaults
-from `postgresql_embedded::Settings::default()` are used. The test bootstrap
-helpers (`bootstrap_for_tests` and `TestCluster`) additionally apply server
-configuration defaults that limit background workers for ephemeral clusters.
-
-- `PG_VERSION_REQ` – SemVer requirement such as `^17` or `=16.4.0`.
-- `PG_PORT` – TCP port for the server to listen on. Defaults to `5432`.
-- `PG_SUPERUSER` – Administrator account name.
-- `PG_PASSWORD` – Password for the superuser.
-- `PG_DATA_DIR` – Directory where PostgreSQL data files should live.
-- `PG_RUNTIME_DIR` – Directory for the downloaded distribution and binaries.
-- `PG_LOCALE` – Locale passed to `initdb`.
-- `PG_ENCODING` – Cluster encoding (for example `UTF8`).
-- `PG_SHUTDOWN_TIMEOUT_SECS` – Optional number of seconds to wait for
-  PostgreSQL to stop during teardown. Defaults to `15` seconds and accepts
-  values between `1` and `600`.
-
-You may also provide these values through a configuration file named `pg.toml`,
-`pg.yaml`, or `pg.json5` (depending on enabled features) located in any path
-recognized by `ortho_config`, or through CLI flags if you wrap the binary
-inside your own launcher.
-
-## Root usage and worker binary
-
-When running as `root`, the library requires a privileged worker binary
-(`pg_worker`) to execute PostgreSQL operations safely while dropping privileges
-to `nobody`.
+## Quick start
 
 ### Installation
 
-```bash
-cargo install --path .
+Add to your `Cargo.toml`:
+
+```toml
+[dev-dependencies]
+pg-embed-setup-unpriv = "0.4"
+rstest = "0.26"
 ```
 
-This installs both `pg_embedded_setup_unpriv` and `pg_worker`. Verify
-installation:
+### Basic usage
 
-```bash
-which pg_embedded_setup_unpriv pg_worker
-```
-
-### Worker discovery
-
-The library automatically discovers `pg_worker` from PATH. For custom workers,
-set the `PG_EMBEDDED_WORKER` environment variable:
-
-```bash
-export PG_EMBEDDED_WORKER=/path/to/custom/worker
-```
-
-### Common issues
-
-- **Worker not found**: Ensure `pg_worker` is installed and in PATH.
-- **Permission errors**: Verify the binary is executable (`chmod +x`).
-
-Unprivileged users do not need to install the worker binary.
-
-## Running the setup helper
-
-1. Ensure the desired directories exist or can be created. They will be owned
-   by `nobody` after the tool completes.
-2. Export any configuration overrides, for example:
-
-   ```bash
-   export PG_VERSION_REQ="^17"
-   export PG_DATA_DIR="/var/lib/postgres/data"
-   export PG_RUNTIME_DIR="/var/lib/postgres/runtime"
-   ```
-
-3. Execute the binary as `root` so it can chown the directories before dropping
-   privileges:
-
-   ```bash
-   sudo -E cargo run --release --bin pg_embedded_setup_unpriv
-   ```
-
-   The `-E` flag preserves any exported `PG_*` variables for the run.
-
-4. On success the command exits with status `0`. The PostgreSQL payload is
-   downloaded into `PG_RUNTIME_DIR`, initialized into `PG_DATA_DIR`, and both
-   paths are owned by `nobody`. Any failure emits a structured error via
-   `color-eyre` to standard error and the process exits with status `1`.
-
-## Troubleshooting
-
-- **Must be run as root** – The helper aborts when the effective UID is not
-  `0`. Re-run the command using `sudo` or inside a `root` shell.
-- **Directory permission errors** – Confirm the paths specified in
-  `PG_DATA_DIR` and `PG_RUNTIME_DIR` are writable by `root` so ownership can be
-  transferred to `nobody`.
-- **PostgreSQL download issues** – Ensure outbound network access is available
-  to fetch the PostgreSQL distribution used by `postgresql_embedded`.
-- **Invalid `TimeZone` parameter** – The embedded cluster requires access to
-  the system timezone database. Install your distribution's `tzdata` (or
-  equivalent) package inside the container or VM running the tool.
-
-## Integration testing with `rstest`
-
-The crate ships an `rstest` fixture, `test_support::test_cluster`, so test
-modules can request a ready `TestCluster` without invoking constructors
-manually. Bring the fixture into scope and declare a parameter named
-`test_cluster` to opt into automatic setup and teardown.
-
-```rust,no_run
+```rust
 use pg_embedded_setup_unpriv::{test_support::test_cluster, TestCluster};
 use rstest::rstest;
 
 #[rstest]
-fn migrates_schema(test_cluster: TestCluster) {
+fn test_my_database_logic(test_cluster: TestCluster) {
     let url = test_cluster.connection().database_url("postgres");
+    // Connect with your preferred client and run queries
     assert!(url.starts_with("postgresql://"));
 }
 ```
 
-Because the fixture handles environment preparation, tests stay declarative and
-can focus on behaviours instead of bootstrap plumbing. When a bootstrap failure
-occurs the fixture panics with a `SKIP-TEST-CLUSTER` prefix, so higher-level
-behaviour tests can convert known transient errors into soft skips.
+That's it. The `test_cluster` fixture handles downloading PostgreSQL, creating
+directories, starting the server, and cleaning up when the test ends.
 
-## Fast test isolation with template databases
+## Features
 
-For test suites where per-test cluster bootstrap is too slow, use
-`shared_test_cluster` to share a single cluster across all tests and clone
-template databases for isolation:
+- **Automatic privilege detection**: Root executions delegate filesystem work
+  to a `pg_worker` subprocess running as `nobody`; unprivileged executions run
+  entirely in-process.
+- **rstest integration**: Ready-made fixtures (`test_cluster`,
+  `shared_test_cluster`) for declarative test setup.
+- **Async support**: Use `TestCluster::start_async()` in `#[tokio::test]`
+  contexts (requires the `async-api` feature).
+- **Template databases**: Clone databases via PostgreSQL's `TEMPLATE`
+  mechanism for sub-second test isolation.
+- **Diesel support**: Optional `diesel-support` feature provides
+  `diesel_connection()` for direct database access.
+- **Observability**: Tracing spans for lifecycle events, with sensitive values
+  automatically redacted.
 
-```rust,no_run
-use pg_embedded_setup_unpriv::{test_support::shared_test_cluster, TestCluster};
-use rstest::rstest;
+## Running as root / pg_worker
 
-#[rstest]
-fn fast_isolated_test(shared_test_cluster: &'static TestCluster) {
-    // Clone a pre-migrated template (milliseconds, not seconds)
-    shared_test_cluster
-        .create_database_from_template("my_test_db", "migrated_template")
-        .unwrap();
+If your tests run as `root` (common in containers/CI) and you hit privilege
+errors, ensure the `pg_worker` helper is configured via `PG_EMBEDDED_WORKER`.
+See the Users' Guide section on root-only test agents for the required setup
+and environment variables.[^root-worker]
 
-    let url = shared_test_cluster.connection().database_url("my_test_db");
-    // ... run test queries ...
+[^root-worker]: docs/users-guide.md#integrating-with-root-only-test-agents
 
-    shared_test_cluster.drop_database("my_test_db").unwrap();
-}
-```
+## Learn more
 
-Key features:
+- [Users' Guide](docs/users-guide.md) — full documentation, async API,
+  template databases, and performance tuning
+- [Developers' Guide](docs/developers-guide.md) — contributing and development
+- [Roadmap](docs/roadmap.md) — planned features and progress
 
-- **`shared_cluster()`** – process-global cluster initialized once per binary
-- **`create_database_from_template()`** – clone databases via PostgreSQL's
-  `TEMPLATE` clause (filesystem copy, completes in milliseconds)
-- **`ensure_template_exists()`** – concurrency-safe template creation with
-  per-template locking
-- **`hash_directory()`** – generate content-based template names that
-  auto-invalidate when migrations change
+## Licence
 
-See [`docs/users-guide.md`](docs/users-guide.md) for complete examples and
-performance guidance.
+ISC — see the licence in [LICENSE](LICENSE) for details.
 
-## Behaviour-driven diagnostics
+## Contributing
 
-Behavioural coverage relies on `rstest-bdd` (Behaviour-Driven Development,
-BDD), which bundles Fluent localization files. The test suite includes
-`tests/localized_diagnostics.rs`, a Dutch Gherkin scenario that switches
-diagnostics to French via `rstest_bdd::select_localizations` and fails if the
-embedded assets are missing. Run `make test` (or the focused
-`cargo test localized_diagnostics`) in CI to ensure every target platform loads
-the lazy localization payload correctly.
-
-## Next steps
-
-After the bootstrap completes you can start PostgreSQL with
-`postgresql_embedded` (or another supervisor of your choice) using the same
-directories and superuser credentials established by the helper.
+Contributions welcome! Please see [AGENTS.md](AGENTS.md) for guidelines.
