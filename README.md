@@ -75,7 +75,7 @@ directories, starting the server, and cleaning up when the test ends.
 
 ## Licence
 
-ISC — see [LICENSE](LICENSE) for details.
+ISC — see the licence in [LICENSE](LICENSE) for details.
 
 ## Contributing
 
