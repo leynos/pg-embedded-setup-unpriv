@@ -66,6 +66,15 @@ directories, starting the server, and cleaning up when the test ends.
 - **Observability**: Tracing spans for lifecycle events, with sensitive values
   automatically redacted.
 
+## Running as root / pg_worker
+
+If your tests run as `root` (common in containers/CI) and you hit privilege
+errors, ensure the `pg_worker` helper is configured via `PG_EMBEDDED_WORKER`.
+See the Users' Guide section on root-only test agents for the required setup
+and environment variables.[^root-worker]
+
+[^root-worker]: docs/users-guide.md#integrating-with-root-only-test-agents
+
 ## Learn more
 
 - [Users' Guide](docs/users-guide.md) — full documentation, async API,
