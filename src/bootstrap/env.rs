@@ -1,52 +1,48 @@
 //! Parses environment variables used by the bootstrapper and surfaces the
 //! resulting configuration for the filesystem preparers.
-
+use crate::bootstrap::mode::ExecutionPrivileges;
+use crate::error::{BootstrapError, BootstrapErrorKind, BootstrapResult};
+use crate::fs::ambient_dir_and_path;
+use camino::{Utf8Path, Utf8PathBuf};
+#[cfg(unix)]
+use cap_std::fs::PermissionsExt;
+use color_eyre::eyre::Report;
 use std::env::{self, VarError};
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::time::Duration;
-
-use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::Report;
-
-use crate::bootstrap::mode::ExecutionPrivileges;
-use crate::error::{BootstrapError, BootstrapErrorKind, BootstrapResult};
-use crate::fs::ambient_dir_and_path;
-
-#[cfg(unix)]
-use cap_std::fs::PermissionsExt;
-
 #[cfg(unix)]
 const WORKER_BINARY_NAME: &str = "pg_worker";
 #[cfg(windows)]
 const WORKER_BINARY_NAME: &str = "pg_worker.exe";
-
 pub(super) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_SHUTDOWN_TIMEOUT_SECS: u64 = 600;
 const SHUTDOWN_TIMEOUT_ENV: &str = "PG_SHUTDOWN_TIMEOUT_SECS";
 
-fn discover_worker_from_path() -> Option<Utf8PathBuf> {
-    let path_var = env::var_os("PATH")?;
-    for dir in env::split_paths(&path_var) {
-        let Some(worker_path) = Utf8PathBuf::from_path_buf(dir.join(WORKER_BINARY_NAME)).ok()
-        else {
-            continue;
-        };
+fn discover_worker_from_path() -> BootstrapResult<Option<Utf8PathBuf>> {
+    let Some(path_var) = env::var_os("PATH") else {
+        return Ok(None);
+    };
+    for entry in env::split_paths(&path_var) {
+        let dir = Utf8PathBuf::from_path_buf(entry).map_err(|invalid_entry| {
+            let invalid_value = invalid_entry.as_os_str().to_string_lossy();
+            BootstrapError::from(color_eyre::eyre::eyre!(
+                "PATH contains a non-UTF-8 entry: {invalid_value:?}. Remove or replace the malformed entry before running as root."
+            ))
+        })?;
 
         #[cfg(unix)]
-        {
-            let dir_str = dir.as_os_str().to_string_lossy();
-            if dir_str == "." || dir_str.is_empty() {
-                continue;
-            }
+        if dir.as_str().is_empty() || dir.as_str() == "." {
+            continue;
         }
 
+        let worker_path = dir.join(WORKER_BINARY_NAME);
         if worker_path.is_file() && is_executable(&worker_path) {
-            return Some(worker_path);
+            return Ok(Some(worker_path));
         }
     }
 
-    None
+    Ok(None)
 }
 
 #[cfg(unix)]
@@ -87,12 +83,9 @@ pub const TZDIR_CANDIDATES: [&str; 4] = [
 /// Returns the first existing candidate from `TZDIR_CANDIDATES`, or `None` if
 /// none exist or on non-Unix platforms. This helper enables test harnesses to
 /// set `TZDIR` consistently with production bootstrap logic.
-///
 /// # Examples
-///
 /// ```
 /// use pg_embedded_setup_unpriv::find_timezone_dir;
-///
 /// if let Some(tzdir) = find_timezone_dir() {
 ///     println!("Found timezone directory: {}", tzdir);
 /// }
@@ -107,13 +100,11 @@ pub fn find_timezone_dir() -> Option<&'static Utf8Path> {
             .map(Utf8Path::new)
             .find(|path| path.exists())
     }
-
     #[cfg(not(unix))]
     {
         None
     }
 }
-
 pub(super) fn shutdown_timeout_from_env() -> BootstrapResult<Duration> {
     match env::var(SHUTDOWN_TIMEOUT_ENV) {
         Ok(raw) => {
@@ -172,7 +163,7 @@ pub(super) fn worker_binary_from_env(
     {
         use crate::bootstrap::mode::ExecutionPrivileges;
         if privileges == ExecutionPrivileges::Root {
-            if let Some(worker) = discover_worker_from_path() {
+            if let Some(worker) = discover_worker_from_path()? {
                 validate_worker_path(&worker)?;
                 return Ok(Some(worker));
             }
@@ -402,3 +393,7 @@ fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
         Ok(None)
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "env_tests.rs"]
+mod tests;
