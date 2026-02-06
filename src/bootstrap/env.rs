@@ -19,6 +19,7 @@ pub(super) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_SHUTDOWN_TIMEOUT_SECS: u64 = 600;
 const SHUTDOWN_TIMEOUT_ENV: &str = "PG_SHUTDOWN_TIMEOUT_SECS";
 
+// Hard-fail on non-UTF-8 PATH entries to keep worker discovery deterministic.
 fn discover_worker_from_path() -> BootstrapResult<Option<Utf8PathBuf>> {
     let Some(path_var) = env::var_os("PATH") else {
         return Ok(None);
@@ -26,11 +27,11 @@ fn discover_worker_from_path() -> BootstrapResult<Option<Utf8PathBuf>> {
     for entry in env::split_paths(&path_var) {
         let dir = Utf8PathBuf::from_path_buf(entry).map_err(|invalid_entry| {
             let invalid_value = invalid_entry.as_os_str().to_string_lossy();
-            BootstrapError::from(color_eyre::eyre::eyre!(
+            let report = color_eyre::eyre::eyre!(
                 "PATH contains a non-UTF-8 entry: {invalid_value:?}. Remove or replace the malformed entry before running as root."
-            ))
+            );
+            BootstrapError::new(BootstrapErrorKind::WorkerBinaryPathNonUtf8, report)
         })?;
-
         #[cfg(unix)]
         if dir.as_str().is_empty() || dir.as_str() == "." {
             continue;
