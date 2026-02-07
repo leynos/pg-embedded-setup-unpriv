@@ -3,6 +3,7 @@
 //! Provides [`bootstrap_for_tests`] so suites can retrieve structured settings and
 //! prepared environment variables without reimplementing bootstrap orchestration.
 mod env;
+mod env_types;
 mod mode;
 mod prepare;
 
