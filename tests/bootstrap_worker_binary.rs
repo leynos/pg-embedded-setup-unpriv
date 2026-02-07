@@ -10,9 +10,11 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::PermissionsExt;
 
 use color_eyre::eyre::{Result, ensure, eyre};
+use nix::unistd::geteuid;
 use pg_embedded_setup_unpriv::{BootstrapErrorKind, bootstrap_for_tests};
 use rstest::rstest;
 
@@ -103,6 +105,51 @@ fn bootstrap_fails_when_worker_binary_not_executable() -> Result<()> {
     ensure!(
         message.contains("must be executable"),
         eyre!("expected non-executable error, got: {message}")
+    );
+
+    sandbox.reset()?;
+
+    Ok(())
+}
+
+#[test]
+fn bootstrap_fails_on_non_utf8_path_entry_when_root() -> Result<()> {
+    if !geteuid().is_root() {
+        tracing::warn!("skipping non-utf8 PATH test: requires root privileges");
+        return Ok(());
+    }
+
+    let sandbox = TestSandbox::new("non-utf8-path-entry")?;
+    let temp = tempfile::tempdir()?;
+    let valid_dir = temp.path().join("valid");
+    fs::create_dir_all(&valid_dir)?;
+
+    let worker_path = valid_dir.join("pg_worker");
+    fs::write(&worker_path, b"#!/bin/sh\nexit 0\n")?;
+    let mut perms = fs::metadata(&worker_path)?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&worker_path, perms)?;
+
+    let non_utf8_component = OsString::from_vec(vec![0xff, 0xfe, 0xfd]);
+    let non_utf8_dir = temp.path().join(&non_utf8_component);
+    fs::create_dir_all(&non_utf8_dir)?;
+
+    let path_value = std::env::join_paths([non_utf8_dir, valid_dir]).expect("join PATH");
+    let mut env_vars = sandbox.env_without_timezone();
+    env_vars.retain(|(key, _)| key.as_os_str() != OsStr::new("PG_EMBEDDED_WORKER"));
+    env_vars.push((OsString::from("PG_EMBEDDED_WORKER"), None));
+    env_vars.push((OsString::from("PATH"), Some(path_value)));
+
+    let outcome = sandbox.with_env(env_vars, bootstrap_for_tests);
+    let err = outcome.expect_err("bootstrap should fail on non-UTF-8 PATH entry");
+    ensure!(
+        err.kind() == BootstrapErrorKind::WorkerBinaryPathNonUtf8,
+        "expected non-UTF-8 PATH error kind but observed {:?}",
+        err.kind()
+    );
+    ensure!(
+        err.to_string().contains("non-UTF-8"),
+        "expected non-UTF-8 PATH error message, got: {err}"
     );
 
     sandbox.reset()?;

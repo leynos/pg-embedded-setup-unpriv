@@ -37,6 +37,8 @@ pub enum BootstrapErrorKind {
     Other,
     /// Indicates the configured worker binary is missing from disk.
     WorkerBinaryMissing,
+    /// Indicates a PATH entry used for worker discovery is not valid UTF-8.
+    WorkerBinaryPathNonUtf8,
 }
 
 /// Captures bootstrap-specific failures.
