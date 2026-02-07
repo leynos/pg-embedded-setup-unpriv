@@ -6,6 +6,12 @@ use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::PermissionsExt;
 
 #[test]
+fn discover_worker_returns_none_when_path_is_absent() {
+    let result = discover_worker_from_path_value(None).expect("None PATH should not error");
+    assert!(result.is_none(), "expected Ok(None) when PATH is absent");
+}
+
+#[test]
 fn discover_worker_errors_on_non_utf8_path_entry() {
     let temp = tempfile::tempdir().expect("tempdir");
     let valid_dir = temp.path().join("valid");

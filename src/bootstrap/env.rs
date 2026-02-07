@@ -25,6 +25,8 @@ fn discover_worker_from_path() -> BootstrapResult<Option<Utf8PathBuf>> {
 }
 
 // Hard-fail on non-UTF-8 PATH entries to keep worker discovery deterministic.
+/// Hard-fails on non-UTF-8 PATH entries, skips empty/"." entries, and returns
+/// the first executable match for `WORKER_BINARY_NAME`.
 fn discover_worker_from_path_value(
     path_var: Option<OsString>,
 ) -> BootstrapResult<Option<Utf8PathBuf>> {
@@ -35,7 +37,7 @@ fn discover_worker_from_path_value(
         let dir = Utf8PathBuf::from_path_buf(entry).map_err(|invalid_entry| {
             let invalid_value = invalid_entry.as_os_str().to_string_lossy();
             let report = color_eyre::eyre::eyre!(
-                "PATH contains a non-UTF-8 entry: {invalid_value:?}. Remove or replace the malformed entry before running as root."
+                "PATH contains a non-UTF-8 entry: {invalid_value:?}; remove or replace the malformed entry."
             );
             BootstrapError::new(BootstrapErrorKind::WorkerBinaryPathNonUtf8, report)
         })?;
@@ -57,6 +59,7 @@ fn discover_worker_from_path_value(
 fn is_executable(path: &Utf8Path) -> bool {
     path.metadata()
         .map(|m| {
+            // std metadata uses std permissions; keep this trait import for mode().
             use std::os::unix::fs::PermissionsExt;
             m.permissions().mode() & 0o111 != 0
         })
