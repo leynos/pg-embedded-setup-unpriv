@@ -1,12 +1,11 @@
 //! Tests for bootstrap environment discovery helpers.
 
-use super::*;
-use rstest::rstest;
+use super::{BootstrapErrorKind, WORKER_BINARY_NAME, discover_worker_from_path_value};
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::PermissionsExt;
 
-#[rstest]
+#[test]
 fn discover_worker_errors_on_non_utf8_path_entry() {
     let temp = tempfile::tempdir().expect("tempdir");
     let valid_dir = temp.path().join("valid");
@@ -25,9 +24,7 @@ fn discover_worker_errors_on_non_utf8_path_entry() {
     std::fs::set_permissions(&worker_path, perms).expect("chmod pg_worker");
 
     let path_value = std::env::join_paths([non_utf8_dir, valid_dir]).expect("join PATH");
-    let _guard = crate::test_support::scoped_env(vec![(OsString::from("PATH"), Some(path_value))]);
-
-    let err = discover_worker_from_path()
+    let err = discover_worker_from_path_value(Some(path_value))
         .expect_err("discover_worker_from_path should reject non-UTF-8 PATH entries");
     let message = err.to_string().to_lowercase();
     assert_eq!(

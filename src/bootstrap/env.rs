@@ -8,6 +8,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::fs::PermissionsExt;
 use color_eyre::eyre::Report;
 use std::env::{self, VarError};
+use std::ffi::OsString;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -19,12 +20,18 @@ pub(super) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_SHUTDOWN_TIMEOUT_SECS: u64 = 600;
 const SHUTDOWN_TIMEOUT_ENV: &str = "PG_SHUTDOWN_TIMEOUT_SECS";
 
-// Hard-fail on non-UTF-8 PATH entries to keep worker discovery deterministic.
 fn discover_worker_from_path() -> BootstrapResult<Option<Utf8PathBuf>> {
-    let Some(path_var) = env::var_os("PATH") else {
+    discover_worker_from_path_value(env::var_os("PATH"))
+}
+
+// Hard-fail on non-UTF-8 PATH entries to keep worker discovery deterministic.
+fn discover_worker_from_path_value(
+    path_var: Option<OsString>,
+) -> BootstrapResult<Option<Utf8PathBuf>> {
+    let Some(path_value) = path_var else {
         return Ok(None);
     };
-    for entry in env::split_paths(&path_var) {
+    for entry in env::split_paths(&path_value) {
         let dir = Utf8PathBuf::from_path_buf(entry).map_err(|invalid_entry| {
             let invalid_value = invalid_entry.as_os_str().to_string_lossy();
             let report = color_eyre::eyre::eyre!(
@@ -32,7 +39,7 @@ fn discover_worker_from_path() -> BootstrapResult<Option<Utf8PathBuf>> {
             );
             BootstrapError::new(BootstrapErrorKind::WorkerBinaryPathNonUtf8, report)
         })?;
-        #[cfg(unix)]
+
         if dir.as_str().is_empty() || dir.as_str() == "." {
             continue;
         }
@@ -50,15 +57,8 @@ fn discover_worker_from_path() -> BootstrapResult<Option<Utf8PathBuf>> {
 fn is_executable(path: &Utf8Path) -> bool {
     path.metadata()
         .map(|m| {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                m.permissions().mode() & 0o111 != 0
-            }
-            #[cfg(not(unix))]
-            {
-                true
-            }
+            use std::os::unix::fs::PermissionsExt;
+            m.permissions().mode() & 0o111 != 0
         })
         .unwrap_or(false)
 }
