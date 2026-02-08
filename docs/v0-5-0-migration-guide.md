@@ -1,19 +1,19 @@
 # v0.5.0 migration guide (from v0.4.0)
 
 This guide covers migration from tag `v0.4.0` to current `HEAD` (`34b86ac`) and
-is prioritised for:
+is prioritized for:
 
 1. breaking changes;
 2. fixes for outstanding issues; and
-3. new features that require usage changes to realise their benefit.
+3. new features that require usage changes to realize their benefit.
 
 ## Scope and audience
 
 This guide is for teams already using `pg_embedded_setup_unpriv` in test
 harnesses, Continuous Integration (CI) agents, or root-constrained environments.
 
-For straightforward unprivileged local tests, defaults can usually be adopted,
-with focused review of the breaking-changes section.
+For straightforward unprivileged local tests, the default configuration
+typically suffices, with focused review of the breaking-changes section.
 
 ## Quick upgrade checklist
 
@@ -22,7 +22,7 @@ with focused review of the breaking-changes section.
 - Review any assumptions that dropped clusters leave data on disk.
 - Migrate send-bound shared fixtures to the handle/guard split APIs.
 - For custom bootstrap settings, prefer test-specific settings constructors.
-- Run one full test suite pass with cleanup modes validated explicitly.
+- Run the test suite once and validate cleanup modes explicitly.
 
 ## Breaking changes
 
@@ -46,7 +46,7 @@ Adoption:
   `CleanupMode::None`.
 - For full filesystem hygiene (data + installation dirs), opt into:
   `CleanupMode::Full`.
-- Otherwise keep default `CleanupMode::DataOnly`.
+- Otherwise, keep default `CleanupMode::DataOnly`.
 
 Before (`v0.4.0`):
 
@@ -125,7 +125,7 @@ Benefits:
 Adoption:
 
 - Prefer explicit `PG_EMBEDDED_WORKER` in root CI.
-- Sanitise `PATH` in root containers/agents.
+- Sanitize `PATH` in root containers/agents.
 
 Recommended root setup:
 
