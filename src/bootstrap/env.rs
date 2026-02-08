@@ -1,67 +1,69 @@
 //! Parses environment variables used by the bootstrapper and surfaces the
 //! resulting configuration for the filesystem preparers.
-
-use std::env::{self, VarError};
-use std::io::ErrorKind;
-use std::path::PathBuf;
-use std::time::Duration;
-
-use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::Report;
-
+pub use crate::bootstrap::env_types::TestBootstrapEnvironment;
+use crate::bootstrap::env_types::TimezoneEnv;
+pub(super) use crate::bootstrap::env_types::XdgDirs;
 use crate::bootstrap::mode::ExecutionPrivileges;
 use crate::error::{BootstrapError, BootstrapErrorKind, BootstrapResult};
 use crate::fs::ambient_dir_and_path;
-
+use camino::{Utf8Path, Utf8PathBuf};
 #[cfg(unix)]
 use cap_std::fs::PermissionsExt;
-
+use color_eyre::eyre::Report;
+use std::env::{self, VarError};
+use std::ffi::OsString;
+use std::io::ErrorKind;
+use std::path::PathBuf;
+use std::time::Duration;
 #[cfg(unix)]
 const WORKER_BINARY_NAME: &str = "pg_worker";
 #[cfg(windows)]
 const WORKER_BINARY_NAME: &str = "pg_worker.exe";
-
 pub(super) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_SHUTDOWN_TIMEOUT_SECS: u64 = 600;
 const SHUTDOWN_TIMEOUT_ENV: &str = "PG_SHUTDOWN_TIMEOUT_SECS";
 
-fn discover_worker_from_path() -> Option<Utf8PathBuf> {
-    let path_var = env::var_os("PATH")?;
-    for dir in env::split_paths(&path_var) {
-        let Some(worker_path) = Utf8PathBuf::from_path_buf(dir.join(WORKER_BINARY_NAME)).ok()
-        else {
-            continue;
-        };
+fn discover_worker_from_path() -> BootstrapResult<Option<Utf8PathBuf>> {
+    discover_worker_from_path_value(env::var_os("PATH"))
+}
 
-        #[cfg(unix)]
-        {
-            let dir_str = dir.as_os_str().to_string_lossy();
-            if dir_str == "." || dir_str.is_empty() {
-                continue;
-            }
+/// Hard-fails on non-UTF-8 PATH entries, skips empty/"." entries, and returns
+/// the first executable match for `WORKER_BINARY_NAME`.
+fn discover_worker_from_path_value(
+    path_var: Option<OsString>,
+) -> BootstrapResult<Option<Utf8PathBuf>> {
+    let Some(path_value) = path_var else {
+        return Ok(None);
+    };
+    for entry in env::split_paths(&path_value) {
+        let dir = Utf8PathBuf::from_path_buf(entry).map_err(|invalid_entry| {
+            let invalid_value = invalid_entry.as_os_str().to_string_lossy();
+            let report = color_eyre::eyre::eyre!(
+                "PATH contains a non-UTF-8 entry: {invalid_value:?}; remove or replace the malformed entry."
+            );
+            BootstrapError::new(BootstrapErrorKind::WorkerBinaryPathNonUtf8, report)
+        })?;
+
+        if dir.as_str().is_empty() || dir.as_str() == "." {
+            continue;
         }
 
+        let worker_path = dir.join(WORKER_BINARY_NAME);
         if worker_path.is_file() && is_executable(&worker_path) {
-            return Some(worker_path);
+            return Ok(Some(worker_path));
         }
     }
 
-    None
+    Ok(None)
 }
 
 #[cfg(unix)]
 fn is_executable(path: &Utf8Path) -> bool {
     path.metadata()
         .map(|m| {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                m.permissions().mode() & 0o111 != 0
-            }
-            #[cfg(not(unix))]
-            {
-                true
-            }
+            // std metadata uses std permissions; keep this trait import for mode().
+            use std::os::unix::fs::PermissionsExt;
+            m.permissions().mode() & 0o111 != 0
         })
         .unwrap_or(false)
 }
@@ -87,12 +89,9 @@ pub const TZDIR_CANDIDATES: [&str; 4] = [
 /// Returns the first existing candidate from `TZDIR_CANDIDATES`, or `None` if
 /// none exist or on non-Unix platforms. This helper enables test harnesses to
 /// set `TZDIR` consistently with production bootstrap logic.
-///
 /// # Examples
-///
 /// ```
 /// use pg_embedded_setup_unpriv::find_timezone_dir;
-///
 /// if let Some(tzdir) = find_timezone_dir() {
 ///     println!("Found timezone directory: {}", tzdir);
 /// }
@@ -107,13 +106,11 @@ pub fn find_timezone_dir() -> Option<&'static Utf8Path> {
             .map(Utf8Path::new)
             .find(|path| path.exists())
     }
-
     #[cfg(not(unix))]
     {
         None
     }
 }
-
 pub(super) fn shutdown_timeout_from_env() -> BootstrapResult<Duration> {
     match env::var(SHUTDOWN_TIMEOUT_ENV) {
         Ok(raw) => {
@@ -170,9 +167,8 @@ pub(super) fn worker_binary_from_env(
 
     #[cfg(unix)]
     {
-        use crate::bootstrap::mode::ExecutionPrivileges;
         if privileges == ExecutionPrivileges::Root {
-            if let Some(worker) = discover_worker_from_path() {
+            if let Some(worker) = discover_worker_from_path()? {
                 validate_worker_path(&worker)?;
                 return Ok(Some(worker));
             }
@@ -246,111 +242,6 @@ fn error_chain_has_not_found(err: &Report) -> bool {
         .any(|source| source.kind() == ErrorKind::NotFound)
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct TimezoneEnv {
-    pub(super) dir: Option<Utf8PathBuf>,
-    pub(super) zone: String,
-}
-
-/// Holds filesystem and time zone settings used by the bootstrap tests.
-///
-/// # Examples
-/// ```
-/// use camino::Utf8PathBuf;
-/// use pg_embedded_setup_unpriv::TestBootstrapEnvironment;
-///
-/// let environment = TestBootstrapEnvironment {
-///     home: Utf8PathBuf::from("/tmp/home"),
-///     xdg_cache_home: Utf8PathBuf::from("/tmp/home/cache"),
-///     xdg_runtime_dir: Utf8PathBuf::from("/tmp/home/run"),
-///     pgpass_file: Utf8PathBuf::from("/tmp/home/.pgpass"),
-///     tz_dir: None,
-///     timezone: "UTC".into(),
-/// };
-/// assert_eq!(environment.to_env().len(), 6);
-/// ```
-#[derive(Debug, Clone)]
-pub struct TestBootstrapEnvironment {
-    /// Effective home directory for the `PostgreSQL` user during the tests.
-    pub home: Utf8PathBuf,
-    /// Directory used for cached `PostgreSQL` artefacts.
-    pub xdg_cache_home: Utf8PathBuf,
-    /// Directory used for `PostgreSQL` runtime state, such as sockets.
-    pub xdg_runtime_dir: Utf8PathBuf,
-    /// Location of the generated `.pgpass` file.
-    pub pgpass_file: Utf8PathBuf,
-    /// Resolved time zone database directory, if discovery succeeded.
-    pub tz_dir: Option<Utf8PathBuf>,
-    /// Time zone identifier exported via the `TZ` environment variable.
-    pub timezone: String,
-}
-
-impl TestBootstrapEnvironment {
-    pub(super) fn from_components(
-        xdg: XdgDirs,
-        pgpass_file: Utf8PathBuf,
-        timezone: TimezoneEnv,
-    ) -> Self {
-        Self {
-            home: xdg.home,
-            xdg_cache_home: xdg.cache,
-            xdg_runtime_dir: xdg.runtime,
-            pgpass_file,
-            tz_dir: timezone.dir,
-            timezone: timezone.zone,
-        }
-    }
-
-    /// Returns the prepared environment variables as key/value pairs.
-    ///
-    /// # Examples
-    /// ```
-    /// use pg_embedded_setup_unpriv::TestBootstrapEnvironment;
-    /// use camino::Utf8PathBuf;
-    ///
-    /// let env = TestBootstrapEnvironment {
-    ///     home: Utf8PathBuf::from("/tmp/home"),
-    ///     xdg_cache_home: Utf8PathBuf::from("/tmp/home/cache"),
-    ///     xdg_runtime_dir: Utf8PathBuf::from("/tmp/home/run"),
-    ///     pgpass_file: Utf8PathBuf::from("/tmp/home/.pgpass"),
-    ///     tz_dir: None,
-    ///     timezone: "UTC".into(),
-    /// };
-    /// assert_eq!(env.to_env().len(), 6);
-    /// ```
-    #[must_use]
-    pub fn to_env(&self) -> Vec<(String, Option<String>)> {
-        let mut env = vec![
-            ("HOME".into(), Some(self.home.as_str().into())),
-            (
-                "XDG_CACHE_HOME".into(),
-                Some(self.xdg_cache_home.as_str().into()),
-            ),
-            (
-                "XDG_RUNTIME_DIR".into(),
-                Some(self.xdg_runtime_dir.as_str().into()),
-            ),
-            ("PGPASSFILE".into(), Some(self.pgpass_file.as_str().into())),
-        ];
-
-        env.push((
-            "TZDIR".into(),
-            self.tz_dir.as_ref().map(|dir| dir.as_str().into()),
-        ));
-
-        env.push(("TZ".into(), Some(self.timezone.clone())));
-
-        env
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct XdgDirs {
-    pub(super) home: Utf8PathBuf,
-    pub(super) cache: Utf8PathBuf,
-    pub(super) runtime: Utf8PathBuf,
-}
-
 pub(super) fn prepare_timezone_env() -> BootstrapResult<TimezoneEnv> {
     const DEFAULT_TIMEZONE: &str = "UTC";
 
@@ -402,3 +293,7 @@ fn discover_timezone_dir() -> BootstrapResult<Option<Utf8PathBuf>> {
         Ok(None)
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "env_tests.rs"]
+mod tests;
