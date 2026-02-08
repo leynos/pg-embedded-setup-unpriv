@@ -100,6 +100,7 @@ impl TestBootstrapEnvironment {
     }
 }
 
+/// Holds resolved XDG directory paths used during bootstrap setup.
 #[derive(Debug, Clone)]
 pub(super) struct XdgDirs {
     pub(super) home: Utf8PathBuf,
