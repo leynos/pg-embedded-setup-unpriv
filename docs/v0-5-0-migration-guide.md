@@ -10,10 +10,10 @@ is prioritised for:
 ## Scope and audience
 
 This guide is for teams already using `pg_embedded_setup_unpriv` in test
-harnesses, CI agents, or root-constrained environments.
+harnesses, Continuous Integration (CI) agents, or root-constrained environments.
 
-If you only use the crate in straightforward unprivileged local tests, you can
-usually adopt defaults and only review the breaking-changes section.
+For straightforward unprivileged local tests, defaults can usually be adopted,
+with focused review of the breaking-changes section.
 
 ## Quick upgrade checklist
 
@@ -22,7 +22,7 @@ usually adopt defaults and only review the breaking-changes section.
 - Review any assumptions that dropped clusters leave data on disk.
 - Migrate send-bound shared fixtures to the handle/guard split APIs.
 - For custom bootstrap settings, prefer test-specific settings constructors.
-- Run your suite once with cleanup modes validated explicitly.
+- Run one full test suite pass with cleanup modes validated explicitly.
 
 ## Breaking changes
 
@@ -42,9 +42,9 @@ Benefits:
 
 Adoption:
 
-- If you previously inspected dropped cluster files for debugging, opt into:
+- If dropped cluster files were previously inspected for debugging, opt into:
   `CleanupMode::None`.
-- If you want full filesystem hygiene (data + installation dirs), opt into:
+- For full filesystem hygiene (data + installation dirs), opt into:
   `CleanupMode::Full`.
 - Otherwise keep default `CleanupMode::DataOnly`.
 
@@ -89,8 +89,8 @@ Benefits:
 
 Adoption:
 
-- Set `PG_TEST_BACKEND=postgresql_embedded` where you require embedded
-  PostgreSQL.
+- Set `PG_TEST_BACKEND=postgresql_embedded` where embedded PostgreSQL is
+  required.
 - Unset the variable when embedded should remain default.
 - Treat `SKIP-TEST-CLUSTER` as an intentional skip signal in harness logic.
 
@@ -228,12 +228,30 @@ fn shared_handle() -> &'static ClusterHandle {
 }
 ```
 
+`std::mem::forget(guard)` is intentional in this pattern. It leaks the guard so
+the shared cluster remains available for process-lifetime fixtures. Use this
+approach only when process-lifetime cluster ownership is desired.
+
+For deterministic shutdown, retain the guard and drop it explicitly at the end
+of the test scope:
+
+```rust,no_run
+use pg_embedded_setup_unpriv::TestCluster;
+
+# fn main() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+let (handle, guard) = TestCluster::new_split()?;
+assert!(handle.database_exists("postgres")?);
+drop(guard); // deterministic shutdown and environment restoration
+# Ok(())
+# }
+```
+
 ### New shared fixture for send-bound test contexts
 
 Background:
 
-`test_support::shared_test_cluster_handle()` was added to provide an out-of-box
-shared fixture returning `&'static ClusterHandle`.
+`test_support::shared_test_cluster_handle()` was added to provide an
+out-of-the-box shared fixture returning `&'static ClusterHandle`.
 
 Benefits:
 
@@ -274,8 +292,8 @@ Benefits:
 
 Adoption:
 
-If you manually derive `postgresql_embedded::Settings` for tests, switch from
-`to_settings()` to `to_settings_for_tests()` unless you explicitly need
+For test-specific manual derivation of `postgresql_embedded::Settings`, switch
+from `to_settings()` to `to_settings_for_tests()` unless explicitly required
 production-style concurrency settings.
 
 ## API changes at a glance
@@ -326,8 +344,8 @@ Run these checks after upgrading:
 
 ## Notes for CI maintainers
 
-If your CI sometimes runs tests as `root`, keep worker configuration explicit
-and deterministic:
+If CI sometimes runs tests as `root`, keep worker configuration explicit and
+deterministic:
 
 - set `PG_EMBEDDED_WORKER` to an absolute path;
 - keep `PATH` UTF-8 clean; and
