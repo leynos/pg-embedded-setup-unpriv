@@ -30,7 +30,7 @@ typically suffices, with focused review of the breaking-changes section.
 
 Background:
 
-In `v0.4.0`, dropping `TestCluster` stopped PostgreSQL but did not reliably
+In `v0.4.0`, dropping `TestCluster` stopped PostgreSQL, but did not reliably
 remove all cluster artefacts. In `HEAD`, drop-time cleanup is now explicit and
 configurable via `CleanupMode`, with `DataOnly` as the default.
 
@@ -228,8 +228,8 @@ fn shared_handle() -> &'static ClusterHandle {
 }
 ```
 
-`std::mem::forget(guard)` is intentional in this pattern. It leaks the guard so
-the shared cluster remains available for process-lifetime fixtures. Use this
+`std::mem::forget(guard)` is intentional in this pattern. It leaks the guard,
+so the shared cluster remains available for process-lifetime fixtures. Use this
 approach only when process-lifetime cluster ownership is desired.
 
 For deterministic shutdown, retain the guard and drop it explicitly at the end
