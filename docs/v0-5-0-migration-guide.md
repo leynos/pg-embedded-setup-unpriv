@@ -177,7 +177,7 @@ Adoption:
 Background:
 
 Worker-discovery and tests were adjusted to fix a rustc `E0277` regression and
-stabilise the root worker path handling.
+stabilize the root worker path handling.
 
 Benefits:
 
@@ -317,30 +317,30 @@ Run these checks after upgrading:
 
 1. `PG_TEST_BACKEND` contract
 
-- Set `PG_TEST_BACKEND=postgresql_embedded` and confirm bootstrap succeeds.
-- Set an unsupported value and confirm `SKIP-TEST-CLUSTER` is emitted.
+   - Set `PG_TEST_BACKEND=postgresql_embedded` and confirm bootstrap succeeds.
+   - Set an unsupported value and confirm `SKIP-TEST-CLUSTER` is emitted.
 
-1. Cleanup-mode behaviour
+2. Cleanup-mode behaviour
 
-- Default mode: confirm data directory is removed on drop.
-- `CleanupMode::Full`: confirm install and data directories are removed.
-- `CleanupMode::None`: confirm directories are retained for inspection.
+   - Default mode: confirm data directory is removed on drop.
+   - `CleanupMode::Full`: confirm install and data directories are removed.
+   - `CleanupMode::None`: confirm directories are retained for inspection.
 
-1. Send-safe fixture behaviour
+3. Send-safe fixture behaviour
 
-- Use `new_split()` or `shared_test_cluster_handle()` in one timeout-enabled
-  or cross-thread test path.
-- Confirm no send-bound fixture errors remain.
+   - Use `new_split()` or `shared_test_cluster_handle()` in one timeout-enabled
+     or cross-thread test path.
+   - Confirm no send-bound fixture errors remain.
 
-1. Recovery path
+4. Recovery path
 
-- Simulate interrupted setup (partial data directory) and verify rerun succeeds
-  without manual cleanup.
+   - Simulate interrupted setup (partial data directory) and verify rerun
+     succeeds without manual cleanup.
 
-1. Manual settings path
+5. Manual settings path
 
-- If using custom `PgEnvCfg` conversion for tests, confirm migration from
-  `to_settings()` to `to_settings_for_tests()` keeps expected behaviour.
+   - If using custom `PgEnvCfg` conversion for tests, confirm migration from
+     `to_settings()` to `to_settings_for_tests()` keeps expected behaviour.
 
 ## Notes for CI maintainers
 
