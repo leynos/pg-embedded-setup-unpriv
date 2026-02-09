@@ -353,10 +353,10 @@ fn prepare_and_clone() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
 
 Performance trade-offs:
 
-- Per-test cluster startup commonly costs about 1-5 seconds per test and often
+- Per-test cluster startup commonly costs about 1–5 seconds per test and often
   allocates roughly 50-150 MB per concurrent cluster.
 - Shared cluster plus template clones often reduces per-test database setup to
-  about 20-200 milliseconds while keeping a single cluster memory footprint.
+  about 20–200 milliseconds while keeping a single cluster memory footprint.
 
 Cleanup strategy:
 
