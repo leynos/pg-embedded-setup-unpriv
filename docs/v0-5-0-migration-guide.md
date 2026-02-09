@@ -293,10 +293,84 @@ Benefits:
 Adoption:
 
 For test-specific manual derivation of `postgresql_embedded::Settings`, switch
-from `to_settings()` to `to_settings_for_tests()` unless explicitly required
-production-style concurrency settings.
+from `to_settings()` to
+[`PgEnvCfg::to_settings_for_tests()`](https://docs.rs/pg-embed-setup-unpriv/latest/pg_embedded_setup_unpriv/struct.PgEnvCfg.html#method.to_settings_for_tests)
+ unless explicitly required production-style concurrency settings.
+
+### Template database strategy for shared clusters
+
+Background:
+
+Template databases amortize migration setup cost: create once, then clone for
+each test database.
+
+Template naming strategies:
+
+- Migration-version identifier: include an explicit schema or migration marker,
+  for example `template_migrations_0042` or `template_v2026_02_09`.
+- Migration-hash identifier: include a hash derived from migration contents,
+  for example `template_6f3a9c12`, so template names rotate automatically when
+  migrations change.
+
+Recommended settings:
+
+Use
+[`PgEnvCfg::to_settings_for_tests()`](https://docs.rs/pg-embed-setup-unpriv/latest/pg_embedded_setup_unpriv/struct.PgEnvCfg.html#method.to_settings_for_tests)
+ when preparing test clusters for template-based workflows.
+
+Template database example:
+
+```rust,no_run
+use std::sync::OnceLock;
+use pg_embedded_setup_unpriv::{ClusterHandle, TestCluster};
+
+static SHARED: OnceLock<ClusterHandle> = OnceLock::new();
+
+fn shared_handle() -> &'static ClusterHandle {
+    SHARED.get_or_init(|| {
+        let (handle, guard) = TestCluster::new_split()
+            .expect("shared cluster bootstrap failed");
+        // Process-lifetime shared fixture pattern.
+        std::mem::forget(guard);
+        handle
+    })
+}
+
+fn prepare_and_clone() -> pg_embedded_setup_unpriv::BootstrapResult<()> {
+    let handle = shared_handle();
+    let template = "template_migrations_0042";
+
+    handle.ensure_template_exists(template, |_db_name| {
+        // Run migrations against _db_name.
+        Ok(())
+    })?;
+
+    handle.create_database_from_template("test_case_a", template)?;
+    handle.create_database_from_template("test_case_b", template)?;
+    Ok(())
+}
+```
+
+Performance trade-offs:
+
+- Per-test cluster startup commonly costs about 1-5 seconds per test and often
+  allocates roughly 50-150 MB per concurrent cluster.
+- Shared cluster plus template clones often reduces per-test database setup to
+  about 20-200 milliseconds while keeping a single cluster memory footprint.
+
+Cleanup strategy:
+
+- Call `drop_database` explicitly in long-lived shared-cluster runs to keep
+  clone accumulation and disk usage bounded.
+- For deterministic full shutdown, keep `ClusterGuard` in scope and drop it at
+  the end of the test scope, or drop `TestCluster`.
+- When `ClusterGuard` is intentionally forgotten for process-lifetime fixtures,
+  rely on explicit `drop_database` for per-test clones and process-end teardown
+  for the shared cluster.
 
 ## API changes at a glance
+
+Table: API changes in v0.5.0.
 
 | Category             | Added/changed surface                     | Migration note                                    |
 | -------------------- | ----------------------------------------- | ------------------------------------------------- |
