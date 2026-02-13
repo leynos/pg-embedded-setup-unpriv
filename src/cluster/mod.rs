@@ -57,6 +57,8 @@ mod lifecycle;
 mod runtime;
 mod runtime_mode;
 mod shutdown;
+#[cfg(unix)]
+mod shutdown_hook;
 mod startup;
 mod temporary_database;
 mod worker_invoker;
@@ -107,7 +109,8 @@ use tracing::info_span;
 ///     SHARED.get_or_init(|| {
 ///         let (handle, guard) = TestCluster::new_split()
 ///             .expect("cluster bootstrap failed");
-///         // Forget the guard to prevent shutdown on drop
+///         handle.register_shutdown_on_exit()
+///             .expect("shutdown hook registration failed");
 ///         std::mem::forget(guard);
 ///         handle
 ///     })
@@ -163,8 +166,8 @@ impl TestCluster {
     ///
     /// ## Shared Cluster with `OnceLock`
     ///
-    /// For shared clusters that run for the entire process lifetime, forget
-    /// the guard to prevent shutdown:
+    /// For shared clusters that run for the entire process lifetime, register
+    /// the shutdown hook and forget the guard to prevent shutdown on drop:
     ///
     /// ```no_run
     /// use std::sync::OnceLock;
@@ -176,7 +179,8 @@ impl TestCluster {
     ///     SHARED.get_or_init(|| {
     ///         let (handle, guard) = TestCluster::new_split()
     ///             .expect("cluster bootstrap failed");
-    ///         // Forget the guard to prevent shutdown on drop
+    ///         handle.register_shutdown_on_exit()
+    ///             .expect("shutdown hook registration failed");
     ///         std::mem::forget(guard);
     ///         handle
     ///     })

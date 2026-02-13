@@ -101,6 +101,10 @@ pub fn shared_cluster_handle() -> BootstrapResult<&'static ClusterHandle> {
                     // process lifetime.
                     std::mem::forget(guarded);
 
+                    // Register atexit hook so the postmaster is stopped when
+                    // the process exits, even though the guard was forgotten.
+                    handle.register_shutdown_on_exit()?;
+
                     // Leak the handle to get a 'static reference.
                     let leaked: &'static ClusterHandle = Box::leak(Box::new(handle));
                     *guard = SharedHandleState::Initialised(leaked);
@@ -118,6 +122,25 @@ pub fn shared_cluster_handle() -> BootstrapResult<&'static ClusterHandle> {
                 }
             }
         }
+    }
+}
+
+// ============================================================================
+// Shared shutdown hook helper
+// ============================================================================
+
+/// Best-effort atexit registration for a leaked `TestCluster`.
+///
+/// The hook may already be registered by `shared_cluster_handle()` in the
+/// same process, so any error is swallowed with a debug log.
+fn best_effort_register_shutdown_hook(cluster: &TestCluster) {
+    #[cfg(unix)]
+    if let Err(err) = cluster.register_shutdown_on_exit() {
+        tracing::debug!(
+            target: crate::observability::LOG_TARGET,
+            error = %err,
+            "shutdown hook already registered; skipping"
+        );
     }
 }
 
@@ -227,6 +250,9 @@ pub fn shared_cluster() -> BootstrapResult<&'static TestCluster> {
                     // This is intentional: the shared cluster lives for the
                     // entire process lifetime and is never dropped.
                     let leaked: &'static TestCluster = Box::leak(Box::new(guarded_cluster));
+
+                    best_effort_register_shutdown_hook(leaked);
+
                     let ptr = SharedClusterPtr(std::ptr::from_ref::<TestCluster>(leaked));
                     *guard = SharedClusterState::Initialised(ptr);
                     Ok(leaked)

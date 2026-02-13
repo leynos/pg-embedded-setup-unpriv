@@ -222,15 +222,20 @@ fn shared_handle() -> &'static ClusterHandle {
     SHARED.get_or_init(|| {
         let (handle, guard) = TestCluster::new_split()
             .expect("cluster bootstrap failed");
+        handle.register_shutdown_on_exit()
+            .expect("shutdown hook registration failed");
         std::mem::forget(guard);
         handle
     })
 }
 ```
 
-`std::mem::forget(guard)` is intentional in this pattern. It leaks the guard,
-so the shared cluster remains available for process-lifetime fixtures. Use this
-approach only when process-lifetime cluster ownership is desired.
+`register_shutdown_on_exit()` registers an `atexit` callback that sends SIGTERM
+to the PostgreSQL postmaster when the process exits, preventing orphaned server
+processes. `std::mem::forget(guard)` is intentional in this pattern. It leaks
+the guard, so the shared cluster remains available for process-lifetime
+fixtures. Use this approach only when process-lifetime cluster ownership is
+desired.
 
 For deterministic shutdown, retain the guard and drop it explicitly at the end
 of the test scope:

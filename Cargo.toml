@@ -67,6 +67,16 @@ path = "tests/shutdown_timeout.rs"
 required-features = ["cluster-unit-tests"]
 
 [[test]]
+name = "shutdown_hook"
+path = "tests/shutdown_hook.rs"
+required-features = ["cluster-unit-tests"]
+
+[[test]]
+name = "shutdown_hook_lifecycle"
+path = "tests/shutdown_hook_lifecycle.rs"
+required-features = ["cluster-unit-tests"]
+
+[[test]]
 name = "test_cluster_behaviour"
 path = "tests/test_cluster_behaviour.rs"
 required-features = ["cluster-unit-tests"]
