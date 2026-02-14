@@ -109,9 +109,11 @@ fn register_atexit() -> BootstrapResult<()> {
 /// Reads the postmaster PID from disk, sends SIGTERM, waits for exit, and
 /// escalates to SIGKILL if the configured timeout expires.
 extern "C" fn shutdown_callback() {
-    let guard = SHUTDOWN_STATE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Ok(guard) = SHUTDOWN_STATE.try_lock() else {
+        // Mutex is poisoned or held by another thread — bail to avoid
+        // blocking (or deadlocking) inside an atexit handler.
+        return;
+    };
 
     let Some(state) = guard.as_ref() else {
         return;
