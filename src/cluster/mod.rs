@@ -59,6 +59,11 @@ mod runtime_mode;
 mod shutdown;
 #[cfg(unix)]
 mod shutdown_hook;
+#[cfg(all(
+    unix,
+    any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker")
+))]
+pub use self::shutdown_hook::{process_is_running, read_postmaster_pid};
 mod startup;
 mod temporary_database;
 mod worker_invoker;

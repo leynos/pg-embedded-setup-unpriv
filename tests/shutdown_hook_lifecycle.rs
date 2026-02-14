@@ -8,12 +8,19 @@
 //! confirms the postmaster has also terminated.
 #![cfg(unix)]
 
+#[path = "support/cluster_skip.rs"]
+mod cluster_skip;
+#[path = "support/skip.rs"]
+mod skip;
+
 use std::path::Path;
 use std::time::Duration;
 use std::{env, fs, thread};
 
-use color_eyre::eyre::{Context, Result, ensure, eyre};
+use cluster_skip::cluster_skip_message;
+use color_eyre::eyre::{Context, Result, eyre};
 use libc::pid_t;
+use pg_embedded_setup_unpriv::test_support::{process_is_running, read_postmaster_pid};
 
 /// Environment variable used to signal that this binary is running as the
 /// child subprocess.
@@ -39,12 +46,24 @@ fn postmaster_exits_after_child_process_with_shutdown_hook() -> Result<()> {
     let pid_file = tmp_dir.path().join("postmaster_pid");
 
     let child_status = spawn_child(&pid_file)?;
-    ensure!(
-        child_status.success(),
-        "child process exited with status {child_status}"
-    );
 
-    let pid = read_pid_from_file(&pid_file)?;
+    if !child_status.success() {
+        return Err(eyre!("child process exited with status {child_status}"));
+    }
+
+    // The child writes either a PID or "SKIP" to the temp file.
+    // "SKIP" signals that the environment cannot support cluster creation
+    // (e.g. missing PostgreSQL binaries).
+    let content = fs::read_to_string(&pid_file).context("read PID file from child")?;
+    if content.trim() == "SKIP" {
+        tracing::warn!("SKIP: child could not create a cluster in this environment");
+        return Ok(());
+    }
+
+    let pid: pid_t = content
+        .trim()
+        .parse()
+        .context("parse postmaster PID from child")?;
     wait_for_postmaster_exit(pid)
 }
 
@@ -62,15 +81,6 @@ fn spawn_child(pid_file: &Path) -> Result<std::process::ExitStatus> {
         .context("spawn child process")
 }
 
-/// Reads a PID written by the child process to a temp file.
-fn read_pid_from_file(pid_file: &Path) -> Result<pid_t> {
-    let pid_str = fs::read_to_string(pid_file).context("read PID file from child")?;
-    pid_str
-        .trim()
-        .parse()
-        .context("parse postmaster PID from child")
-}
-
 fn wait_for_postmaster_exit(pid: pid_t) -> Result<()> {
     let deadline = std::time::Instant::now() + POSTMASTER_EXIT_TIMEOUT;
     loop {
@@ -86,24 +96,11 @@ fn wait_for_postmaster_exit(pid: pid_t) -> Result<()> {
     }
 }
 
-fn process_is_running(pid: pid_t) -> bool {
-    // SAFETY: `kill` with signal 0 probes whether the process exists without
-    // delivering a signal.
-    let rc = unsafe { libc::kill(pid, 0) };
-    if rc == 0 {
-        return true;
-    }
-    !matches!(
-        std::io::Error::last_os_error().raw_os_error(),
-        Some(code) if code == libc::ESRCH
-    )
-}
-
-fn read_postmaster_pid(data_dir: &Path) -> Option<pid_t> {
-    let pid_file = data_dir.join("postmaster.pid");
-    let contents = fs::read_to_string(&pid_file).ok()?;
-    let first_line = contents.lines().next()?;
-    first_line.trim().parse::<pid_t>().ok()
+/// Returns `true` if the error should cause a soft skip rather than a hard
+/// failure.
+fn should_skip(message: &str, debug: &str) -> bool {
+    cluster_skip_message(message, Some(debug)).is_some()
+        || debug.contains("another server might be running")
 }
 
 // ============================================================================
@@ -115,6 +112,10 @@ fn read_postmaster_pid(data_dir: &Path) -> Option<pid_t> {
 /// This function is invoked when the binary detects the `CHILD_ENV_KEY`
 /// environment variable. It creates a cluster, registers the shutdown hook,
 /// writes the postmaster PID, and exits.
+///
+/// When the environment cannot support cluster creation (e.g. missing
+/// `PostgreSQL` binaries), the child writes "SKIP" to the PID file and
+/// exits cleanly so the parent can detect the soft skip.
 #[test]
 #[ignore = "child subprocess entry point — not a standalone test"]
 fn shutdown_hook_lifecycle_child_entry() -> Result<()> {
@@ -123,8 +124,21 @@ fn shutdown_hook_lifecycle_child_entry() -> Result<()> {
         return Ok(());
     };
 
-    let (handle, guard) =
-        pg_embedded_setup_unpriv::TestCluster::new_split().context("create cluster in child")?;
+    let (handle, guard) = match pg_embedded_setup_unpriv::TestCluster::new_split() {
+        Ok(pair) => pair,
+        Err(err) => {
+            let message = err.to_string();
+            let debug = format!("{err:?}");
+            if should_skip(&message, &debug) {
+                // Signal soft skip to the parent process by writing "SKIP"
+                // and exiting cleanly, so the parent does not treat this as
+                // a hard failure.
+                let _unused = fs::write(&pid_file_path, "SKIP");
+                std::process::exit(0);
+            }
+            return Err(err).context("create cluster in child");
+        }
+    };
 
     handle
         .register_shutdown_on_exit()

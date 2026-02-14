@@ -5,13 +5,13 @@
 //! from running, leaving the postmaster orphaned after the test binary exits.
 //!
 //! This module provides [`register_shutdown_hook`], which stores cluster
-//! metadata in a [`OnceLock`] and registers an `extern "C"` callback via
+//! metadata in a [`Mutex`] and registers an `extern "C"` callback via
 //! [`libc::atexit`]. When the process exits, the callback reads the
-//! postmaster PID from disk, sends SIGTERM, polls for exit, and escalates
-//! to SIGKILL if the timeout elapses.
+//! postmaster PID from disk, sends SIGTERM (signal 15, terminate), polls for
+//! exit, and escalates to SIGKILL if the timeout elapses.
 
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::CleanupMode;
@@ -25,8 +25,12 @@ struct ShutdownState {
     cleanup_mode: CleanupMode,
 }
 
-/// One-time initialisation guard for the atexit callback.
-static SHUTDOWN_STATE: OnceLock<ShutdownState> = OnceLock::new();
+/// Initialisation guard for the atexit callback.
+///
+/// Uses `Mutex<Option<...>>` rather than `OnceLock` so that state can be
+/// rolled back if `libc::atexit` registration fails, avoiding a poisoned
+/// state where subsequent calls silently no-op.
+static SHUTDOWN_STATE: Mutex<Option<ShutdownState>> = Mutex::new(None);
 
 /// Polling interval when waiting for the postmaster to exit after SIGTERM.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -48,36 +52,43 @@ pub(super) fn register_shutdown_hook(
     shutdown_timeout: Duration,
     cleanup_mode: CleanupMode,
 ) -> BootstrapResult<()> {
-    if !try_store_state(settings, shutdown_timeout, cleanup_mode) {
+    let mut guard = SHUTDOWN_STATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    if guard.is_some() {
+        log_already_registered();
         return Ok(());
     }
+
     register_atexit()?;
+
+    // Store state only AFTER atexit succeeds, so a failed registration
+    // does not poison the slot for future attempts.
+    *guard = Some(ShutdownState {
+        settings,
+        shutdown_timeout,
+        cleanup_mode,
+    });
+
     log_registration_success();
     Ok(())
 }
 
-/// Attempts to store the shutdown state. Returns `true` if this is the
-/// first registration, `false` if a hook was already registered.
-fn try_store_state(
-    settings: Settings,
-    shutdown_timeout: Duration,
-    cleanup_mode: CleanupMode,
-) -> bool {
-    if SHUTDOWN_STATE
-        .set(ShutdownState {
-            settings,
-            shutdown_timeout,
-            cleanup_mode,
-        })
-        .is_err()
-    {
-        tracing::debug!(
-            target: crate::observability::LOG_TARGET,
-            "shutdown hook already registered; skipping duplicate registration"
-        );
-        return false;
-    }
-    true
+/// Logs that a duplicate registration was skipped.
+fn log_already_registered() {
+    tracing::debug!(
+        target: crate::observability::LOG_TARGET,
+        "shutdown hook already registered; skipping duplicate registration"
+    );
+}
+
+/// Logs a successful hook registration.
+fn log_registration_success() {
+    tracing::debug!(
+        target: crate::observability::LOG_TARGET,
+        "registered atexit shutdown hook for PostgreSQL postmaster"
+    );
 }
 
 /// Calls `libc::atexit` to register the shutdown callback.
@@ -93,20 +104,16 @@ fn register_atexit() -> BootstrapResult<()> {
     Ok(())
 }
 
-/// Logs a successful hook registration.
-fn log_registration_success() {
-    tracing::debug!(
-        target: crate::observability::LOG_TARGET,
-        "registered atexit shutdown hook for PostgreSQL postmaster"
-    );
-}
-
 /// Callback invoked by the C runtime during process exit.
 ///
 /// Reads the postmaster PID from disk, sends SIGTERM, waits for exit, and
 /// escalates to SIGKILL if the configured timeout expires.
 extern "C" fn shutdown_callback() {
-    let Some(state) = SHUTDOWN_STATE.get() else {
+    let guard = SHUTDOWN_STATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    let Some(state) = guard.as_ref() else {
         return;
     };
 
@@ -185,7 +192,8 @@ fn wait_for_exit(pid: libc::pid_t, timeout: Duration) -> bool {
 /// Reads the postmaster PID from `data_dir/postmaster.pid`.
 ///
 /// Returns `None` if the file is missing, empty, or cannot be parsed.
-fn read_postmaster_pid(data_dir: &Path) -> Option<libc::pid_t> {
+#[must_use]
+pub fn read_postmaster_pid(data_dir: &Path) -> Option<libc::pid_t> {
     let pid_file = data_dir.join("postmaster.pid");
     let contents = std::fs::read_to_string(&pid_file).ok()?;
     let first_line = contents.lines().next()?;
@@ -193,7 +201,8 @@ fn read_postmaster_pid(data_dir: &Path) -> Option<libc::pid_t> {
 }
 
 /// Returns `true` if a process with the given PID is currently running.
-fn process_is_running(pid: libc::pid_t) -> bool {
+#[must_use]
+pub fn process_is_running(pid: libc::pid_t) -> bool {
     // SAFETY: `kill` with signal 0 probes whether the process exists without
     // delivering a signal. This is a standard POSIX technique for checking
     // process liveness.
@@ -219,38 +228,35 @@ fn best_effort_cleanup(state: &ShutdownState) {
 #[cfg(all(test, feature = "cluster-unit-tests"))]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::tempdir;
 
-    #[test]
-    fn read_postmaster_pid_returns_pid_from_valid_file() {
-        let dir = tempdir().expect("tempdir");
-        let pid_file = dir.path().join("postmaster.pid");
-        fs::write(&pid_file, "12345\nother\nlines\n").expect("write");
+    use color_eyre::eyre::{Result, ensure};
+    use rstest::{fixture, rstest};
+    use tempfile::TempDir;
 
-        let result = read_postmaster_pid(dir.path());
-
-        assert_eq!(result, Some(12345));
+    /// Creates a fresh temporary directory for PID file tests.
+    #[fixture]
+    fn pid_dir() -> Result<TempDir> {
+        Ok(tempfile::tempdir()?)
     }
 
-    #[test]
-    fn read_postmaster_pid_returns_none_for_missing_file() {
-        let dir = tempdir().expect("tempdir");
+    #[rstest]
+    #[case::valid_file(Some("12345\nother\nlines\n"), Some(12345))]
+    #[case::missing_file(None, None)]
+    #[case::empty_file(Some(""), None)]
+    fn read_postmaster_pid_parses_first_line(
+        pid_dir: Result<TempDir>,
+        #[case] file_content: Option<&str>,
+        #[case] expected: Option<libc::pid_t>,
+    ) -> Result<()> {
+        let dir = pid_dir?;
+        if let Some(content) = file_content {
+            std::fs::write(dir.path().join("postmaster.pid"), content)?;
+        }
 
         let result = read_postmaster_pid(dir.path());
 
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn read_postmaster_pid_returns_none_for_empty_file() {
-        let dir = tempdir().expect("tempdir");
-        let pid_file = dir.path().join("postmaster.pid");
-        fs::write(&pid_file, "").expect("write");
-
-        let result = read_postmaster_pid(dir.path());
-
-        assert_eq!(result, None);
+        ensure!(result == expected, "expected {expected:?}, got {result:?}");
+        Ok(())
     }
 
     #[test]
