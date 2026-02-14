@@ -191,21 +191,30 @@ fn wait_for_exit(pid: libc::pid_t, timeout: Duration) -> bool {
 
 /// Reads the postmaster PID from `data_dir/postmaster.pid`.
 ///
-/// Returns `None` if the file is missing, empty, or cannot be parsed.
+/// Returns `None` if the file is missing, empty, cannot be parsed, or
+/// contains a non-positive value.
 #[must_use]
 pub fn read_postmaster_pid(data_dir: &Path) -> Option<libc::pid_t> {
     let pid_file = data_dir.join("postmaster.pid");
     let contents = std::fs::read_to_string(&pid_file).ok()?;
     let first_line = contents.lines().next()?;
-    first_line.trim().parse::<libc::pid_t>().ok()
+    let pid = first_line.trim().parse::<libc::pid_t>().ok()?;
+    if pid > 0 { Some(pid) } else { None }
 }
 
 /// Returns `true` if a process with the given PID is currently running.
+///
+/// Non-positive PIDs are rejected immediately (returns `false`) to avoid
+/// calling `libc::kill` with 0 (current process group) or negative values
+/// (process groups).
 #[must_use]
 pub fn process_is_running(pid: libc::pid_t) -> bool {
+    if pid <= 0 {
+        return false;
+    }
     // SAFETY: `kill` with signal 0 probes whether the process exists without
     // delivering a signal. This is a standard POSIX technique for checking
-    // process liveness.
+    // process liveness. The guard above ensures `pid` is positive.
     let rc = unsafe { libc::kill(pid, 0) };
     if rc == 0 {
         return true;
@@ -243,6 +252,8 @@ mod tests {
     #[case::valid_file(Some("12345\nother\nlines\n"), Some(12345))]
     #[case::missing_file(None, None)]
     #[case::empty_file(Some(""), None)]
+    #[case::zero_pid(Some("0\n"), None)]
+    #[case::negative_pid(Some("-1\n"), None)]
     fn read_postmaster_pid_parses_first_line(
         pid_dir: Result<TempDir>,
         #[case] file_content: Option<&str>,
@@ -273,6 +284,17 @@ mod tests {
         ensure!(
             !process_is_running(i32::MAX),
             "nonexistent PID should not be running"
+        );
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::zero(0)]
+    #[case::negative(-1)]
+    fn process_is_running_rejects_non_positive_pid(#[case] pid: libc::pid_t) -> Result<()> {
+        ensure!(
+            !process_is_running(pid),
+            "non-positive PID {pid} should not be considered running"
         );
         Ok(())
     }
