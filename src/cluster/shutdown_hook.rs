@@ -260,19 +260,20 @@ mod tests {
     }
 
     #[test]
-    fn process_is_running_returns_true_for_current_process() {
-        #[expect(
-            clippy::cast_possible_wrap,
-            reason = "process IDs are always within i32 range on Unix"
-        )]
-        let pid = std::process::id() as libc::pid_t;
+    fn process_is_running_returns_true_for_current_process() -> Result<()> {
+        let pid = libc::pid_t::try_from(std::process::id())?;
 
-        assert!(process_is_running(pid));
+        ensure!(process_is_running(pid), "current process should be running");
+        Ok(())
     }
 
     #[test]
-    fn process_is_running_returns_false_for_nonexistent_pid() {
+    fn process_is_running_returns_false_for_nonexistent_pid() -> Result<()> {
         // PID i32::MAX is extremely unlikely to be in use.
-        assert!(!process_is_running(i32::MAX));
+        ensure!(
+            !process_is_running(i32::MAX),
+            "nonexistent PID should not be running"
+        );
+        Ok(())
     }
 }
