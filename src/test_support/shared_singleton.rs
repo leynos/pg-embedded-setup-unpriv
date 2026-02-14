@@ -96,14 +96,17 @@ pub fn shared_cluster_handle() -> BootstrapResult<&'static ClusterHandle> {
                     // The guard manages shutdown; leaking it means the cluster
                     // runs for the process lifetime.
                     let guarded = cluster_guard.with_worker_guard(worker_guard);
+
+                    // Register atexit hook so the postmaster is stopped when
+                    // the process exits, even though the guard will be forgotten.
+                    // Must happen before forget — if registration fails, the
+                    // guard drops normally and shuts down the cluster.
+                    handle.register_shutdown_on_exit()?;
+
                     // Leak the guard so the cluster keeps running.
                     // This is intentional: shared clusters live for the entire
                     // process lifetime.
                     std::mem::forget(guarded);
-
-                    // Register atexit hook so the postmaster is stopped when
-                    // the process exits, even though the guard was forgotten.
-                    handle.register_shutdown_on_exit()?;
 
                     // Leak the handle to get a 'static reference.
                     let leaked: &'static ClusterHandle = Box::leak(Box::new(handle));
