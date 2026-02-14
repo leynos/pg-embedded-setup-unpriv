@@ -97,11 +97,12 @@ pub fn shared_cluster_handle() -> BootstrapResult<&'static ClusterHandle> {
                     // runs for the process lifetime.
                     let guarded = cluster_guard.with_worker_guard(worker_guard);
 
-                    // Register atexit hook so the postmaster is stopped when
-                    // the process exits, even though the guard will be forgotten.
-                    // Must happen before forget — if registration fails, the
-                    // guard drops normally and shuts down the cluster.
-                    handle.register_shutdown_on_exit()?;
+                    // Best-effort atexit registration. On Unix this sends
+                    // SIGTERM to the postmaster on process exit. On other
+                    // platforms it is a silent no-op. Failure is non-fatal:
+                    // the cluster remains usable, but the postmaster may be
+                    // orphaned when the process terminates.
+                    best_effort_register_shutdown_hook_for_handle(&handle);
 
                     // Leak the guard so the cluster keeps running.
                     // This is intentional: shared clusters live for the entire
@@ -132,17 +133,31 @@ pub fn shared_cluster_handle() -> BootstrapResult<&'static ClusterHandle> {
 // Shared shutdown hook helper
 // ============================================================================
 
+/// Best-effort atexit registration for a [`ClusterHandle`].
+///
+/// Failure is non-fatal so that shared-handle initialisation succeeds on
+/// platforms where the hook cannot be registered (non-Unix) and on the
+/// rare occasion that `libc::atexit` fails on Unix.
+fn best_effort_register_shutdown_hook_for_handle(handle: &ClusterHandle) {
+    if let Err(err) = handle.register_shutdown_on_exit() {
+        tracing::debug!(
+            target: crate::observability::LOG_TARGET,
+            error = %err,
+            "shutdown hook registration failed; postmaster may be orphaned on exit"
+        );
+    }
+}
+
 /// Best-effort atexit registration for a leaked `TestCluster`.
 ///
 /// The hook may already be registered by `shared_cluster_handle()` in the
 /// same process, so any error is swallowed with a debug log.
 fn best_effort_register_shutdown_hook(cluster: &TestCluster) {
-    #[cfg(unix)]
     if let Err(err) = cluster.register_shutdown_on_exit() {
         tracing::debug!(
             target: crate::observability::LOG_TARGET,
             error = %err,
-            "shutdown hook already registered; skipping"
+            "failed to register shutdown hook (may already be registered)"
         );
     }
 }
