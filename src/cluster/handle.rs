@@ -282,12 +282,13 @@ impl ClusterHandle {
     ///
     /// # Platform Support
     ///
-    /// Supported on Unix (Linux, macOS). Returns an error on other
-    /// platforms.
+    /// Supported on Unix (Linux, macOS). On other platforms this method is a
+    /// silent no-op that returns `Ok(())`, so callers need not gate on
+    /// `cfg(unix)`.
     ///
     /// # Errors
     ///
-    /// Returns an error if `atexit` registration fails.
+    /// Returns an error if `libc::atexit` registration fails (Unix only).
     ///
     /// # Examples
     ///
@@ -323,9 +324,8 @@ impl ClusterHandle {
 
     #[cfg(not(unix))]
     fn register_shutdown_on_exit_impl(&self) -> BootstrapResult<()> {
-        Err(color_eyre::eyre::eyre!(
-            "register_shutdown_on_exit is only supported on Unix platforms"
-        )
-        .into())
+        // No-op on non-Unix platforms. The atexit hook relies on POSIX
+        // signals (SIGTERM/SIGKILL) which are not available here.
+        Ok(())
     }
 }

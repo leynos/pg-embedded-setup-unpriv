@@ -20,14 +20,20 @@ use tracing::warn;
 fn should_skip(message: &str, debug: &str) -> bool {
     cluster_skip_message(message, Some(debug)).is_some()
         || debug.contains("another server might be running")
+        || debug.contains("exists but is not empty")
 }
 
 /// Verifies that `register_shutdown_on_exit()` succeeds for a running cluster
 /// created via `new_split()`, including idempotent re-registration.
 #[test]
 fn register_shutdown_on_exit_succeeds_for_running_cluster() -> Result<()> {
-    let Ok((handle, guard)) = create_cluster() else {
-        return Ok(());
+    let (handle, guard) = match create_cluster() {
+        Ok(pair) => pair,
+        Err(SkipOrFail::Skip(reason)) => {
+            warn!("SKIP: {reason}");
+            return Ok(());
+        }
+        Err(SkipOrFail::Fail(err)) => return Err(err),
     };
 
     ensure!(
@@ -45,22 +51,30 @@ fn register_shutdown_on_exit_succeeds_for_running_cluster() -> Result<()> {
     Ok(())
 }
 
-/// Creates a cluster, returning `Err` (and logging a skip message) when the
-/// environment cannot support cluster creation.
-fn create_cluster() -> Result<(
-    pg_embedded_setup_unpriv::ClusterHandle,
-    pg_embedded_setup_unpriv::ClusterGuard,
-)> {
-    let split_result = TestCluster::new_split();
+/// Distinguishes soft-skip conditions from real failures.
+enum SkipOrFail {
+    /// Known environment limitation — test should be skipped.
+    Skip(String),
+    /// Unexpected error — test should fail.
+    Fail(color_eyre::eyre::Report),
+}
 
-    if let Err(ref err) = split_result {
+/// Creates a cluster, returning `SkipOrFail::Skip` when the environment cannot
+/// support cluster creation, and `SkipOrFail::Fail` for unexpected errors.
+fn create_cluster() -> std::result::Result<
+    (
+        pg_embedded_setup_unpriv::ClusterHandle,
+        pg_embedded_setup_unpriv::ClusterGuard,
+    ),
+    SkipOrFail,
+> {
+    TestCluster::new_split().map_err(|err| {
         let message = err.to_string();
         let debug = format!("{err:?}");
         if should_skip(&message, &debug) {
-            warn!("SKIP: {message}");
-            return Err(color_eyre::eyre::eyre!("skipped"));
+            SkipOrFail::Skip(message)
+        } else {
+            SkipOrFail::Fail(err.into())
         }
-    }
-
-    Ok(split_result?)
+    })
 }
