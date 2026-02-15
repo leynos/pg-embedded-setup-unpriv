@@ -74,11 +74,13 @@ Troubleshooting guidance:
    command downloads the specified PostgreSQL release, ensures the directories
    exist, applies PostgreSQL-compatible permissions (0755 for the installation
    cache, 0700 for the runtime and data directories), and initialises the
-   cluster with the provided credentials. Invocations that begin as `root`
-   prepare directories for `nobody` and execute lifecycle commands through the
-   worker helper so the privileged operations run entirely under the sandbox
-   user. Ownership fix-ups occur on every call so running the tool twice
-   remains idempotent.
+   cluster with the provided credentials via `initdb`. The PostgreSQL server is
+   **not** started — the installation is left ready for subsequent use by
+   `TestCluster` or other tools. Invocations that begin as `root` prepare
+   directories for `nobody` and execute lifecycle commands through the worker
+   helper so the privileged operations run entirely under the sandbox user.
+   Ownership fix-ups occur on every call so running the tool twice remains
+   idempotent.
 
 4. Pass the resulting paths and credentials to your tests. If you use
    `postgresql_embedded` directly after the setup step, it can reuse the staged

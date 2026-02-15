@@ -1,9 +1,12 @@
-//! Startup orchestration for `TestCluster`.
+//! Startup orchestration for `TestCluster` and the CLI setup-only path.
 //!
 //! Contains logic for bootstrapping and starting the embedded `PostgreSQL` instance,
 //! including cache integration, lifecycle invocation, and privilege handling.
+//! The [`setup_postgres_only`] entry point drives download + `initdb` without
+//! starting the server, used by the CLI binary.
 
 use crate::cache::BinaryCacheConfig;
+use crate::env::ScopedEnv;
 use crate::error::BootstrapResult;
 use crate::observability::LOG_TARGET;
 use crate::{ExecutionPrivileges, TestBootstrapSettings};
@@ -174,6 +177,80 @@ pub(super) fn invoke_lifecycle(
         embedded.start().await
     })?;
     installation::refresh_worker_port(bootstrap)
+}
+
+/// Performs `PostgreSQL` setup (download + `initdb`) without starting the server.
+///
+/// This entry point is intended for the CLI binary, which prepares the
+/// installation and data directory so that a subsequent `TestCluster::new()`
+/// can reuse the cached binaries without a redundant download.
+///
+/// The cache directory is resolved from the host environment *before*
+/// `ScopedEnv` is applied, matching the resolution order in
+/// `TestCluster::new_split()` so the CLI and test runs share the same cache.
+pub(crate) fn setup_postgres_only(
+    bootstrap: TestBootstrapSettings,
+) -> BootstrapResult<TestBootstrapSettings> {
+    // Resolve cache directory from the host environment before applying the
+    // scoped sandbox, matching the resolution order in TestCluster::new_split().
+    let cache_config = cache_config_from_bootstrap(&bootstrap);
+    let runtime = super::runtime::build_runtime()?;
+    let env_vars = bootstrap.environment.to_env();
+    let _env_guard = ScopedEnv::apply(&env_vars);
+
+    setup_lifecycle(&runtime, bootstrap, &env_vars, &cache_config)
+}
+
+/// Drives the setup-only lifecycle (download + `initdb`), populating the
+/// binary cache on a miss.
+fn setup_lifecycle(
+    runtime: &Runtime,
+    mut bootstrap: TestBootstrapSettings,
+    env_vars: &[(String, Option<String>)],
+    cache_config: &BinaryCacheConfig,
+) -> BootstrapResult<TestBootstrapSettings> {
+    let privileges = bootstrap.privileges;
+    log_lifecycle_start(privileges, &bootstrap, false);
+
+    let version_req = bootstrap.settings.version.clone();
+    let cache_hit =
+        cache_integration::try_use_binary_cache(cache_config, &version_req, &mut bootstrap);
+
+    setup_with_privileges(privileges, runtime, &mut bootstrap, env_vars)?;
+    installation::refresh_worker_installation_dir(&mut bootstrap);
+    populate_cache_on_miss(cache_hit, cache_config, &bootstrap);
+    log_setup_complete(privileges, cache_hit);
+
+    Ok(bootstrap)
+}
+
+/// Runs the privilege-aware `Setup` operation only (no `Start`).
+fn setup_with_privileges(
+    privileges: ExecutionPrivileges,
+    runtime: &Runtime,
+    bootstrap: &mut TestBootstrapSettings,
+    env_vars: &[(String, Option<String>)],
+) -> BootstrapResult<()> {
+    if privileges == ExecutionPrivileges::Root {
+        let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
+        invoker.invoke_as_root(worker_operation::WorkerOperation::Setup)
+    } else {
+        let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
+        let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
+        invoker.invoke(worker_operation::WorkerOperation::Setup, async {
+            embedded.setup().await
+        })
+    }
+}
+
+/// Logs completion of the setup-only lifecycle.
+fn log_setup_complete(privileges: ExecutionPrivileges, cache_hit: bool) {
+    info!(
+        target: LOG_TARGET,
+        privileges = ?privileges,
+        cache_hit,
+        "embedded postgres setup complete (server not started)"
+    );
 }
 
 // ============================================================================
