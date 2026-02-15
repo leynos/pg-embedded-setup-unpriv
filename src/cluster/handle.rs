@@ -28,9 +28,11 @@
 //!
 //! fn shared_handle() -> &'static ClusterHandle {
 //!     SHARED.get_or_init(|| {
-//!         let (handle, _guard) = TestCluster::new_split()
+//!         let (handle, guard) = TestCluster::new_split()
 //!             .expect("cluster bootstrap failed");
-//!         // Guard drops here, but cluster keeps running
+//!         handle.register_shutdown_on_exit()
+//!             .expect("shutdown hook registration failed");
+//!         std::mem::forget(guard);
 //!         handle
 //!     })
 //! }
@@ -262,5 +264,68 @@ impl ClusterHandle {
     ) -> BootstrapResult<TemporaryDatabase> {
         self.connection()
             .temporary_database_from_template(name, template)
+    }
+}
+
+// Process-exit shutdown hook registration.
+impl ClusterHandle {
+    /// Registers a process-exit hook that stops the `PostgreSQL` postmaster
+    /// when the process terminates.
+    ///
+    /// Intended for shared clusters where the [`ClusterGuard`](super::ClusterGuard)
+    /// is intentionally forgotten. The hook sends SIGTERM and waits up to
+    /// the configured shutdown timeout before escalating to SIGKILL.
+    ///
+    /// The method is idempotent: subsequent calls after the first
+    /// successful registration are no-ops. Only one cluster can be
+    /// tracked per process, matching the one-shared-cluster pattern.
+    ///
+    /// # Platform Support
+    ///
+    /// Supported on Unix (Linux, macOS). On other platforms this method is a
+    /// silent no-op that returns `Ok(())`, so callers need not gate on
+    /// `cfg(unix)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `libc::atexit` registration fails (Unix only).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::sync::OnceLock;
+    /// use pg_embedded_setup_unpriv::{ClusterHandle, TestCluster};
+    ///
+    /// static SHARED: OnceLock<ClusterHandle> = OnceLock::new();
+    ///
+    /// fn shared_handle() -> &'static ClusterHandle {
+    ///     SHARED.get_or_init(|| {
+    ///         let (handle, guard) = TestCluster::new_split()
+    ///             .expect("cluster bootstrap failed");
+    ///         handle.register_shutdown_on_exit()
+    ///             .expect("shutdown hook registration failed");
+    ///         std::mem::forget(guard);
+    ///         handle
+    ///     })
+    /// }
+    /// ```
+    pub fn register_shutdown_on_exit(&self) -> BootstrapResult<()> {
+        self.register_shutdown_on_exit_impl()
+    }
+
+    #[cfg(unix)]
+    fn register_shutdown_on_exit_impl(&self) -> BootstrapResult<()> {
+        super::shutdown_hook::register_shutdown_hook(
+            self.bootstrap.settings.clone(),
+            self.bootstrap.shutdown_timeout,
+            self.bootstrap.cleanup_mode,
+        )
+    }
+
+    #[cfg(not(unix))]
+    fn register_shutdown_on_exit_impl(&self) -> BootstrapResult<()> {
+        // No-op on non-Unix platforms. The atexit hook relies on POSIX
+        // signals (SIGTERM/SIGKILL) which are not available here.
+        Ok(())
     }
 }

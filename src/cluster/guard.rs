@@ -72,7 +72,8 @@ use tracing::{info, warn};
 ///
 /// For shared clusters that should run for the entire process lifetime,
 /// the guard must be explicitly forgotten to prevent shutdown on drop.
-/// Use [`std::mem::forget`] to keep the cluster running:
+/// Use [`std::mem::forget`] to keep the cluster running, and register
+/// the shutdown hook so the postmaster is stopped on process exit:
 ///
 /// ```no_run
 /// use std::sync::OnceLock;
@@ -84,7 +85,8 @@ use tracing::{info, warn};
 ///     SHARED.get_or_init(|| {
 ///         let (handle, guard) = TestCluster::new_split()
 ///             .expect("cluster bootstrap failed");
-///         // Forget the guard to prevent shutdown - cluster runs for process lifetime
+///         handle.register_shutdown_on_exit()
+///             .expect("shutdown hook registration failed");
 ///         std::mem::forget(guard);
 ///         handle
 ///     })

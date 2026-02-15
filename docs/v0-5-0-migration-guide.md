@@ -222,11 +222,21 @@ fn shared_handle() -> &'static ClusterHandle {
     SHARED.get_or_init(|| {
         let (handle, guard) = TestCluster::new_split()
             .expect("cluster bootstrap failed");
+        handle.register_shutdown_on_exit()
+            .expect("shutdown hook registration failed");
         std::mem::forget(guard);
         handle
     })
 }
 ```
+
+`register_shutdown_on_exit()` registers an `atexit` callback that sends a
+SIGTERM (termination) signal to the PostgreSQL postmaster when the process
+exits, preventing orphaned server processes.
+
+> **Platform note:** The shutdown hook is only effective on Unix (Linux,
+> macOS). On other platforms the method is a silent no-op — the hook
+> cannot be registered because it relies on POSIX signals.
 
 `std::mem::forget(guard)` is intentional in this pattern. It leaks the guard,
 so the shared cluster remains available for process-lifetime fixtures. Use this
