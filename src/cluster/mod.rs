@@ -81,6 +81,7 @@ pub use self::worker_operation::WorkerOperation;
 
 use self::runtime::build_runtime;
 use self::runtime_mode::ClusterRuntime;
+pub(crate) use self::startup::setup_postgres_only;
 #[cfg(feature = "async-api")]
 use self::startup::start_postgres_async;
 use self::startup::{cache_config_from_bootstrap, start_postgres};

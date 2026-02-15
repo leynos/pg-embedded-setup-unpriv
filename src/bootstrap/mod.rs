@@ -76,9 +76,13 @@ pub struct TestBootstrapSettings {
     pub binary_cache_dir: Option<camino::Utf8PathBuf>,
 }
 
-/// Bootstraps an embedded `PostgreSQL` instance, branching between root and unprivileged flows.
+/// Bootstraps an embedded `PostgreSQL` instance, downloads the distribution,
+/// and initialises the data directory via `initdb`.
 ///
-/// The bootstrap honours the following environment variables when present:
+/// The server is **not** started — the resulting installation is ready for
+/// subsequent use by [`TestCluster`](crate::TestCluster) or other tools.
+///
+/// The function honours the following environment variables when present:
 /// - `PG_RUNTIME_DIR`: Overrides the `PostgreSQL` installation directory.
 /// - `PG_DATA_DIR`: Overrides the data directory used for initialisation.
 /// - `PG_SUPERUSER`: Sets the superuser account name.
@@ -87,13 +91,10 @@ pub struct TestBootstrapSettings {
 /// When executed as `root` on Unix platforms the runtime drops privileges to the `nobody` user
 /// and prepares the filesystem on that user's behalf. Unprivileged executions reuse the current
 /// user identity. The function returns a [`crate::Error`] describing failures encountered during
-/// bootstrap.
-///
-/// This convenience wrapper discards the detailed [`TestBootstrapSettings`]. Call
-/// [`bootstrap_for_tests`] to obtain the structured response for assertions.
+/// bootstrap or setup.
 ///
 /// # Examples
-/// ```rust
+/// ```no_run
 /// use pg_embedded_setup_unpriv::run;
 ///
 /// fn main() -> Result<(), pg_embedded_setup_unpriv::Error> {
@@ -103,10 +104,11 @@ pub struct TestBootstrapSettings {
 /// ```
 ///
 /// # Errors
-/// Returns an error when bootstrap preparation fails or when subprocess orchestration
-/// cannot be configured.
+/// Returns an error when bootstrap preparation fails, when the `PostgreSQL`
+/// distribution cannot be downloaded, or when `initdb` fails.
 pub fn run() -> CrateResult<()> {
-    orchestrate_bootstrap(BootstrapKind::Default)?;
+    let bootstrap = orchestrate_bootstrap(BootstrapKind::Default)?;
+    crate::cluster::setup_postgres_only(bootstrap)?;
     Ok(())
 }
 
@@ -265,7 +267,7 @@ mod tests {
     }
 
     #[rstest]
-    fn run_succeeds_with_customised_paths(run_test_paths: Option<RunTestPaths>) {
+    fn bootstrap_creates_expected_directories(run_test_paths: Option<RunTestPaths>) {
         let Some(paths) = run_test_paths else {
             return;
         };
@@ -278,7 +280,7 @@ mod tests {
             ("PG_EMBEDDED_WORKER", None),
         ]));
 
-        run().expect("run should bootstrap successfully");
+        orchestrate_bootstrap(BootstrapKind::Default).expect("bootstrap should succeed");
 
         assert!(
             paths.runtime_path.join("cache").exists(),
