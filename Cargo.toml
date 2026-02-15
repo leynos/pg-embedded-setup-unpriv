@@ -114,7 +114,7 @@ serde = { version = "1", features = ["derive"] }
 serde_with = "3"
 diesel = { version = "2", default-features = false, features = ["postgres"], optional = true }
 postgres = "0.19"
-ortho_config = { version = "0.5.0", features = ["json5", "yaml", "toml"] }
+ortho_config = { version = "0.7.0", features = ["json5", "yaml", "toml"] }
 clap = { version = "4", features = ["derive"] }
 figment = { version = "0.10", features = ["env"] }
 xdg = "3"
