@@ -4,7 +4,9 @@ use super::*;
 use crate::test_support::scoped_env;
 use camino::Utf8PathBuf;
 use rstest::{fixture, rstest};
+use serial_test::serial;
 use std::ffi::OsString;
+use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
 
 /// Converts string key-value pairs to `OsString` pairs for `scoped_env`.
@@ -98,6 +100,41 @@ fn bootstrap_creates_expected_directories(run_test_paths: Option<RunTestPaths>) 
         paths.runtime_path.join("run").exists(),
         "runtime directory should be created"
     );
+}
+
+#[rstest]
+#[serial(setup_only_hook)]
+fn run_delegates_to_setup_only_lifecycle(run_test_paths: Option<RunTestPaths>) {
+    let Some(paths) = run_test_paths else {
+        return;
+    };
+
+    let captured = Arc::new(Mutex::new(None::<TestBootstrapSettings>));
+    let captured_settings = Arc::clone(&captured);
+    let _hook_guard = install_setup_only_lifecycle_hook(move |bootstrap| {
+        let mut slot = captured_settings
+            .lock()
+            .expect("captured settings mutex poisoned");
+        *slot = Some(bootstrap);
+        Ok(())
+    });
+
+    let _guard = scoped_env(env_vars([
+        ("PG_RUNTIME_DIR", Some(paths.runtime_path.as_str())),
+        ("PG_DATA_DIR", Some(paths.data_path.as_str())),
+        ("PG_SUPERUSER", Some("bootstrap_run")),
+        ("PG_PASSWORD", Some("bootstrap_run_pw")),
+        ("PG_EMBEDDED_WORKER", None),
+    ]));
+
+    run().expect("run should delegate to setup-only lifecycle");
+
+    let captured_guard = captured.lock().expect("captured settings mutex poisoned");
+    let observed = captured_guard
+        .as_ref()
+        .expect("setup-only lifecycle hook should capture bootstrap settings");
+    assert_paths(observed, &paths.runtime_path, &paths.data_path);
+    assert_identity(observed, "bootstrap_run", "bootstrap_run_pw");
 }
 
 /// Holds temporary directories and their UTF-8 paths for bootstrap tests.

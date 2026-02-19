@@ -13,6 +13,7 @@ mod skip;
 use cluster_skip::cluster_skip_message;
 use pg_embedded_setup_unpriv::BootstrapError;
 use pg_embedded_setup_unpriv::test_support::shared_cluster_handle;
+use tempfile::tempdir;
 use tracing::warn;
 
 /// Returns true if the error indicates another server is running.
@@ -42,6 +43,19 @@ fn skip_reason(err: &BootstrapError) -> Option<String> {
 )]
 #[test]
 fn caches_successful_initialisation() {
+    let sandbox = tempdir().expect("sandbox tempdir should be created");
+    let runtime_dir = sandbox.path().join("runtime");
+    let data_dir = sandbox.path().join("data");
+    std::fs::create_dir_all(&runtime_dir).expect("runtime dir should be created");
+    std::fs::create_dir_all(&data_dir).expect("data dir should be created");
+
+    // SAFETY: this test binary contains only this test, and we set variables
+    // before calling `shared_cluster_handle()` so there is no concurrent access.
+    unsafe {
+        std::env::set_var("PG_RUNTIME_DIR", &runtime_dir);
+        std::env::set_var("PG_DATA_DIR", &data_dir);
+    }
+
     let result1 = shared_cluster_handle();
 
     // Handle skip conditions (e.g., PostgreSQL not available, or another

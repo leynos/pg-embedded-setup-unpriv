@@ -21,6 +21,21 @@ use super::worker_invoker::AsyncInvoker;
 use super::worker_invoker::WorkerInvoker as ClusterWorkerInvoker;
 use super::worker_operation;
 
+#[derive(Clone, Copy)]
+enum LifecycleStep {
+    Setup,
+    Start,
+}
+
+impl LifecycleStep {
+    const fn worker_operation(self) -> worker_operation::WorkerOperation {
+        match self {
+            Self::Setup => worker_operation::WorkerOperation::Setup,
+            Self::Start => worker_operation::WorkerOperation::Start,
+        }
+    }
+}
+
 /// Outcome from starting the `PostgreSQL` instance.
 pub(super) struct StartupOutcome {
     pub(super) bootstrap: TestBootstrapSettings,
@@ -132,6 +147,30 @@ fn handle_privilege_lifecycle(
     }
 }
 
+/// Invokes a root lifecycle operation via the worker subprocess.
+fn invoke_root_operation(
+    invoker: &ClusterWorkerInvoker<'_>,
+    step: LifecycleStep,
+) -> BootstrapResult<()> {
+    invoker.invoke_as_root(step.worker_operation())
+}
+
+/// Invokes an unprivileged lifecycle operation in-process.
+fn invoke_unprivileged_operation(
+    invoker: &ClusterWorkerInvoker<'_>,
+    embedded: &mut PostgreSQL,
+    step: LifecycleStep,
+) -> BootstrapResult<()> {
+    match step {
+        LifecycleStep::Setup => invoker.invoke(worker_operation::WorkerOperation::Setup, async {
+            embedded.setup().await
+        }),
+        LifecycleStep::Start => invoker.invoke(worker_operation::WorkerOperation::Start, async {
+            embedded.start().await
+        }),
+    }
+}
+
 /// Prepares the `PostgreSQL` handle based on whether it's worker-managed.
 pub(super) fn prepare_postgres_handle(
     is_managed_via_worker: bool,
@@ -153,10 +192,10 @@ pub(super) fn invoke_lifecycle_root(
     env_vars: &[(String, Option<String>)],
 ) -> BootstrapResult<()> {
     let setup_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-    setup_invoker.invoke_as_root(worker_operation::WorkerOperation::Setup)?;
+    invoke_root_operation(&setup_invoker, LifecycleStep::Setup)?;
     installation::refresh_worker_installation_dir(bootstrap);
     let start_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-    start_invoker.invoke_as_root(worker_operation::WorkerOperation::Start)?;
+    invoke_root_operation(&start_invoker, LifecycleStep::Start)?;
     installation::refresh_worker_port(bootstrap)
 }
 
@@ -168,14 +207,10 @@ pub(super) fn invoke_lifecycle(
     embedded: &mut PostgreSQL,
 ) -> BootstrapResult<()> {
     let setup_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-    setup_invoker.invoke(worker_operation::WorkerOperation::Setup, async {
-        embedded.setup().await
-    })?;
+    invoke_unprivileged_operation(&setup_invoker, embedded, LifecycleStep::Setup)?;
     installation::refresh_worker_installation_dir(bootstrap);
     let start_invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-    start_invoker.invoke(worker_operation::WorkerOperation::Start, async {
-        embedded.start().await
-    })?;
+    invoke_unprivileged_operation(&start_invoker, embedded, LifecycleStep::Start)?;
     installation::refresh_worker_port(bootstrap)
 }
 
@@ -194,11 +229,12 @@ pub(crate) fn setup_postgres_only(
     // Resolve cache directory from the host environment before applying the
     // scoped sandbox, matching the resolution order in TestCluster::new_split().
     let cache_config = cache_config_from_bootstrap(&bootstrap);
-    let runtime = super::runtime::build_runtime()?;
     let env_vars = bootstrap.environment.to_env();
     let _env_guard = ScopedEnv::apply(&env_vars);
 
-    setup_lifecycle(&runtime, bootstrap, &env_vars, &cache_config)
+    super::runtime::run_with_runtime("setup_postgres_only", move |runtime| {
+        setup_lifecycle(runtime, bootstrap, &env_vars, &cache_config)
+    })
 }
 
 /// Drives the setup-only lifecycle (download + `initdb`), populating the
@@ -233,13 +269,11 @@ fn setup_with_privileges(
 ) -> BootstrapResult<()> {
     if privileges == ExecutionPrivileges::Root {
         let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-        invoker.invoke_as_root(worker_operation::WorkerOperation::Setup)
+        invoke_root_operation(&invoker, LifecycleStep::Setup)
     } else {
         let mut embedded = PostgreSQL::new(bootstrap.settings.clone());
         let invoker = ClusterWorkerInvoker::new(runtime, bootstrap, env_vars);
-        invoker.invoke(worker_operation::WorkerOperation::Setup, async {
-            embedded.setup().await
-        })
+        invoke_unprivileged_operation(&invoker, &mut embedded, LifecycleStep::Setup)
     }
 }
 
@@ -348,3 +382,7 @@ pub(super) async fn invoke_lifecycle_root_async(
     .await?;
     installation::refresh_worker_port_async(bootstrap).await
 }
+
+#[cfg(test)]
+#[path = "startup_tests.rs"]
+mod startup_tests;

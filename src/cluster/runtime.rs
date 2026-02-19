@@ -1,7 +1,8 @@
 //! Helpers for constructing Tokio runtimes used by `TestCluster`.
 
 use crate::error::{BootstrapError, BootstrapResult};
-use color_eyre::eyre::Context;
+use color_eyre::eyre::{Context, eyre};
+use std::any::Any;
 use tokio::runtime::{Builder, Runtime};
 
 /// Constructs a current-thread Tokio runtime for `TestCluster` lifecycle work.
@@ -19,4 +20,50 @@ pub(crate) fn build_runtime() -> BootstrapResult<Runtime> {
         .build()
         .context("failed to create Tokio runtime for TestCluster")
         .map_err(BootstrapError::from)
+}
+
+/// Runs lifecycle work with a Tokio runtime, even when already inside one.
+///
+/// When called from within a Tokio runtime, this helper executes `operation`
+/// on a scoped helper thread so runtime creation and teardown stay outside the
+/// async context.
+pub(crate) fn run_with_runtime<T, F>(context: &'static str, operation: F) -> BootstrapResult<T>
+where
+    F: FnOnce(&Runtime) -> BootstrapResult<T> + Send,
+    T: Send,
+{
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return std::thread::scope(|scope| {
+            scope
+                .spawn(move || {
+                    let runtime = build_runtime()?;
+                    operation(&runtime)
+                })
+                .join()
+        })
+        .map_err(|panic_payload| nested_runtime_thread_panic(context, panic_payload))?;
+    }
+
+    let runtime = build_runtime()?;
+    operation(&runtime)
+}
+
+fn nested_runtime_thread_panic(
+    context: &'static str,
+    panic_payload: Box<dyn Any + Send>,
+) -> BootstrapError {
+    let message = panic_payload_to_string(panic_payload);
+    BootstrapError::from(eyre!(
+        "{context}: helper thread panicked while running lifecycle: {message}"
+    ))
+}
+
+fn panic_payload_to_string(panic_payload: Box<dyn Any + Send>) -> String {
+    match panic_payload.downcast::<String>() {
+        Ok(message) => *message,
+        Err(other_payload) => other_payload.downcast::<&'static str>().map_or_else(
+            |_| "unknown panic payload".to_owned(),
+            |message| (*message).to_owned(),
+        ),
+    }
 }

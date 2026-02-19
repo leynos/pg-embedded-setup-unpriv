@@ -12,6 +12,8 @@ use std::time::Duration;
 use color_eyre::eyre::{Context, eyre};
 use postgresql_embedded::Settings;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::{
     PgEnvCfg,
@@ -29,6 +31,13 @@ use self::{
 
 const DEFAULT_SETUP_TIMEOUT: Duration = Duration::from_secs(180);
 const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[cfg(test)]
+type SetupOnlyLifecycleHook =
+    Arc<dyn Fn(TestBootstrapSettings) -> BootstrapResult<()> + Send + Sync>;
+
+#[cfg(test)]
+static SETUP_ONLY_LIFECYCLE_HOOK: OnceLock<Mutex<Option<SetupOnlyLifecycleHook>>> = OnceLock::new();
 
 #[derive(Clone, Copy)]
 enum BootstrapKind {
@@ -108,8 +117,7 @@ pub struct TestBootstrapSettings {
 /// distribution cannot be downloaded, or when `initdb` fails.
 pub fn run() -> CrateResult<()> {
     let bootstrap = orchestrate_bootstrap(BootstrapKind::Default)?;
-    crate::cluster::setup_postgres_only(bootstrap)?;
-    Ok(())
+    run_setup_only_lifecycle(bootstrap)
 }
 
 /// Bootstraps `PostgreSQL` for integration tests and surfaces the prepared settings.
@@ -184,6 +192,54 @@ fn validate_backend_selection() -> BootstrapResult<()> {
         "SKIP-TEST-CLUSTER: unsupported PG_TEST_BACKEND '{trimmed}'; supported backends: postgresql_embedded"
     )
     .into())
+}
+
+/// Executes the setup-only lifecycle for CLI invocations.
+///
+/// Keeping this as a dedicated helper keeps the public `run()` flow linear:
+/// bootstrap preparation first, then setup lifecycle execution.
+fn run_setup_only_lifecycle(bootstrap: TestBootstrapSettings) -> CrateResult<()> {
+    #[cfg(test)]
+    {
+        let installed_setup_hook = SETUP_ONLY_LIFECYCLE_HOOK
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(setup_hook) = installed_setup_hook {
+            return setup_hook(bootstrap).map_err(Into::into);
+        }
+    }
+
+    crate::cluster::setup_postgres_only(bootstrap)?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) struct SetupOnlyLifecycleHookGuard;
+
+#[cfg(test)]
+impl Drop for SetupOnlyLifecycleHookGuard {
+    fn drop(&mut self) {
+        let mut slot = SETUP_ONLY_LIFECYCLE_HOOK
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        slot.take();
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_setup_only_lifecycle_hook<F>(hook: F) -> SetupOnlyLifecycleHookGuard
+where
+    F: Fn(TestBootstrapSettings) -> BootstrapResult<()> + Send + Sync + 'static,
+{
+    let mut slot = SETUP_ONLY_LIFECYCLE_HOOK
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *slot = Some(Arc::new(hook));
+    SetupOnlyLifecycleHookGuard
 }
 
 #[cfg(test)]
