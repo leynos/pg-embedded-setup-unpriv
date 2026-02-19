@@ -78,7 +78,7 @@ Troubleshooting guidance:
    **not** started — the installation is left ready for subsequent use by
    `TestCluster` or other tools. Invocations that begin as `root` prepare
    directories for `nobody` and execute lifecycle commands through the worker
-   helper so the privileged operations run entirely under the sandbox user.
+   helper, so the privileged operations run entirely under the sandbox user.
    Ownership fix-ups occur on every call so running the tool twice remains
    idempotent.
 
