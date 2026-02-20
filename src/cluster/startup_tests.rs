@@ -48,7 +48,7 @@ fn create_complete_cache_entry(cache_home: &Utf8PathBuf, version: &str) -> Resul
 }
 
 #[test]
-#[serial(startup_setup_only)]
+#[serial(worker_hook)]
 fn setup_postgres_only_resolves_cache_before_scoped_env_and_runs_setup_only() -> Result<()> {
     let temp = tempdir()?;
     let base = utf8_path(temp.path().to_path_buf(), "tempdir")?;
@@ -109,7 +109,7 @@ fn setup_postgres_only_resolves_cache_before_scoped_env_and_runs_setup_only() ->
 }
 
 #[test]
-#[serial(startup_setup_only)]
+#[serial(worker_hook)]
 fn setup_lifecycle_invokes_setup_operation_only() -> Result<()> {
     let temp = tempdir()?;
     let base = utf8_path(temp.path().to_path_buf(), "tempdir")?;
@@ -153,7 +153,7 @@ fn setup_lifecycle_invokes_setup_operation_only() -> Result<()> {
 }
 
 #[test]
-#[serial(startup_setup_only)]
+#[serial(worker_hook)]
 fn setup_with_privileges_root_dispatches_setup_only() -> Result<()> {
     let temp = tempdir()?;
     let base = utf8_path(temp.path().to_path_buf(), "tempdir")?;
