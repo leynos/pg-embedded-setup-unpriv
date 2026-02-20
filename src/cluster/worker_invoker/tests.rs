@@ -37,6 +37,25 @@ fn unprivileged_operations_execute_in_process() -> Result<()> {
 }
 
 #[test]
+fn unprivileged_operations_execute_inside_existing_runtime() -> Result<()> {
+    let runtime = test_runtime()?;
+    let nested_runtime = test_runtime()?;
+    runtime.block_on(async {
+        let bootstrap = dummy_settings(ExecutionPrivileges::Unprivileged);
+        let env_vars = bootstrap.environment.to_env();
+        let invoker = WorkerInvoker::new(&nested_runtime, &bootstrap, &env_vars);
+
+        invoker
+            .invoke(WorkerOperation::Setup, async {
+                Ok::<(), postgresql_embedded::Error>(())
+            })
+            .map_err(|err| eyre!(err))
+    })?;
+
+    Ok(())
+}
+
+#[test]
 #[serial(worker_hook)]
 fn root_operations_delegate_to_hook() -> Result<()> {
     let runtime = test_runtime()?;

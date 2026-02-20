@@ -4,6 +4,7 @@ use std::{any::Any, cell::RefCell, ffi::OsString, fs};
 
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Context, Result, eyre};
+use pg_embedded_setup_unpriv::test_support::panic_payload_to_string;
 use rstest::fixture;
 
 use super::{
@@ -187,16 +188,6 @@ fn create_dir_with_mode(path: &Utf8PathBuf, mode: u32) -> Result<()> {
         .with_context(|| format!("create permission sandbox dir at {path}"))?;
     cap_fs::set_permissions(path.as_ref(), mode)
         .with_context(|| format!("set permissions {mode:o} for {path}"))
-}
-
-pub(super) fn panic_payload_to_string(payload: Box<dyn Any + Send>) -> String {
-    match payload.downcast::<String>() {
-        Ok(message) => *message,
-        Err(fallback) => fallback.downcast::<&'static str>().map_or_else(
-            |_| "non-string panic payload".to_owned(),
-            |message| (*message).to_owned(),
-        ),
-    }
 }
 
 pub(super) fn handle_fixture_panic(payload: Box<dyn Any + Send>) -> Result<()> {

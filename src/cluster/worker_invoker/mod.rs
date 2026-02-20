@@ -10,6 +10,7 @@ use crate::worker_process::{self, WorkerRequest, WorkerRequestArgs};
 use crate::{ExecutionMode, ExecutionPrivileges, TestBootstrapSettings};
 
 use super::WorkerOperation;
+use super::panic_utils::nested_runtime_thread_panic;
 use tracing::{error, info, info_span};
 
 // ============================================================================
@@ -186,6 +187,16 @@ fn timeout_error(ctx: &'static str, timeout: std::time::Duration) -> BootstrapEr
     ))
 }
 
+async fn run_with_timeout<Fut>(
+    timeout: std::time::Duration,
+    future: Fut,
+) -> Result<Result<(), postgresql_embedded::Error>, tokio::time::error::Elapsed>
+where
+    Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
+{
+    tokio::time::timeout(timeout, future).await
+}
+
 // ============================================================================
 // Synchronous invoker
 // ============================================================================
@@ -318,11 +329,43 @@ impl<'a> WorkerInvoker<'a> {
     where
         Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
     {
-        self.runtime
-            .block_on(async { tokio::time::timeout(timeout, future).await })
+        let result = if tokio::runtime::Handle::try_current().is_ok() {
+            self.run_unprivileged_in_scoped_thread(future, ctx, timeout)?
+        } else {
+            self.runtime.block_on(run_with_timeout(timeout, future))
+        };
+
+        result
             .map_err(|_| timeout_error(ctx, timeout))?
             .context(ctx)
             .map_err(BootstrapError::from)
+    }
+
+    /// Executes an unprivileged operation on a helper thread when already
+    /// inside a Tokio runtime.
+    ///
+    /// Calling `Runtime::block_on` from a runtime thread panics with
+    /// "Cannot start a runtime from within a runtime". Running the operation on
+    /// a scoped thread avoids the nested-runtime panic while keeping the sync
+    /// API surface intact for callers such as `run()`.
+    fn run_unprivileged_in_scoped_thread<Fut>(
+        &self,
+        future: Fut,
+        ctx: &'static str,
+        timeout: std::time::Duration,
+    ) -> BootstrapResult<Result<Result<(), postgresql_embedded::Error>, tokio::time::error::Elapsed>>
+    where
+        Fut: Future<Output = Result<(), postgresql_embedded::Error>> + Send,
+    {
+        let runtime = self.runtime;
+        std::thread::scope(|scope| {
+            scope
+                .spawn(move || runtime.block_on(run_with_timeout(timeout, future)))
+                .join()
+        })
+        .map_err(|panic_payload| {
+            nested_runtime_thread_panic(ctx, "nested-runtime operation", panic_payload)
+        })
     }
 
     fn lifecycle_span(&self, operation: WorkerOperation) -> tracing::Span {

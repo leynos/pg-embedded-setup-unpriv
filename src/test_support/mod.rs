@@ -15,6 +15,8 @@ mod hook;
 #[cfg(any(test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod logging;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+mod panic;
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 mod partial_data_dir;
 mod scoped_env;
 mod shared_singleton;
@@ -51,6 +53,8 @@ pub use hook::{
 pub use logging::{
     capture_debug_logs, capture_info_logs, capture_info_logs_with_spans, capture_warn_logs,
 };
+#[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
+pub use panic::panic_payload_to_string;
 #[cfg(any(doc, test, feature = "cluster-unit-tests", feature = "dev-worker"))]
 pub use partial_data_dir::create_partial_data_dir;
 pub use scoped_env::scoped_env;
