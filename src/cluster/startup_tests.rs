@@ -6,7 +6,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::{Result, ensure, eyre};
 use postgresql_embedded::VersionReq;
 use rstest::{fixture, rstest};
@@ -179,18 +179,18 @@ fn runtime_error_paths(temp_base_paths: TempBasePaths) -> RuntimeErrorPaths {
 
 fn configure_root_bootstrap(
     bootstrap: &mut TestBootstrapSettings,
-    install_dir: &Utf8PathBuf,
-    data_dir: &Utf8PathBuf,
-    scoped_cache_home: &Utf8PathBuf,
+    install_dir: &Utf8Path,
+    data_dir: &Utf8Path,
+    scoped_cache_home: &Utf8Path,
 ) {
     let runtime_dir = install_dir.join("run");
-    bootstrap.settings.installation_dir = install_dir.clone().into_std_path_buf();
-    bootstrap.settings.data_dir = data_dir.clone().into_std_path_buf();
+    bootstrap.settings.installation_dir = install_dir.to_path_buf().into_std_path_buf();
+    bootstrap.settings.data_dir = data_dir.to_path_buf().into_std_path_buf();
     let exact_version = format!("={TEST_POSTGRES_VERSION}");
     bootstrap.settings.version =
         VersionReq::parse(&exact_version).expect("valid exact version requirement");
-    bootstrap.environment.home = install_dir.clone();
-    bootstrap.environment.xdg_cache_home = scoped_cache_home.clone();
+    bootstrap.environment.home = install_dir.to_path_buf();
+    bootstrap.environment.xdg_cache_home = scoped_cache_home.to_path_buf();
     bootstrap.environment.xdg_runtime_dir = runtime_dir;
     bootstrap.environment.pgpass_file = install_dir.join(".pgpass");
 }
@@ -352,6 +352,9 @@ fn setup_postgres_only_inside_runtime_returns_recoverable_error(
     bootstrap.setup_timeout = Duration::from_secs(1);
 
     let runtime = test_runtime()?;
+    // The async wrapper exists only so runtime.block_on can execute the
+    // synchronous setup_postgres_only inside an active Tokio runtime and verify
+    // nested runtime creation returns an error instead of panicking.
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         runtime.block_on(async { setup_postgres_only(bootstrap) })
     }));
