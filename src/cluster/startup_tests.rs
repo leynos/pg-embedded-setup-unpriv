@@ -9,6 +9,7 @@ use std::time::Duration;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Result, ensure, eyre};
 use postgresql_embedded::VersionReq;
+use rstest::{fixture, rstest};
 use serial_test::serial;
 use tempfile::tempdir;
 
@@ -17,8 +18,91 @@ use crate::test_support::{
     dummy_settings, install_run_root_operation_hook, scoped_env, test_runtime,
 };
 
+const TEST_POSTGRES_VERSION: &str = "17.4.0";
+
+struct RootSetupPaths {
+    _tempdir: tempfile::TempDir,
+    install_dir: Utf8PathBuf,
+    data_dir: Utf8PathBuf,
+    scoped_cache_home: Utf8PathBuf,
+    host_cache_home: Utf8PathBuf,
+    cache_dir: Utf8PathBuf,
+}
+
+struct OperationsHookContext {
+    operations: Arc<Mutex<Vec<String>>>,
+    host_cache_home: Utf8PathBuf,
+    _hook_guard: crate::test_support::HookGuard,
+    _env_guard: crate::env::ScopedEnv,
+}
+
 fn utf8_path(path: std::path::PathBuf, context: &str) -> Result<Utf8PathBuf> {
     Utf8PathBuf::from_path_buf(path).map_err(|_| eyre!("{context} is not valid UTF-8"))
+}
+
+#[fixture]
+fn root_setup_paths() -> Arc<RootSetupPaths> {
+    let tempdir_guard = tempdir().expect("tempdir should be created");
+    let base = utf8_path(tempdir_guard.path().to_path_buf(), "tempdir")
+        .expect("tempdir path should be UTF-8");
+    let install_dir = base.join("install");
+    let data_dir = base.join("data");
+    let scoped_cache_home = base.join("scoped-cache-home");
+    let host_cache_home = base.join("host-cache-home");
+    let cache_dir = base.join("cache");
+
+    fs::create_dir_all(install_dir.as_std_path()).expect("install dir should be created");
+    fs::create_dir_all(data_dir.as_std_path()).expect("data dir should be created");
+    fs::create_dir_all(cache_dir.as_std_path()).expect("cache dir should be created");
+
+    Arc::new(RootSetupPaths {
+        _tempdir: tempdir_guard,
+        install_dir,
+        data_dir,
+        scoped_cache_home,
+        host_cache_home,
+        cache_dir,
+    })
+}
+
+#[fixture]
+fn root_bootstrap(root_setup_paths: Arc<RootSetupPaths>) -> TestBootstrapSettings {
+    let mut bootstrap = dummy_settings(ExecutionPrivileges::Root);
+    configure_root_bootstrap(
+        &mut bootstrap,
+        &root_setup_paths.install_dir,
+        &root_setup_paths.data_dir,
+        &root_setup_paths.scoped_cache_home,
+    );
+    bootstrap
+}
+
+#[fixture]
+fn operations_hook(root_setup_paths: Arc<RootSetupPaths>) -> OperationsHookContext {
+    let operations = Arc::new(Mutex::new(Vec::new()));
+    let recorded_operations = Arc::clone(&operations);
+    let hook_guard = install_run_root_operation_hook(move |_, _, operation| {
+        recorded_operations
+            .lock()
+            .expect("operation mutex poisoned")
+            .push(operation.as_str().to_owned());
+        Ok(())
+    })
+    .expect("run_root_operation_hook should install");
+    let env_guard = scoped_env([
+        (OsString::from("PG_BINARY_CACHE_DIR"), None),
+        (
+            OsString::from("XDG_CACHE_HOME"),
+            Some(OsString::from(root_setup_paths.host_cache_home.as_str())),
+        ),
+    ]);
+
+    OperationsHookContext {
+        operations,
+        host_cache_home: root_setup_paths.host_cache_home.clone(),
+        _hook_guard: hook_guard,
+        _env_guard: env_guard,
+    }
 }
 
 fn configure_root_bootstrap(
@@ -30,7 +114,8 @@ fn configure_root_bootstrap(
     let runtime_dir = install_dir.join("run");
     bootstrap.settings.installation_dir = install_dir.clone().into_std_path_buf();
     bootstrap.settings.data_dir = data_dir.clone().into_std_path_buf();
-    bootstrap.settings.version = VersionReq::parse("^17").expect("valid version requirement");
+    bootstrap.settings.version =
+        VersionReq::parse("=17.4.0").expect("valid exact version requirement");
     bootstrap.environment.home = install_dir.clone();
     bootstrap.environment.xdg_cache_home = scoped_cache_home.clone();
     bootstrap.environment.xdg_runtime_dir = runtime_dir;
@@ -47,45 +132,42 @@ fn create_complete_cache_entry(cache_home: &Utf8PathBuf, version: &str) -> Resul
     Ok(())
 }
 
-#[test]
+#[rstest]
 #[serial(worker_hook)]
-fn setup_postgres_only_resolves_cache_before_scoped_env_and_runs_setup_only() -> Result<()> {
-    let temp = tempdir()?;
-    let base = utf8_path(temp.path().to_path_buf(), "tempdir")?;
-    let install_dir = base.join("install");
-    let data_dir = base.join("data");
-    let scoped_cache_home = base.join("scoped-cache-home");
-    let host_cache_home = base.join("host-cache-home");
-    fs::create_dir_all(install_dir.as_std_path())?;
-    fs::create_dir_all(data_dir.as_std_path())?;
-    create_complete_cache_entry(&host_cache_home, "17.4.0")?;
-
-    let mut bootstrap = dummy_settings(ExecutionPrivileges::Root);
-    configure_root_bootstrap(&mut bootstrap, &install_dir, &data_dir, &scoped_cache_home);
-
-    let operations = Arc::new(Mutex::new(Vec::new()));
-    let recorded_operations = Arc::clone(&operations);
-    let _hook_guard = install_run_root_operation_hook(move |_, _, operation| {
-        recorded_operations
-            .lock()
-            .expect("operation mutex poisoned")
-            .push(operation);
-        Ok(())
-    })
-    .map_err(|err| eyre!(err))?;
-    let _env_guard = scoped_env([
-        (OsString::from("PG_BINARY_CACHE_DIR"), None),
-        (
-            OsString::from("XDG_CACHE_HOME"),
-            Some(OsString::from(host_cache_home.as_str())),
-        ),
-    ]);
-
-    let prepared = setup_postgres_only(bootstrap)?;
-
-    let recorded_ops = operations.lock().expect("operation mutex poisoned");
+fn setup_postgres_only_resolves_cache_before_scoped_env_and_runs_setup_only(
+    root_bootstrap: TestBootstrapSettings,
+    operations_hook: OperationsHookContext,
+) -> Result<()> {
+    let observed_xdg_cache_home = std::env::var("XDG_CACHE_HOME").ok();
     ensure!(
-        matches!(recorded_ops.as_slice(), [operation] if operation.as_str() == "setup"),
+        observed_xdg_cache_home.as_deref() == Some(operations_hook.host_cache_home.as_str()),
+        "expected host XDG_CACHE_HOME to be set for cache resolution (observed: {observed_xdg_cache_home:?})",
+    );
+
+    create_complete_cache_entry(&operations_hook.host_cache_home, TEST_POSTGRES_VERSION)?;
+    let resolved_cache_dir = cache_config_from_bootstrap(&root_bootstrap).cache_dir;
+    let expected_cache_dir = operations_hook
+        .host_cache_home
+        .join("pg-embedded")
+        .join("binaries");
+    ensure!(
+        resolved_cache_dir == expected_cache_dir,
+        "cache config should resolve from host env before ScopedEnv (expected: {expected_cache_dir}, observed: {resolved_cache_dir})",
+    );
+    let expected_install_dir = utf8_path(
+        root_bootstrap.settings.installation_dir.clone(),
+        "installation directory",
+    )?
+    .join(TEST_POSTGRES_VERSION);
+
+    let prepared = setup_postgres_only(root_bootstrap)?;
+
+    let recorded_ops = operations_hook
+        .operations
+        .lock()
+        .expect("operation mutex poisoned");
+    ensure!(
+        matches!(recorded_ops.as_slice(), [operation] if operation == "setup"),
         "setup-only lifecycle should invoke exactly one Setup operation",
     );
     ensure!(
@@ -98,7 +180,7 @@ fn setup_postgres_only_resolves_cache_before_scoped_env_and_runs_setup_only() ->
         "installation directory",
     )?;
     ensure!(
-        observed_install_dir == install_dir.join("17.4.0"),
+        observed_install_dir == expected_install_dir,
         "expected setup to consume host cache before scoped env (observed: {observed_install_dir})"
     );
     ensure!(
@@ -108,41 +190,24 @@ fn setup_postgres_only_resolves_cache_before_scoped_env_and_runs_setup_only() ->
     Ok(())
 }
 
-#[test]
+#[rstest]
 #[serial(worker_hook)]
-fn setup_lifecycle_invokes_setup_operation_only() -> Result<()> {
-    let temp = tempdir()?;
-    let base = utf8_path(temp.path().to_path_buf(), "tempdir")?;
-    let install_dir = base.join("install");
-    let data_dir = base.join("data");
-    let scoped_cache_home = base.join("scoped-cache-home");
-    let cache_dir = base.join("cache");
-    fs::create_dir_all(install_dir.as_std_path())?;
-    fs::create_dir_all(data_dir.as_std_path())?;
-    fs::create_dir_all(cache_dir.as_std_path())?;
-
-    let mut bootstrap = dummy_settings(ExecutionPrivileges::Root);
-    configure_root_bootstrap(&mut bootstrap, &install_dir, &data_dir, &scoped_cache_home);
-    let env_vars = bootstrap.environment.to_env();
-    let cache_config = BinaryCacheConfig::with_dir(cache_dir);
+fn setup_lifecycle_invokes_setup_operation_only(
+    root_setup_paths: Arc<RootSetupPaths>,
+    root_bootstrap: TestBootstrapSettings,
+    operations_hook: OperationsHookContext,
+) -> Result<()> {
+    let env_vars = root_bootstrap.environment.to_env();
+    let cache_config = BinaryCacheConfig::with_dir(root_setup_paths.cache_dir.clone());
     let runtime = test_runtime()?;
+    let prepared = setup_lifecycle(&runtime, root_bootstrap, &env_vars, &cache_config)?;
 
-    let operations = Arc::new(Mutex::new(Vec::new()));
-    let recorded_operations = Arc::clone(&operations);
-    let _hook_guard = install_run_root_operation_hook(move |_, _, operation| {
-        recorded_operations
-            .lock()
-            .expect("operation mutex poisoned")
-            .push(operation);
-        Ok(())
-    })
-    .map_err(|err| eyre!(err))?;
-
-    let prepared = setup_lifecycle(&runtime, bootstrap, &env_vars, &cache_config)?;
-
-    let recorded_ops = operations.lock().expect("operation mutex poisoned");
+    let recorded_ops = operations_hook
+        .operations
+        .lock()
+        .expect("operation mutex poisoned");
     ensure!(
-        matches!(recorded_ops.as_slice(), [operation] if operation.as_str() == "setup"),
+        matches!(recorded_ops.as_slice(), [operation] if operation == "setup"),
         "setup_lifecycle should only dispatch Setup",
     );
     ensure!(
@@ -152,43 +217,27 @@ fn setup_lifecycle_invokes_setup_operation_only() -> Result<()> {
     Ok(())
 }
 
-#[test]
+#[rstest]
 #[serial(worker_hook)]
-fn setup_with_privileges_root_dispatches_setup_only() -> Result<()> {
-    let temp = tempdir()?;
-    let base = utf8_path(temp.path().to_path_buf(), "tempdir")?;
-    let install_dir = base.join("install");
-    let data_dir = base.join("data");
-    let scoped_cache_home = base.join("scoped-cache-home");
-    fs::create_dir_all(install_dir.as_std_path())?;
-    fs::create_dir_all(data_dir.as_std_path())?;
-
-    let mut bootstrap = dummy_settings(ExecutionPrivileges::Root);
-    configure_root_bootstrap(&mut bootstrap, &install_dir, &data_dir, &scoped_cache_home);
-    let env_vars = bootstrap.environment.to_env();
+fn setup_with_privileges_root_dispatches_setup_only(
+    mut root_bootstrap: TestBootstrapSettings,
+    operations_hook: OperationsHookContext,
+) -> Result<()> {
+    let env_vars = root_bootstrap.environment.to_env();
     let runtime = test_runtime()?;
-
-    let operations = Arc::new(Mutex::new(Vec::new()));
-    let recorded_operations = Arc::clone(&operations);
-    let _hook_guard = install_run_root_operation_hook(move |_, _, operation| {
-        recorded_operations
-            .lock()
-            .expect("operation mutex poisoned")
-            .push(operation);
-        Ok(())
-    })
-    .map_err(|err| eyre!(err))?;
-
     setup_with_privileges(
         ExecutionPrivileges::Root,
         &runtime,
-        &mut bootstrap,
+        &mut root_bootstrap,
         &env_vars,
     )?;
 
-    let recorded_ops = operations.lock().expect("operation mutex poisoned");
+    let recorded_ops = operations_hook
+        .operations
+        .lock()
+        .expect("operation mutex poisoned");
     ensure!(
-        matches!(recorded_ops.as_slice(), [operation] if operation.as_str() == "setup"),
+        matches!(recorded_ops.as_slice(), [operation] if operation == "setup"),
         "setup_with_privileges should dispatch Setup only",
     );
     Ok(())
@@ -198,7 +247,7 @@ fn setup_with_privileges_root_dispatches_setup_only() -> Result<()> {
 fn populate_cache_on_miss_only_populates_on_cache_miss() -> Result<()> {
     let temp = tempdir()?;
     let base = utf8_path(temp.path().to_path_buf(), "tempdir")?;
-    let install_dir = base.join("install").join("17.4.0");
+    let install_dir = base.join("install").join(TEST_POSTGRES_VERSION);
     let data_dir = base.join("data");
     let cache_dir = base.join("cache");
     fs::create_dir_all(install_dir.join("bin").as_std_path())?;
@@ -209,7 +258,7 @@ fn populate_cache_on_miss_only_populates_on_cache_miss() -> Result<()> {
     bootstrap.settings.installation_dir = install_dir.clone().into_std_path_buf();
     bootstrap.settings.data_dir = data_dir.into_std_path_buf();
     let cache_config = BinaryCacheConfig::with_dir(cache_dir.clone());
-    let marker_path = cache_dir.join("17.4.0").join(".complete");
+    let marker_path = cache_dir.join(TEST_POSTGRES_VERSION).join(".complete");
 
     populate_cache_on_miss(true, &cache_config, &bootstrap);
     ensure!(
