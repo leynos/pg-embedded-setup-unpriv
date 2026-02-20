@@ -54,6 +54,7 @@ mod guard;
 mod handle;
 mod installation;
 mod lifecycle;
+pub(crate) mod panic_utils;
 mod runtime;
 mod runtime_mode;
 mod shutdown;

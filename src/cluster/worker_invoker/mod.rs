@@ -1,5 +1,4 @@
 //! Dispatches `PostgreSQL` lifecycle operations either in-process or via the privileged worker binary.
-use std::any::Any;
 use std::future::Future;
 
 use color_eyre::eyre::{Context, eyre};
@@ -11,6 +10,7 @@ use crate::worker_process::{self, WorkerRequest, WorkerRequestArgs};
 use crate::{ExecutionMode, ExecutionPrivileges, TestBootstrapSettings};
 
 use super::WorkerOperation;
+use super::panic_utils::nested_runtime_thread_panic;
 use tracing::{error, info, info_span};
 
 // ============================================================================
@@ -363,7 +363,9 @@ impl<'a> WorkerInvoker<'a> {
                 .spawn(move || runtime.block_on(run_with_timeout(timeout, future)))
                 .join()
         })
-        .map_err(|panic_payload| nested_runtime_thread_panic(ctx, panic_payload))
+        .map_err(|panic_payload| {
+            nested_runtime_thread_panic(ctx, "nested-runtime operation", panic_payload)
+        })
     }
 
     fn lifecycle_span(&self, operation: WorkerOperation) -> tracing::Span {
@@ -491,26 +493,6 @@ where
         .map_err(|_| timeout_error(ctx, timeout))?
         .context(ctx)
         .map_err(BootstrapError::from)
-}
-
-fn nested_runtime_thread_panic(
-    ctx: &'static str,
-    panic_payload: Box<dyn Any + Send>,
-) -> BootstrapError {
-    let message = panic_payload_to_string(panic_payload);
-    BootstrapError::from(eyre!(
-        "{ctx}: helper thread panicked while running nested-runtime operation: {message}"
-    ))
-}
-
-fn panic_payload_to_string(panic_payload: Box<dyn Any + Send>) -> String {
-    match panic_payload.downcast::<String>() {
-        Ok(message) => *message,
-        Err(other_payload) => other_payload.downcast::<&'static str>().map_or_else(
-            |_| "unknown panic payload".to_owned(),
-            |message| (*message).to_owned(),
-        ),
-    }
 }
 
 #[cfg(test)]

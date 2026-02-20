@@ -12,7 +12,7 @@ mod skip;
 
 use cluster_skip::cluster_skip_message;
 use pg_embedded_setup_unpriv::BootstrapError;
-use pg_embedded_setup_unpriv::test_support::shared_cluster_handle;
+use pg_embedded_setup_unpriv::test_support::{scoped_env, shared_cluster_handle};
 use tempfile::tempdir;
 use tracing::warn;
 
@@ -48,13 +48,16 @@ fn caches_successful_initialisation() {
     let data_dir = sandbox.path().join("data");
     std::fs::create_dir_all(&runtime_dir).expect("runtime dir should be created");
     std::fs::create_dir_all(&data_dir).expect("data dir should be created");
-
-    // SAFETY: this test binary contains only this test, and we set variables
-    // before calling `shared_cluster_handle()` so there is no concurrent access.
-    unsafe {
-        std::env::set_var("PG_RUNTIME_DIR", &runtime_dir);
-        std::env::set_var("PG_DATA_DIR", &data_dir);
-    }
+    let _guard = scoped_env([
+        (
+            std::ffi::OsString::from("PG_RUNTIME_DIR"),
+            Some(runtime_dir.into_os_string()),
+        ),
+        (
+            std::ffi::OsString::from("PG_DATA_DIR"),
+            Some(data_dir.into_os_string()),
+        ),
+    ]);
 
     let result1 = shared_cluster_handle();
 
