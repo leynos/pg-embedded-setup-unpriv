@@ -30,7 +30,7 @@ jobs:
             json.dump(data, handle)
           PY
       - name: Upload artefact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v4
         with:
           name: result
           path: out/result.json
