@@ -43,7 +43,7 @@
 use crate::error::BootstrapError;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::eyre;
-use postgresql_embedded::{Settings, SettingsBuilder, VersionReq};
+use postgresql_embedded::{Settings, VersionReq};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, DurationSeconds, serde_as};
@@ -141,26 +141,27 @@ impl From<SettingsSnapshot> for Settings {
     fn from(snapshot: SettingsSnapshot) -> Self {
         // Build from upstream defaults so newly added `Settings` fields keep a
         // sensible value until this snapshot explicitly models them.
-        let mut builder = SettingsBuilder::new()
-            .releases_url(snapshot.releases_url)
-            .version(snapshot.version)
-            .installation_dir(snapshot.installation_dir)
-            .password_file(snapshot.password_file)
-            .data_dir(snapshot.data_dir)
-            .host(snapshot.host)
-            .port(snapshot.port)
-            .username(snapshot.username)
-            .password(snapshot.password.expose())
-            .temporary(snapshot.temporary)
-            .timeout(snapshot.timeout_secs)
-            .configuration(snapshot.configuration)
-            .trust_installation_dir(snapshot.trust_installation_dir);
-
-        if let Some(socket_dir) = snapshot.socket_dir {
-            builder = builder.socket_dir(socket_dir);
+        #[expect(
+            clippy::needless_update,
+            reason = "Keep upstream defaults for future Settings fields this snapshot does not yet model"
+        )]
+        Self {
+            releases_url: snapshot.releases_url,
+            version: snapshot.version,
+            installation_dir: snapshot.installation_dir.into(),
+            password_file: snapshot.password_file.into(),
+            data_dir: snapshot.data_dir.into(),
+            host: snapshot.host,
+            port: snapshot.port,
+            username: snapshot.username,
+            password: snapshot.password.expose().to_owned(),
+            temporary: snapshot.temporary,
+            timeout: snapshot.timeout_secs,
+            configuration: snapshot.configuration,
+            trust_installation_dir: snapshot.trust_installation_dir,
+            socket_dir: snapshot.socket_dir.map(Into::into),
+            ..Self::default()
         }
-
-        builder.build()
     }
 }
 
