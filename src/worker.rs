@@ -43,7 +43,7 @@
 use crate::error::BootstrapError;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::eyre;
-use postgresql_embedded::{Settings, VersionReq};
+use postgresql_embedded::{Settings, SettingsBuilder, VersionReq};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, DurationSeconds, serde_as};
@@ -69,6 +69,7 @@ pub struct SettingsSnapshot {
     timeout_secs: Option<Duration>,
     configuration: HashMap<String, String>,
     trust_installation_dir: bool,
+    socket_dir: Option<Utf8PathBuf>,
 }
 
 impl SettingsSnapshot {
@@ -88,6 +89,12 @@ impl TryFrom<&Settings> for SettingsSnapshot {
             .map_err(|_| eyre!("password_file must be valid UTF-8"))?;
         let data_dir = Utf8PathBuf::from_path_buf(settings.data_dir.clone())
             .map_err(|_| eyre!("data_dir must be valid UTF-8"))?;
+        let socket_dir = settings
+            .socket_dir
+            .clone()
+            .map(Utf8PathBuf::from_path_buf)
+            .transpose()
+            .map_err(|_| eyre!("socket_dir must be valid UTF-8"))?;
 
         Ok(Self {
             releases_url: settings.releases_url.clone(),
@@ -103,6 +110,7 @@ impl TryFrom<&Settings> for SettingsSnapshot {
             timeout_secs: settings.timeout,
             configuration: settings.configuration.clone(),
             trust_installation_dir: settings.trust_installation_dir,
+            socket_dir,
         })
     }
 }
@@ -131,21 +139,28 @@ impl WorkerPayload {
 
 impl From<SettingsSnapshot> for Settings {
     fn from(snapshot: SettingsSnapshot) -> Self {
-        Self {
-            releases_url: snapshot.releases_url,
-            version: snapshot.version,
-            installation_dir: snapshot.installation_dir.into(),
-            password_file: snapshot.password_file.into(),
-            data_dir: snapshot.data_dir.into(),
-            host: snapshot.host,
-            port: snapshot.port,
-            username: snapshot.username,
-            password: snapshot.password.expose().to_owned(),
-            temporary: snapshot.temporary,
-            timeout: snapshot.timeout_secs,
-            configuration: snapshot.configuration,
-            trust_installation_dir: snapshot.trust_installation_dir,
+        // Build from upstream defaults so newly added `Settings` fields keep a
+        // sensible value until this snapshot explicitly models them.
+        let mut builder = SettingsBuilder::new()
+            .releases_url(snapshot.releases_url)
+            .version(snapshot.version)
+            .installation_dir(snapshot.installation_dir)
+            .password_file(snapshot.password_file)
+            .data_dir(snapshot.data_dir)
+            .host(snapshot.host)
+            .port(snapshot.port)
+            .username(snapshot.username)
+            .password(snapshot.password.expose())
+            .temporary(snapshot.temporary)
+            .timeout(snapshot.timeout_secs)
+            .configuration(snapshot.configuration)
+            .trust_installation_dir(snapshot.trust_installation_dir);
+
+        if let Some(socket_dir) = snapshot.socket_dir {
+            builder = builder.socket_dir(socket_dir);
         }
+
+        builder.build()
     }
 }
 

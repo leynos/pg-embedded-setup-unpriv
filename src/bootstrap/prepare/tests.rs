@@ -29,6 +29,7 @@ mod sanitized_settings {
             timeout: Some(Duration::from_secs(12)),
             configuration,
             trust_installation_dir: true,
+            socket_dir: Some("/tmp/sanitized/socket".into()),
         })
     }
 
