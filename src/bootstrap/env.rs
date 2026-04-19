@@ -59,13 +59,11 @@ fn discover_worker_from_path_value(
 
 #[cfg(unix)]
 fn is_executable(path: &Utf8Path) -> bool {
-    path.metadata()
-        .map(|m| {
-            // std metadata uses std permissions; keep this trait import for mode().
-            use std::os::unix::fs::PermissionsExt;
-            m.permissions().mode() & 0o111 != 0
-        })
-        .unwrap_or(false)
+    path.metadata().is_ok_and(|m| {
+        // std metadata uses std permissions; keep this trait import for mode().
+        use std::os::unix::fs::PermissionsExt;
+        m.permissions().mode() & 0o111 != 0
+    })
 }
 
 #[cfg(not(unix))]

@@ -69,6 +69,7 @@ pub struct SettingsSnapshot {
     timeout_secs: Option<Duration>,
     configuration: HashMap<String, String>,
     trust_installation_dir: bool,
+    socket_dir: Option<Utf8PathBuf>,
 }
 
 impl SettingsSnapshot {
@@ -88,6 +89,12 @@ impl TryFrom<&Settings> for SettingsSnapshot {
             .map_err(|_| eyre!("password_file must be valid UTF-8"))?;
         let data_dir = Utf8PathBuf::from_path_buf(settings.data_dir.clone())
             .map_err(|_| eyre!("data_dir must be valid UTF-8"))?;
+        let socket_dir = settings
+            .socket_dir
+            .clone()
+            .map(Utf8PathBuf::from_path_buf)
+            .transpose()
+            .map_err(|_| eyre!("socket_dir must be valid UTF-8"))?;
 
         Ok(Self {
             releases_url: settings.releases_url.clone(),
@@ -103,6 +110,7 @@ impl TryFrom<&Settings> for SettingsSnapshot {
             timeout_secs: settings.timeout,
             configuration: settings.configuration.clone(),
             trust_installation_dir: settings.trust_installation_dir,
+            socket_dir,
         })
     }
 }
@@ -131,6 +139,12 @@ impl WorkerPayload {
 
 impl From<SettingsSnapshot> for Settings {
     fn from(snapshot: SettingsSnapshot) -> Self {
+        // Build from upstream defaults so newly added `Settings` fields keep a
+        // sensible value until this snapshot explicitly models them.
+        #[expect(
+            clippy::needless_update,
+            reason = "Keep upstream defaults for future Settings fields this snapshot does not yet model"
+        )]
         Self {
             releases_url: snapshot.releases_url,
             version: snapshot.version,
@@ -145,6 +159,8 @@ impl From<SettingsSnapshot> for Settings {
             timeout: snapshot.timeout_secs,
             configuration: snapshot.configuration,
             trust_installation_dir: snapshot.trust_installation_dir,
+            socket_dir: snapshot.socket_dir.map(Into::into),
+            ..Self::default()
         }
     }
 }

@@ -25,6 +25,7 @@ fn sample_settings() -> Result<Settings> {
         timeout: Some(Duration::from_secs(45)),
         configuration,
         trust_installation_dir: true,
+        socket_dir: Some("/var/run/postgresql".into()),
     })
 }
 
@@ -66,6 +67,7 @@ fn settings_snapshot_roundtrip_preserves_all_fields() -> Result<()> {
             "trust_installation_dir",
             restored.trust_installation_dir == expected.trust_installation_dir,
         ),
+        ("socket_dir", restored.socket_dir == expected.socket_dir),
     ];
 
     for (field, matches) in comparisons {
