@@ -29,6 +29,9 @@ target/%/pg_embedded_setup_unpriv target/%/pg_worker: ## Build binary in debug o
 
 release-archive: ## Package release binaries for cargo-binstall
 	@test -n "$(TARGET)" || (echo "TARGET is required" >&2; exit 1)
+	@manifest_version="$$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"; \
+		test "$$manifest_version" = "$(VERSION)" || \
+		(echo "VERSION ($(VERSION)) must match Cargo.toml package version ($$manifest_version)" >&2; exit 1)
 	$(CARGO) build $(BUILD_JOBS) --release --target "$(TARGET)" \
 		--bin pg_embedded_setup_unpriv \
 		--bin pg_worker
