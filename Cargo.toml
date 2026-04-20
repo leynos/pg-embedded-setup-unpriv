@@ -9,6 +9,11 @@ documentation = "https://docs.rs/pg-embed-setup-unpriv/latest/pg_embedded_setup_
 homepage = "https://df12.studio/docs.html"
 repository = "https://github.com/leynos/pg-embedded-setup-unpriv"
 
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }-v{ version }{ archive-suffix }"
+bin-dir = "{ name }-{ target }-v{ version }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
 [lib]
 name = "pg_embedded_setup_unpriv"
 path = "src/lib.rs"

@@ -23,6 +23,16 @@ also runs a Linux matrix for unprivileged and root execution. The root variant
 invokes the test suite under `sudo` so root-only privilege paths execute, while
 the unprivileged variant continues to collect coverage.
 
+## Release process
+
+Tagging a release with `v*` triggers `.github/workflows/release.yml`. The
+workflow creates a draft GitHub release, builds native Linux archives on
+`ubuntu-24.04` and `ubuntu-24.04-arm`, and uploads
+`pg-embed-setup-unpriv-{target}-v{version}.tgz` assets containing both
+`pg_embedded_setup_unpriv` and `pg_worker`. `Cargo.toml` exposes matching
+`[package.metadata.binstall]` entries so `cargo binstall pg-embed-setup-unpriv`
+can install those published assets on Linux `x86_64` and `aarch64`.
+
 ## Loom concurrency tests
 
 Loom-based checks for `ScopedEnv` are opt-in and only compile when the

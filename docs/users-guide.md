@@ -52,6 +52,13 @@ Troubleshooting guidance:
 
 ## Quick start
 
+On Linux `x86_64` and `aarch64`, tagged releases publish both CLI binaries in a
+`cargo binstall` archive. Install them with:
+
+```bash
+cargo binstall pg-embed-setup-unpriv
+```
+
 1. Choose directories for the staged PostgreSQL distribution and the cluster’s
    data files. They must be writable by whichever user will run the helper; the
    tool reapplies ownership and permissions on every invocation.
