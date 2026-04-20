@@ -33,6 +33,13 @@ pg-embed-setup-unpriv = "0.5"
 rstest = "0.26"
 ```
 
+For the published CLI binaries on Linux `x86_64` and `aarch64`, install the
+release archive with:
+
+```sh
+cargo binstall pg-embed-setup-unpriv
+```
+
 ### Basic usage
 
 ```rust
