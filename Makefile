@@ -37,7 +37,7 @@ all: check-fmt lint test ## Perform all commit gate checks
 
 clean: ## Remove build artifacts
 	$(CARGO) clean
-	rm -rf "$(RELEASE_ARCHIVE_DIR)" "$(RELEASE_ARCHIVE_FILE)" "$(DIST_DIR)"
+	rm -rf "$(DIST_DIR)"
 
 test: ## Run tests with warnings treated as errors
 	RUSTFLAGS="-D warnings" $(CARGO) nextest run --all-targets --all-features $(BUILD_JOBS)
