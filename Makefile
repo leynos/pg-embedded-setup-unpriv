@@ -6,8 +6,19 @@ BUILD_JOBS ?=
 DIST_DIR ?= dist
 RELEASE_BINARIES ?= pg_embedded_setup_unpriv pg_worker
 TARGET ?=
-MANIFEST_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+MANIFEST_VERSION := $(strip $(shell awk '\
+	/^\[package\]$$/ { in_package = 1; next } \
+	/^\[/ { if (in_package) exit; next } \
+	in_package && /^version[[:space:]]*=/ { \
+		if (match($$0, /"([^"]+)"/)) { \
+			print substr($$0, RSTART + 1, RLENGTH - 2); \
+			exit; \
+		} \
+	}' Cargo.toml))
 VERSION ?= $(MANIFEST_VERSION)
+ifeq ($(strip $(VERSION)),)
+$(error VERSION is empty; set [package].version in Cargo.toml or pass VERSION explicitly)
+endif
 RELEASE_ARCHIVE_STEM = pg-embed-setup-unpriv-$(TARGET)-v$(VERSION)
 RELEASE_ARCHIVE_DIR = $(DIST_DIR)/$(RELEASE_ARCHIVE_STEM)
 RELEASE_ARCHIVE_FILE = $(RELEASE_ARCHIVE_DIR).tgz
