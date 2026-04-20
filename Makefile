@@ -27,8 +27,11 @@ RUSTDOC_FLAGS ?= --cfg docsrs -D warnings
 MDLINT ?= markdownlint-cli2
 NIXIE ?= nixie
 
-build: target/debug/$(APP) ## Build debug binary
-release: $(addprefix target/release/,$(RELEASE_BINARIES)) ## Build release binaries
+build: ## Build debug binary
+	$(CARGO) build $(BUILD_JOBS) --bin "$(APP)"
+
+release: ## Build release binaries
+	$(CARGO) build $(BUILD_JOBS) --release $(foreach bin,$(RELEASE_BINARIES),--bin $(bin))
 
 all: check-fmt lint test ## Perform all commit gate checks
 
@@ -38,12 +41,6 @@ clean: ## Remove build artifacts
 test: ## Run tests with warnings treated as errors
 	RUSTFLAGS="-D warnings" $(CARGO) nextest run --all-targets --all-features $(BUILD_JOBS)
 	RUSTFLAGS="-D warnings" $(CARGO) nextest run --tests --workspace --no-default-features --features dev-worker $(BUILD_JOBS)
-
-target/%/pg_embedded_setup_unpriv: ## Build binary in debug or release mode
-	$(CARGO) build $(BUILD_JOBS) $(if $(findstring release,$(@)),--release) --bin pg_embedded_setup_unpriv
-
-target/%/pg_worker: ## Build binary in debug or release mode
-	$(CARGO) build $(BUILD_JOBS) $(if $(findstring release,$(@)),--release) --bin pg_worker
 
 release-archive: ## Package release binaries for cargo-binstall
 	@test -n "$(TARGET)" || (echo "TARGET is required" >&2; exit 1)
