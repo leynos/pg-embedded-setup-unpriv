@@ -49,7 +49,7 @@ release-archive: ## Package release binaries for cargo-binstall
 	$(CARGO) build $(BUILD_JOBS) --release --target "$(TARGET)" $(foreach bin,$(RELEASE_BINARIES),--bin $(bin))
 	rm -rf "$(RELEASE_ARCHIVE_DIR)" "$(RELEASE_ARCHIVE_FILE)"
 	mkdir -p "$(RELEASE_ARCHIVE_DIR)"
-	@for bin in $(RELEASE_BINARIES); do \
+	@set -e; for bin in $(RELEASE_BINARIES); do \
 		cp "target/$(TARGET)/release/$$bin" "$(RELEASE_ARCHIVE_DIR)/$$bin"; \
 	done
 	tar -C "$(DIST_DIR)" -czf "$(RELEASE_ARCHIVE_FILE)" "$(RELEASE_ARCHIVE_STEM)"
