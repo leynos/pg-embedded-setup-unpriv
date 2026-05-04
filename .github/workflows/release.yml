@@ -87,7 +87,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Setup Rust
-        uses: leynos/shared-actions/.github/actions/setup-rust@b61ad14766ae81b830abdaf066eb3d9b6c4f537b
+        uses: leynos/shared-actions/.github/actions/setup-rust@d400b079fb6a8fa92f7e7b6c57f3d1c92a4b2d54
       - name: Build release archive
         run: >-
           make release-archive
